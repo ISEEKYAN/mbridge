@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 setup(
     name="mbridge",
@@ -8,7 +8,7 @@ setup(
     author_email="bayan@nvidia.com",
     packages=find_packages(),
     install_requires=[
-        "megatron-core>=0.11.0",
+        # "megatron-core>=0.11.0",
     ],
     python_requires=">=3.8",
-) 
+)
