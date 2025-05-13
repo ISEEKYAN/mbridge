@@ -24,15 +24,39 @@ bridge = AutoBridge.from_pretrained("/path/to/Qwen/Qwen2.5-7B-Instruct")
 
 # Get a Megatron-Core model
 model = bridge.get_model()
+
+# Generate with the model
+# See examples/0.load_model_and_generate_single_gpu.py for detailed usage
+
+# Export weights back to Hugging Face format
+for key, weight in bridge.export_weights(model):
+    # Process or save the exported weights
+    print(f"Exported: {key}")
 ```
 
 ## Supported Models
 
 Currently supported models:
 - Qwen2
+- Qwen2-MoE
 - Qwen3
+- Qwen3-MoE
 - LLaMA2
-- DeepseekV3 (coming soon)
+- DeepseekV3
+
+## Feature Highlights
+
+- **Comprehensive Model Support**: Support for various model architectures including MoE models (Mixture of Experts)
+- **Parameter Export**: Export trained Megatron parameters back to Hugging Face format
+- **Easy-to-use API**: Simplified interface for model conversion and weight loading
+- **Distributed Training Support**: Interface with Megatron-Core's advanced parallelism capabilities
+
+## Examples
+
+The `example` directory contains scripts demonstrating common use cases:
+
+- `0.load_model_and_generate_single_gpu.py`: Loading a model and generating text
+- `1.load_model_and_export_single_gpu.py`: Loading a model and exporting weights
 
 ## TODO
 
@@ -65,9 +89,8 @@ Currently supported models:
 - [ ] Provide guidance for adding support for new models
 
 ### 5. Online Export
-- [ ] Online export of Megatron model weights to inference engines
-- [ ] Support export formats for different inference frameworks
-- [ ] Provide lightweight inference optimization options
+- [x] Online export of Megatron model weights to inference engines
+- [ ] Add example of online export to inference engine
 
 ### 6. Advanced Training Techniques
 - [ ] Implement sequence packing for training

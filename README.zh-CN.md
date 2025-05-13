@@ -24,15 +24,39 @@ bridge = AutoBridge.from_pretrained("/path/to/Qwen/Qwen2.5-7B-Instruct")
 
 # 获取Megatron-Core模型
 model = bridge.get_model()
+
+# 使用模型生成内容
+# 详细用法请参见examples/0.load_model_and_generate_single_gpu.py
+
+# 导出权重回Hugging Face格式
+for key, weight in bridge.export_weights(model):
+    # 处理或保存导出的权重
+    print(f"已导出: {key}")
 ```
 
 ## 支持的模型
 
 当前支持的模型：
 - Qwen2
+- Qwen2-MoE
 - Qwen3
+- Qwen3-MoE
 - LLaMA2
-- DeepseekV3（即将推出）
+- DeepseekV3
+
+## 功能亮点
+
+- **全面的模型支持**：支持多种模型架构，包括MoE（混合专家）模型
+- **参数导出**：将训练后的Megatron参数导出回Hugging Face格式
+- **易用的API**：简化的模型转换和权重加载接口
+- **分布式训练支持**：对接Megatron-Core的高级并行化能力
+
+## 示例
+
+`example`目录包含展示常见用例的脚本：
+
+- `0.load_model_and_generate_single_gpu.py`：加载模型并生成文本
+- `1.load_model_and_export_single_gpu.py`：加载模型并导出权重
 
 ## 待办事项
 
@@ -65,9 +89,8 @@ model = bridge.get_model()
 - [ ] 提供添加新模型支持的指导
 
 ### 5. 在线导出
-- [ ] 在线导出megatron模型权重到推理引擎
-- [ ] 支持不同推理框架的导出格式
-- [ ] 提供轻量级推理优化选项
+- [x] 在线导出Megatron模型权重到推理引擎
+- [ ] 添加在线导出到推理引擎的示例
 
 ### 6. 高级训练技术
 - [ ] 使用sequence packing进行训练
