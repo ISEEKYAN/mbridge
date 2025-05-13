@@ -43,7 +43,9 @@ class AutoBridge(BaseBridge):
         if model_type in _MODEL_REGISTRY:
             return _MODEL_REGISTRY[model_type](hf_config)
         else:
-            raise ValueError(f"Unregistered model type: {model_type}")
+            raise ValueError(
+                f"Unregistered model type: {model_type}, now only support {_MODEL_REGISTRY.keys()}"
+            )
 
     @classmethod
     def list_supported_models(cls):

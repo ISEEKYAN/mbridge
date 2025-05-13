@@ -122,6 +122,8 @@ class Bridge(BaseBridge):
         overlap_param_gather_with_optimizer_step: bool = False,
         data_parallel_random_init: bool = True,
         optimizer_config: dict = None,
+        value_model: bool = False,
+        extra_provider_args: dict = {},
         **kwargs,
     ):
         """
@@ -143,14 +145,21 @@ class Bridge(BaseBridge):
             overlap_param_gather_with_optimizer_step: Whether to overlap parameter gathering
             data_parallel_random_init: Whether to use random initialization in data parallel
             optimizer_config: Optimizer configuration
+            value_model: Whether to create a value model
+            extra_provider_args: Additional arguments for the model provider
             **kwargs: Additional arguments
 
         Returns:
             Model instance
         """
-
         model = get_model(
-            self._model_provider(),
+            self._model_provider(
+                share_embeddings_and_output_weights=getattr(
+                    self.hf_config, "tie_word_embeddings", False
+                ),
+                value_model=value_model,
+                **extra_provider_args,
+            ),
             model_type=model_type,
             wrap_with_ddp=wrap_with_ddp,
             fp16=fp16,
@@ -198,10 +207,12 @@ class Bridge(BaseBridge):
                 hf_weights = [hf_weights_map[x] for x in hf_names]
                 mcore_weight = self._weight_import(local_name, hf_weights)
 
+                # TODO: support ETP
+
                 # split mcore weights across tp
                 param = model.state_dict()[local_name]
                 mcore_weight_tp_split = self._weight_split_across_tp(
-                    local_name, mcore_weight, param
+                    local_name, mcore_weight, param, self.mpu.tp_size
                 )[self.mpu.tp_rank]
                 # load
                 param.copy_(mcore_weight_tp_split)
@@ -377,7 +388,7 @@ class Bridge(BaseBridge):
         ],
     }
 
-    def __weight_name_mapping_attention(self, name: str) -> str:
+    def _weight_name_mapping_attention(self, name: str) -> str:
         """
         Map attention weight names from MCore to Hugging Face.
 
@@ -413,7 +424,7 @@ class Bridge(BaseBridge):
         "mlp.linear_fc2.weight": ["model.layers.{layer_number}.mlp.down_proj.weight"],
     }
 
-    def __weight_name_mapping_mlp(self, name: str) -> str:
+    def _weight_name_mapping_mlp(self, name: str) -> str:
         """
         Map MLP weight names from MCore to Hugging Face.
 
@@ -459,10 +470,10 @@ class Bridge(BaseBridge):
         if mcore_weights_name in direct_name_mapping:
             return [direct_name_mapping[mcore_weights_name]]
 
-        if ".self_attention." in mcore_weights_name:
-            return self.__weight_name_mapping_attention(mcore_weights_name)
-        elif ".mlp." in mcore_weights_name:
-            return self.__weight_name_mapping_mlp(mcore_weights_name)
+        if "self_attention" in mcore_weights_name:
+            return self._weight_name_mapping_attention(mcore_weights_name)
+        elif "mlp" in mcore_weights_name:
+            return self._weight_name_mapping_mlp(mcore_weights_name)
         else:
             raise NotImplementedError(
                 f"Unsupported parameter name: {mcore_weights_name}"
@@ -662,7 +673,11 @@ class Bridge(BaseBridge):
         return ret
 
     def _weight_split_across_tp(
-        self, mcore_weights_name: str, mcore_weights: torch.Tensor, param: torch.Tensor
+        self,
+        mcore_weights_name: str,
+        mcore_weights: torch.Tensor,
+        param: torch.Tensor,
+        tp_split_size: int,
     ) -> list[torch.Tensor]:
         """
         Split weight tensor across tensor parallel ranks.
@@ -675,7 +690,7 @@ class Bridge(BaseBridge):
         Returns:
             list: List of weight tensors split for each TP rank
         """
-        if self.mpu.tp_size == 1:
+        if tp_split_size == 1:
             return [mcore_weights]
 
         if (
@@ -683,22 +698,22 @@ class Bridge(BaseBridge):
             and "layer_norm" not in mcore_weights_name
         ):
             _, [q, k, v] = self._weight_export(mcore_weights_name, mcore_weights)
-            qs = q.chunk(self.mpu.tp_size)
-            ks = k.chunk(self.mpu.tp_size)
-            vs = v.chunk(self.mpu.tp_size)
+            qs = q.chunk(tp_split_size)
+            ks = k.chunk(tp_split_size)
+            vs = v.chunk(tp_split_size)
             ret = [torch.cat((q, k, v), dim=0) for q, k, v in zip(qs, ks, vs)]
         elif "linear_fc1.weight" in mcore_weights_name:
             _, [gate, up] = self._weight_export(mcore_weights_name, mcore_weights)
-            gates = gate.chunk(self.mpu.tp_size)
-            ups = up.chunk(self.mpu.tp_size)
+            gates = gate.chunk(tp_split_size)
+            ups = up.chunk(tp_split_size)
             ret = [torch.cat((g, u), dim=0) for g, u in zip(gates, ups)]
         elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
-            ret = torch.cat(mcore_weights, dim=1)
+            ret = mcore_weights.chunk(tp_split_size, dim=1)
         else:
             assert (
                 hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel
             )
-            ret = torch.cat(mcore_weights, dim=param.partition_dim)
+            ret = mcore_weights.chunk(tp_split_size, dim=param.partition_dim)
         return ret
 
 
