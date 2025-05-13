@@ -1,5 +1,7 @@
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 from dataclasses import dataclass
 
+import torch
 from megatron.core import parallel_state as mpu
 
 
@@ -37,6 +39,11 @@ class ParallelStates:
     ep_rank: int = 0
     etp_size: int = 1
     etp_rank: int = 0
+    tp_group: torch.distributed.ProcessGroup = None
+    pp_group: torch.distributed.ProcessGroup = None
+    cp_group: torch.distributed.ProcessGroup = None
+    ep_group: torch.distributed.ProcessGroup = None
+    etp_group: torch.distributed.ProcessGroup = None
 
     @classmethod
     def get_default_parallel_states(cls):
@@ -58,6 +65,11 @@ class ParallelStates:
             ep_rank=mpu.get_expert_model_parallel_rank(),
             etp_size=mpu.get_expert_tensor_parallel_world_size(),
             etp_rank=mpu.get_expert_tensor_parallel_rank(),
+            tp_group=mpu.get_tensor_model_parallel_group(),
+            pp_group=mpu.get_pipeline_model_parallel_group(),
+            cp_group=mpu.get_context_parallel_group(),
+            ep_group=mpu.get_expert_model_parallel_group(),
+            etp_group=mpu.get_expert_tensor_parallel_group(),
         )
 
     @classmethod

@@ -96,3 +96,17 @@ class AutoBridge(BaseBridge):
             "AutoBridge should not be instantiated directly. "
             "Use from_pretrained() or from_config() class methods instead."
         )
+
+    def export_weights(self, models: list) -> None:
+        """
+        This is a placeholder implementation. AutoBridge doesn't implement this method directly
+        as it delegates to specific bridge classes.
+
+        Raises:
+            NotImplementedError: Always raises this exception since AutoBridge is not meant
+                to be instantiated directly.
+        """
+        raise NotImplementedError(
+            "AutoBridge should not be instantiated directly. "
+            "Use from_pretrained() or from_config() class methods instead."
+        )

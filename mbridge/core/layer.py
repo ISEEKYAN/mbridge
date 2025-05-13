@@ -1,3 +1,4 @@
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 import torch
 from megatron.core import tensor_parallel
 

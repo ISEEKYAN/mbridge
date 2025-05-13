@@ -1,8 +1,17 @@
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+from typing import Generator
+
+import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from .bridge import Bridge
 from .layer import LinearForLastLayer
+from .util import (
+    broadcast_from_megatron_pp,
+    broadcast_str_from_megatron_pp,
+    unwrap_model,
+)
 
 
 class LLMBridge(Bridge):
@@ -89,3 +98,127 @@ class LLMBridge(Bridge):
             return model
 
         return provider
+
+    def export_weights(
+        self, models: list[torch.nn.Module]
+    ) -> Generator[tuple[str, torch.Tensor], None, None]:
+
+        # map vpp layer number to global layer number
+        def get_layer_number(vpp_rank: int, local_layer_number: int) -> int:
+            unwrapped_model = unwrap_model(models[vpp_rank])
+            global_layer_number = (
+                unwrapped_model.decoder.layers[local_layer_number].layer_number - 1
+            )
+            return global_layer_number
+
+        def get_model_chunk_generator():
+            for model in models:
+                yield from model.named_parameters()
+
+        weights_names = []
+        for vpp_rank, model in enumerate(models):
+            for name, param in model.named_parameters():
+                weights_names.append((self.mpu.pp_rank, vpp_rank, name))
+        weights_names_all_pp = [None] * self.mpu.pp_size
+        torch.distributed.all_gather_object(
+            object_list=weights_names_all_pp, obj=weights_names, group=self.mpu.pp_group
+        )
+        weights_names_all_pp = sum(weights_names_all_pp, [])
+        model_chunk_generator = get_model_chunk_generator()
+        for iter_pp_rank, iter_vpp_rank, iter_name in weights_names_all_pp:
+            if iter_pp_rank == self.mpu.pp_rank:
+                try:
+                    name, param = next(model_chunk_generator)
+                except StopIteration:
+                    name, param = None, None
+                if "layers" in iter_name:
+                    local_layer_number = int(
+                        iter_name.split("layers.")[1].split(".")[0]
+                    )
+                    global_layer_number = get_layer_number(
+                        iter_vpp_rank, local_layer_number
+                    )
+                    name = iter_name.replace(
+                        f"layers.{local_layer_number}.",
+                        f"layers.{global_layer_number}.",
+                    )
+            else:
+                name, param = None, None
+
+            name = broadcast_str_from_megatron_pp(name)
+            broad_pp_param = broadcast_from_megatron_pp(param)
+
+            while name.startswith("module."):
+                name = name[len("module.") :]
+
+            # EP
+            if ".mlp.experts.linear_fc" in name and self.mpu.ep_size > 1:
+                num_experts = self.config.num_moe_experts
+                num_experts_per_rank = num_experts // self.mpu.ep_size
+                infer_params = [
+                    torch.empty_like(broad_pp_param) for _ in range(self.mpu.ep_size)
+                ]
+                torch.distributed.all_gather(
+                    infer_params, broad_pp_param, group=self.mpu.ep_group
+                )
+
+                name_prefix, local_expert_id = name.split(".weight")
+                local_expert_id = int(local_expert_id)
+                global_expert_ids = [
+                    num_experts_per_rank * ep_rank + local_expert_id
+                    for ep_rank in range(self.mpu.ep_size)
+                ]
+                global_expert_names = [
+                    f"{name_prefix}.weight{expert_id}"
+                    for expert_id in global_expert_ids
+                ]
+
+                for name, param in zip(global_expert_names, infer_params):
+                    if self.mpu.etp_size > 1:
+                        # gather etp
+                        etp_params = [
+                            torch.empty_like(param) for _ in range(self.mpu.etp_size)
+                        ]
+                        torch.distributed.all_gather(
+                            etp_params, param, group=self.mpu.etp_group
+                        )
+                        params = etp_params
+                    else:
+                        params = [param]
+
+                    merge_params = self._weight_merge_across_tp(
+                        name, params, broad_pp_param
+                    )
+                    if not isinstance(merge_params, list):
+                        merge_params = [merge_params]
+                    converted_names, converted_params = self._weight_export(
+                        name, merge_params
+                    )
+
+                    yield from zip(converted_names, converted_params)
+                continue
+
+            # TP
+            if (
+                hasattr(broad_pp_param, "tensor_model_parallel")
+                and param.tensor_model_parallel
+            ):
+                # allocate a new tensor with proper size
+                if self.mpu.tp_size <= 1:
+                    infer_params = [broad_pp_param]
+                else:
+                    infer_params = [
+                        torch.empty_like(broad_pp_param)
+                        for _ in range(self.mpu.tp_size)
+                    ]
+                    torch.distributed.all_gather(
+                        infer_params, broad_pp_param, group=self.mpu.tp_group
+                    )
+                infer_params = self._weight_merge_across_tp(
+                    name, infer_params, broad_pp_param
+                )
+            else:
+                infer_params = broad_pp_param
+
+            converted_names, converted_params = self._weight_export(name, infer_params)
+            yield from zip(converted_names, converted_params)

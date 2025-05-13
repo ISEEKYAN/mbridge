@@ -1,5 +1,6 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 from abc import ABC, abstractmethod
+from typing import Generator
 
 import torch
 from megatron.core.models.gpt.gpt_model import ModelType
@@ -54,6 +55,22 @@ class BaseBridge(ABC):
 
         Args:
             **kwargs: Key-value pairs of additional arguments
+        """
+        pass
+
+    @abstractmethod
+    def export_weights(
+        self, models: list[torch.nn.Module]
+    ) -> Generator[tuple[str, torch.Tensor], None, None]:
+        """
+        Export weights from a Megatron-Core model to a Hugging Face model.
+
+        Args:
+            models: List of model instances, supporting VPP (Virtual Pipeline Parallelism)
+
+        Returns:
+            Generator of tuples containing (weight name, weight tensor)
+            The whole weights (no TP/PP/EP split) are in the generator
         """
         pass
 
@@ -304,7 +321,7 @@ class Bridge(BaseBridge):
         local_layer_to_global_layer = {}
         if hasattr(model, "decoder"):
             for idx, layer in enumerate(model.decoder.layers):
-                local_layer_to_global_layer[idx] = layer.layer_number
+                local_layer_to_global_layer[idx] = layer.layer_number - 1
         all_param_names = list(model.state_dict().keys())
         ret = {}
         for param_name in all_param_names:
@@ -486,13 +503,21 @@ class Bridge(BaseBridge):
             head_dim = getattr(
                 self.hf_config, "head_dim", hidden_dim // num_attention_heads
             )
-            qkv = mcore_weights.view(num_key_value_heads, -1, hidden_dim)
+            out_shape = (
+                [num_key_value_heads, -1, hidden_dim]
+                if ".bias" not in mcore_weights_name
+                else [num_key_value_heads, -1]
+            )
+            qkv = mcore_weights.view(*out_shape)
             q_len = head_dim * num_attention_heads // num_key_value_heads
             k_len = head_dim
             v_len = head_dim
-            q = qkv[:, :q_len, :].reshape(-1, hidden_dim)
-            k = qkv[:, q_len : q_len + k_len, :].reshape(-1, hidden_dim)
-            v = qkv[:, q_len + k_len :, :].reshape(-1, hidden_dim)
+            single_out_shape = (
+                [-1, hidden_dim] if ".bias" not in mcore_weights_name else [-1]
+            )
+            q = qkv[:, :q_len].reshape(*single_out_shape)
+            k = qkv[:, q_len : q_len + k_len].reshape(*single_out_shape)
+            v = qkv[:, q_len + k_len :].reshape(*single_out_shape)
             return hf_names, [q, k, v]
 
         elif "linear_fc1.weight" in mcore_weights_name:

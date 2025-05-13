@@ -72,7 +72,9 @@ def load_some_hf_weight(hf_dir: str, hf_weight_names: list[str]) -> dict:
                 f"Weights {set(hf_weight_names)-set(ret.keys())} not found in safetensors files in {hf_dir}"
             )
         return ret
-    raise ValueError(f"Weights {hf_weight_names} not found in safetensors files in {hf_dir}")
+    raise ValueError(
+        f"Weights {hf_weight_names} not found in safetensors files in {hf_dir}"
+    )
 
 
 def get_model(
@@ -277,3 +279,112 @@ def get_model(
                 model_module.broadcast_params()
 
     return model
+
+
+from megatron.core import DistributedDataParallel as DDP
+from megatron.core.distributed.custom_fsdp import (
+    FullyShardedDataParallel as custom_FSDP,
+)
+
+try:
+    from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
+
+    ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, torch_FSDP, custom_FSDP, Float16Module)
+except ImportError:
+    ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, custom_FSDP, Float16Module)
+
+
+def unwrap_model(model, module_instances=ALL_MODULE_WRAPPER_CLASSNAMES):
+    return_list = True
+    if not isinstance(model, list):
+        model = [model]
+        return_list = False
+    unwrapped_model = []
+    for model_module in model:
+        while isinstance(model_module, module_instances):
+            model_module = model_module.module
+        unwrapped_model.append(model_module)
+    if not return_list:
+        return unwrapped_model[0]
+    return unwrapped_model
+
+
+def broadcast_from_megatron_pp(tensor: torch.Tensor):
+    # tensor is not None only in one of the pp ranks
+    if tensor is not None:
+        shape = tensor.shape
+        dtype = tensor.dtype
+        tensor_parallel = getattr(tensor, "tensor_model_parallel", None)
+        partition_dim = getattr(tensor, "partition_dim", None)
+        tensor_spec = (shape, dtype, tensor_parallel, partition_dim)
+    else:
+        tensor_spec = None
+    tensor_spec_output = [None] * mpu.get_pipeline_model_parallel_world_size()
+    torch.distributed.all_gather_object(
+        object_list=tensor_spec_output,
+        obj=tensor_spec,
+        group=mpu.get_pipeline_model_parallel_group(),
+    )
+    # find the src rank
+    target_tensor_spec = None
+    src_rank = None
+    for rank, tensor_spec in enumerate(tensor_spec_output):
+        if tensor_spec is not None:
+            if target_tensor_spec is None:
+                target_tensor_spec = tensor_spec
+            else:
+                raise ValueError("A tensor exists on two pp ranks")
+            src_rank = rank
+    assert target_tensor_spec is not None
+    if tensor is None:
+        tensor = torch.empty(
+            size=target_tensor_spec[0],
+            dtype=target_tensor_spec[1],
+            device=torch.cuda.current_device(),
+        )
+        if target_tensor_spec[2] is not None:
+            tensor.tensor_model_parallel = target_tensor_spec[2]
+        if target_tensor_spec[3] is not None:
+            tensor.partition_dim = target_tensor_spec[3]
+
+    global_rank = torch.distributed.get_global_rank(
+        group=mpu.get_pipeline_model_parallel_group(), group_rank=src_rank
+    )
+    torch.distributed.broadcast(
+        tensor=tensor, src=global_rank, group=mpu.get_pipeline_model_parallel_group()
+    )
+    return tensor
+
+
+def broadcast_str_from_megatron_pp(obj: any) -> any:
+    obj_output = [None] * mpu.get_pipeline_model_parallel_world_size()
+    torch.distributed.all_gather_object(
+        object_list=obj_output, obj=obj, group=mpu.get_pipeline_model_parallel_group()
+    )
+
+    src_rank = None
+    target_obj = None
+    for rank, item in enumerate(obj_output):
+        if item is not None:
+            if target_obj is not None:
+                raise ValueError("An object exists on two pp ranks")
+            target_obj = item
+            src_rank = rank
+
+    assert target_obj is not None, "No valid object found to broadcast."
+
+    global_rank = torch.distributed.get_global_rank(
+        group=mpu.get_pipeline_model_parallel_group(), group_rank=src_rank
+    )
+
+    obj_output = [None] * torch.distributed.get_world_size(
+        group=mpu.get_pipeline_model_parallel_group()
+    )
+    obj_output[0] = target_obj
+    torch.distributed.broadcast_object_list(
+        object_list=obj_output,
+        src=global_rank,
+        group=mpu.get_pipeline_model_parallel_group(),
+    )
+
+    return obj_output[0]
