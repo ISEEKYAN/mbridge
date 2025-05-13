@@ -1,3 +1,4 @@
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 import dataclasses
 from collections import defaultdict
 from functools import lru_cache
@@ -19,7 +20,7 @@ from megatron.core.utils import (
 
 def load_some_hf_weight(hf_dir: str, hf_weight_names: list[str]) -> dict:
     """
-    加载huggingface的权重
+    Load Huggingface weights
     """
     import json
     import os
@@ -27,7 +28,7 @@ def load_some_hf_weight(hf_dir: str, hf_weight_names: list[str]) -> dict:
 
     from safetensors import safe_open
 
-    # 检查是否存在index文件
+    # Check if index file exists
     index_file = os.path.join(hf_dir, "model.safetensors.index.json")
 
     @lru_cache(maxsize=None)
@@ -51,26 +52,27 @@ def load_some_hf_weight(hf_dir: str, hf_weight_names: list[str]) -> dict:
                 for name in weight_names:
                     ret[name] = f.get_tensor(name)
         return ret
-    print("warning: 未找到index文件，将搜索所有safetensors文件")
+    print("warning: Index file not found, will search all safetensors files")
 
-    # 搜索所有safetensors文件
+    # Search all safetensors files
     safetensor_files = glob(os.path.join(hf_dir, "*.safetensors"))
     print(safetensor_files)
-    # 如果有safetensors文件
+    # If there are safetensors files
     if safetensor_files:
-        # 遍历每个safetensors文件
+        # Iterate through each safetensors file
         for safetensor_file in safetensor_files:
             with safe_open(safetensor_file, framework="pt", device="cpu") as f:
                 to_load = set(hf_weight_names) & set(f.keys())
                 if to_load:
                     for name in to_load:
                         ret[name] = f.get_tensor(name)
+                        print(f"{name} {ret[name].shape}")
         if len(ret) != len(hf_weight_names):
             raise ValueError(
-                f"在{hf_dir}的safetensors文件中未找到权重{set(hf_weight_names)-set(ret.keys())}"
+                f"Weights {set(hf_weight_names)-set(ret.keys())} not found in safetensors files in {hf_dir}"
             )
         return ret
-    raise ValueError(f"在{hf_dir}的safetensors文件中未找到权重{hf_weight_names}")
+    raise ValueError(f"Weights {hf_weight_names} not found in safetensors files in {hf_dir}")
 
 
 def get_model(
