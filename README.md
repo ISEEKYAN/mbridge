@@ -11,7 +11,8 @@ MBridge allows you to convert popular Hugging Face models to Megatron-Core forma
 ## Installation
 
 ```bash
-pip install mbridge
+# pip install mbridge
+pip install -e .
 ```
 
 ## Quick Start
