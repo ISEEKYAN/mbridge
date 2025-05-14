@@ -205,7 +205,7 @@ class Bridge(BaseBridge):
             for local_name, hf_names in local_to_hf_map.items():
                 # hf format to mcore format
                 hf_weights = [hf_weights_map[x] for x in hf_names]
-                mcore_weight = self._weight_import(local_name, hf_weights)
+                mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
 
                 # TODO: support ETP
 
@@ -479,7 +479,7 @@ class Bridge(BaseBridge):
                 f"Unsupported parameter name: {mcore_weights_name}"
             )
 
-    def _weight_export(
+    def _weight_to_hf_format(
         self, mcore_weights_name: str, mcore_weights: torch.Tensor
     ) -> tuple[list[str], list[torch.Tensor]]:
         """
@@ -538,7 +538,7 @@ class Bridge(BaseBridge):
             return hf_names, [gate, up]
         raise NotImplementedError(f"Unsupported parameter name: {mcore_weights_name}")
 
-    def _weight_import(
+    def _weight_to_mcore_format(
         self, mcore_weights_name: str, hf_weights: list[torch.Tensor]
     ) -> torch.Tensor:
         """
@@ -697,13 +697,13 @@ class Bridge(BaseBridge):
             "self_attention.linear_qkv." in mcore_weights_name
             and "layer_norm" not in mcore_weights_name
         ):
-            _, [q, k, v] = self._weight_export(mcore_weights_name, mcore_weights)
+            _, [q, k, v] = self._weight_to_hf_format(mcore_weights_name, mcore_weights)
             qs = q.chunk(tp_split_size)
             ks = k.chunk(tp_split_size)
             vs = v.chunk(tp_split_size)
             ret = [torch.cat((q, k, v), dim=0) for q, k, v in zip(qs, ks, vs)]
         elif "linear_fc1.weight" in mcore_weights_name:
-            _, [gate, up] = self._weight_export(mcore_weights_name, mcore_weights)
+            _, [gate, up] = self._weight_to_hf_format(mcore_weights_name, mcore_weights)
             gates = gate.chunk(tp_split_size)
             ups = up.chunk(tp_split_size)
             ret = [torch.cat((g, u), dim=0) for g, u in zip(gates, ups)]

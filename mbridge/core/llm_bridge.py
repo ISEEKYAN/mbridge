@@ -191,7 +191,7 @@ class LLMBridge(Bridge):
                     )
                     if not isinstance(merge_params, list):
                         merge_params = [merge_params]
-                    converted_names, converted_params = self._weight_export(
+                    converted_names, converted_params = self._weight_to_hf_format(
                         name, merge_params
                     )
 
@@ -220,5 +220,5 @@ class LLMBridge(Bridge):
             else:
                 infer_params = broad_pp_param
 
-            converted_names, converted_params = self._weight_export(name, infer_params)
+            converted_names, converted_params = self._weight_to_hf_format(name, infer_params)
             yield from zip(converted_names, converted_params)
