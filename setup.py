@@ -8,7 +8,9 @@ setup(
     author_email="bayan@nvidia.com",
     packages=find_packages(),
     install_requires=[
-        # "megatron-core>=0.11.0",
+        "megatron-core>=0.12.0",
+        "transformers",
+        "safetensors",
     ],
     python_requires=">=3.8",
 )
