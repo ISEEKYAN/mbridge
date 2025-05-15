@@ -75,7 +75,6 @@ The `example` directory contains scripts demonstrating common use cases:
 ### Features
 - [ ] VLM (Vision Language Model) support
 - [ ] FP8 precision support
-- [ ] Compression techniques for efficient deployment
 
 ### Additional Examples
 - [ ] Supervised Fine-Tuning (SFT) example

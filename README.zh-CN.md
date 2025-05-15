@@ -75,7 +75,6 @@ for key, weight in bridge.export_weights(model):
 ### 功能
 - [ ] VLM（视觉语言模型）支持
 - [ ] FP8精度支持
-- [ ] 高效部署的压缩技术
 
 ### 更多示例
 - [ ] 监督微调（SFT）示例
