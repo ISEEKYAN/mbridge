@@ -52,11 +52,10 @@ def load_some_hf_weight(hf_dir: str, hf_weight_names: list[str]) -> dict:
                 for name in weight_names:
                     ret[name] = f.get_tensor(name)
         return ret
-    print("warning: Index file not found, will search all safetensors files")
+    # print("warning: Index file not found, will search all safetensors files")
 
     # Search all safetensors files
     safetensor_files = glob(os.path.join(hf_dir, "*.safetensors"))
-    print(safetensor_files)
     # If there are safetensors files
     if safetensor_files:
         # Iterate through each safetensors file
@@ -66,7 +65,7 @@ def load_some_hf_weight(hf_dir: str, hf_weight_names: list[str]) -> dict:
                 if to_load:
                     for name in to_load:
                         ret[name] = f.get_tensor(name)
-                        print(f"{name} {ret[name].shape}")
+                        # print(f"{name} {ret[name].shape}")
         if len(ret) != len(hf_weight_names):
             raise ValueError(
                 f"Weights {set(hf_weight_names)-set(ret.keys())} not found in safetensors files in {hf_dir}"
@@ -75,6 +74,13 @@ def load_some_hf_weight(hf_dir: str, hf_weight_names: list[str]) -> dict:
     raise ValueError(
         f"Weights {hf_weight_names} not found in safetensors files in {hf_dir}"
     )
+
+
+def load_one_hf_weight(hf_dir: str, hf_weight_name: str) -> torch.Tensor:
+    """
+    Load one Huggingface weight
+    """
+    return load_some_hf_weight(hf_dir, [hf_weight_name])[hf_weight_name]
 
 
 def get_model(
@@ -153,7 +159,6 @@ def get_model(
             model = build_model()
     else:
         model = build_model()
-
     if not isinstance(model, list):
         model = [model]
 

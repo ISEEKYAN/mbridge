@@ -51,7 +51,6 @@ class LLaMA2Bridge(LLMBridge):
                     self.hf_config.rope_scaling["factor"]
                 )
         ret = dict(
-            config=self.config,
             vocab_size=self.hf_config.vocab_size,
             max_sequence_length=self.hf_config.max_position_embeddings,
             position_embedding_type="rope",

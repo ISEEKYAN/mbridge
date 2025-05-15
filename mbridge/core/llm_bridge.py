@@ -33,7 +33,6 @@ class LLMBridge(Bridge):
             dict: A dictionary of arguments for GPTModel initialization
         """
         return dict(
-            config=self.config,
             vocab_size=self.hf_config.vocab_size,
             max_sequence_length=self.hf_config.max_position_embeddings,
             position_embedding_type="rope",
@@ -82,6 +81,7 @@ class LLMBridge(Bridge):
             transformer_layer_spec = self._get_transformer_layer_spec()
             gptmodel_args = self._get_gptmodel_args()
             model = GPTModel(
+                config=self.config,
                 transformer_layer_spec=transformer_layer_spec,
                 pre_process=pre_process,
                 post_process=post_process,
@@ -201,7 +201,7 @@ class LLMBridge(Bridge):
             # TP
             if (
                 hasattr(broad_pp_param, "tensor_model_parallel")
-                and param.tensor_model_parallel
+                and broad_pp_param.tensor_model_parallel
             ):
                 # allocate a new tensor with proper size
                 if self.mpu.tp_size <= 1:
@@ -220,5 +220,8 @@ class LLMBridge(Bridge):
             else:
                 infer_params = broad_pp_param
 
-            converted_names, converted_params = self._weight_to_hf_format(name, infer_params)
+            converted_names, converted_params = self._weight_to_hf_format(
+                name, infer_params
+            )
+
             yield from zip(converted_names, converted_params)

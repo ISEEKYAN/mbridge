@@ -8,10 +8,8 @@ from megatron.core.transformer import MLATransformerConfig, TransformerConfig
 from torch.nn import functional as F
 from transformers import AutoConfig
 
-from mbridge.core.util import load_some_hf_weight
-
 from .parallel_states import ParallelStates
-from .util import get_model
+from .util import get_model, load_some_hf_weight, unwrap_model
 
 
 class BaseBridge(ABC):
@@ -112,7 +110,6 @@ class Bridge(BaseBridge):
         wrap_with_ddp=False,
         fp16: bool = False,
         bf16: bool = True,
-        virtual_pipeline_model_parallel_size: int = None,
         encoder_pipeline_model_parallel_size: int = 0,
         use_torch_fsdp2: bool = False,
         use_custom_fsdp: bool = False,
@@ -135,7 +132,6 @@ class Bridge(BaseBridge):
             wrap_with_ddp: Whether to wrap with DDP
             fp16: Whether to use FP16 precision
             bf16: Whether to use BF16 precision
-            virtual_pipeline_model_parallel_size: Size of virtual pipeline parallelism
             encoder_pipeline_model_parallel_size: Size of encoder pipeline parallelism
             use_torch_fsdp2: Whether to use PyTorch FSDP 2.0
             use_custom_fsdp: Whether to use custom FSDP
@@ -152,11 +148,18 @@ class Bridge(BaseBridge):
         Returns:
             Model instance
         """
+        share_embeddings_and_output_weights = getattr(
+            self.hf_config, "tie_word_embeddings", False
+        )
+        if (
+            share_embeddings_and_output_weights
+            and self.mpu.vpp_size
+            and self.mpu.vpp_size > 1
+        ):
+            raise ValueError("tie_word_embeddings is not supported for VPP > 1")
         model = get_model(
             self._model_provider(
-                share_embeddings_and_output_weights=getattr(
-                    self.hf_config, "tie_word_embeddings", False
-                ),
+                share_embeddings_and_output_weights=share_embeddings_and_output_weights,
                 value_model=value_model,
                 **extra_provider_args,
             ),
@@ -164,7 +167,7 @@ class Bridge(BaseBridge):
             wrap_with_ddp=wrap_with_ddp,
             fp16=fp16,
             bf16=bf16,
-            virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+            virtual_pipeline_model_parallel_size=self.mpu.vpp_size,
             encoder_pipeline_model_parallel_size=encoder_pipeline_model_parallel_size,
             use_torch_fsdp2=use_torch_fsdp2,
             use_custom_fsdp=use_custom_fsdp,
@@ -188,7 +191,7 @@ class Bridge(BaseBridge):
             models: List of model instances, supporting VPP (Virtual Pipeline Parallelism)
             weights_path: Path to the weights file
         """
-        for model in models:
+        for i, model in enumerate(models):
             # map local weight names to global weight names
             local_to_global_map = self._weight_name_mapping_mcore_local_to_global(model)
             # map local weight names to huggingface weight names
@@ -330,15 +333,16 @@ class Bridge(BaseBridge):
         """
         # vpp
         local_layer_to_global_layer = {}
+        model = unwrap_model(model)
         if hasattr(model, "decoder"):
             for idx, layer in enumerate(model.decoder.layers):
                 local_layer_to_global_layer[idx] = layer.layer_number - 1
         all_param_names = list(model.state_dict().keys())
         ret = {}
         for param_name in all_param_names:
-            prefix = "model.decoder.layers."
-            if param_name.startswith(prefix):
-                layer_idx = int(param_name[len(prefix) :].split(".")[0])
+            keyword = "decoder.layers."
+            if keyword in param_name:
+                layer_idx = int(param_name.split(keyword)[1].split(".")[0])
                 global_layer_idx = local_layer_to_global_layer[layer_idx]
                 ret[param_name] = param_name.replace(
                     f"layers.{layer_idx}.", f"layers.{global_layer_idx}."
@@ -571,16 +575,19 @@ class Bridge(BaseBridge):
             head_dim = getattr(
                 self.hf_config, "head_dim", hidden_dim // num_attention_heads
             )
+            group_dim = head_dim * num_attention_heads // num_key_value_heads
             q, k, v = hf_weights
+            # q k v might be tp split
+            real_num_key_value_heads = q.shape[0] // group_dim
             q = q.view(
                 [
-                    num_key_value_heads,
-                    head_dim * num_attention_heads // num_key_value_heads,
+                    real_num_key_value_heads,
+                    group_dim,
                     -1,
                 ]
             )
-            k = k.view([num_key_value_heads, head_dim, -1])
-            v = v.view([num_key_value_heads, head_dim, -1])
+            k = k.view([real_num_key_value_heads, head_dim, -1])
+            v = v.view([real_num_key_value_heads, head_dim, -1])
             out_shape = [-1, hidden_dim] if ".bias" not in mcore_weights_name else [-1]
 
             qkv = torch.cat([q, k, v], dim=1).view(*out_shape).contiguous()
@@ -600,6 +607,7 @@ class Bridge(BaseBridge):
     ) -> torch.Tensor:
         """
         Merge weights across tensor parallel ranks.
+        In mcore format
 
         Args:
             mcore_weights_name: MCore weight name
@@ -617,39 +625,7 @@ class Bridge(BaseBridge):
             "self_attention.linear_qkv." in mcore_weights_name
             and "layer_norm" not in mcore_weights_name
         ):
-            q_lst = []
-            k_lst = []
-            v_lst = []
-            assert (
-                self.hf_config.num_attention_heads % self.hf_config.num_key_value_heads
-                == 0
-            )
-            num_q_per_kv = (
-                self.hf_config.num_attention_heads // self.hf_config.num_key_value_heads
-            )
-            assert (
-                mcore_weights[0].shape[0] % (num_q_per_kv + 2) == 0
-            ), f"param '{mcore_weights_name}' shape '{mcore_weights[0].shape}' dim0 is not divisible by {num_q_per_kv + 2}"
-            kv_size_per_tp = mcore_weights[0].shape[0] // (num_q_per_kv + 2)
-            split_size = [kv_size_per_tp * num_q_per_kv, kv_size_per_tp, kv_size_per_tp]
-            for mcore_weight in mcore_weights:
-                num_query_groups_per_partition = (
-                    self.hf_config.num_key_value_heads // self.tp_size
-                )
-                for chunk in mcore_weight.chunk(num_query_groups_per_partition):
-                    split_size = [
-                        kv_size_per_tp * num_q_per_kv // num_query_groups_per_partition,
-                        kv_size_per_tp // num_query_groups_per_partition,
-                        kv_size_per_tp // num_query_groups_per_partition,
-                    ]
-                    q, k, v = chunk.split(split_size)
-                    q_lst.append(q)
-                    k_lst.append(k)
-                    v_lst.append(v)
-            q = torch.cat(q_lst, dim=0)
-            k = torch.cat(k_lst, dim=0)
-            v = torch.cat(v_lst, dim=0)
-            ret = torch.cat((q, k, v), dim=0)
+            return torch.cat(mcore_weights, dim=0)
         elif "linear_fc1.weight" in mcore_weights_name:
             # if the tensor is gate and proj
             gate_lst = []
@@ -697,23 +673,28 @@ class Bridge(BaseBridge):
             "self_attention.linear_qkv." in mcore_weights_name
             and "layer_norm" not in mcore_weights_name
         ):
-            _, [q, k, v] = self._weight_to_hf_format(mcore_weights_name, mcore_weights)
-            qs = q.chunk(tp_split_size)
-            ks = k.chunk(tp_split_size)
-            vs = v.chunk(tp_split_size)
-            ret = [torch.cat((q, k, v), dim=0) for q, k, v in zip(qs, ks, vs)]
+            return mcore_weights.chunk(tp_split_size)
         elif "linear_fc1.weight" in mcore_weights_name:
             _, [gate, up] = self._weight_to_hf_format(mcore_weights_name, mcore_weights)
             gates = gate.chunk(tp_split_size)
             ups = up.chunk(tp_split_size)
-            ret = [torch.cat((g, u), dim=0) for g, u in zip(gates, ups)]
+            ret = [
+                self._weight_to_mcore_format(mcore_weights_name, [g, u])
+                for g, u in zip(gates, ups)
+            ]
         elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
             ret = mcore_weights.chunk(tp_split_size, dim=1)
         else:
-            assert (
-                hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel
-            )
-            ret = mcore_weights.chunk(tp_split_size, dim=param.partition_dim)
+            if param.shape == mcore_weights.shape:
+                return [mcore_weights for _ in range(tp_split_size)]
+            assert len(param.shape) == len(mcore_weights.shape)
+            for partition_dim, (s1, s2) in enumerate(
+                zip(param.shape, mcore_weights.shape)
+            ):
+                if s1 != s2:
+                    break
+
+            ret = mcore_weights.chunk(tp_split_size, dim=partition_dim)
         return ret
 
 
