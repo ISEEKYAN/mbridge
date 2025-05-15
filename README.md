@@ -100,7 +100,6 @@ The `example` directory contains scripts demonstrating common use cases:
 ### Advanced Training Techniques
 - [ ] Implement sequence packing for training
 - [ ] Implement dynamic batching
-- [ ] Support efficient mixed-precision training
 
 ## License
 

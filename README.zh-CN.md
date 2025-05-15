@@ -100,7 +100,6 @@ for key, weight in bridge.export_weights(model):
 ### 高级训练技术
 - [ ] 实现序列打包（sequence packing）进行训练
 - [ ] 实现动态批处理
-- [ ] 支持高效的混合精度训练
 
 ## 许可证
 
