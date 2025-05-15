@@ -18,18 +18,26 @@ pip install -e .
 ## Quick Start
 
 ```python
+from megatron.core import parallel_state as mpu
 from mbridge import AutoBridge
 
+# Initialize distributed environment
+mpu.initialize_model_parallel(
+    tensor_model_parallel_size=tp,
+    pipeline_model_parallel_size=pp,
+    virtual_pipeline_model_parallel_size=vpp,
+    context_parallel_size=cp,
+    expert_model_parallel_size=ep,
+)
+
 # Load a model from Hugging Face
-bridge = AutoBridge.from_pretrained("/path/to/Qwen/Qwen2.5-7B-Instruct")
+HF_MODEL_PATH = "/path/to/Qwen/Qwen2.5-7B-Instruct"
+bridge = AutoBridge.from_pretrained(HF_MODEL_PATH)
 
-# Get a Megatron-Core model
-model = bridge.get_model()
+# Get a Megatron-Core model and load weights from Hugging Face
+model = bridge.get_model(weight_path=HF_MODEL_PATH)
 
-# Generate with the model
-# See examples/0.load_model_and_generate_single_gpu.py for detailed usage
-
-# Export weights back to Hugging Face format
+# Export weights back to Hugging Face format for inference engine
 for key, weight in bridge.export_weights(model):
     # Process or save the exported weights
     print(f"Exported: {key}")
@@ -38,62 +46,59 @@ for key, weight in bridge.export_weights(model):
 ## Supported Models
 
 Currently supported models:
-- Qwen2
-- Qwen2-MoE
-- Qwen3
-- Qwen3-MoE
-- LLaMA2
-- DeepseekV3
+- [x] Qwen2
+- [x] Qwen2-MoE
+- [x] Qwen3
+- [x] Qwen3-MoE
+- [x] LLaMA2
+- [ ] DeepseekV3
+- [ ] Mixtral
 
 ## Feature Highlights
 
 - **Comprehensive Model Support**: Support for various model architectures including MoE models (Mixture of Experts)
-- **Parameter Export**: Export trained Megatron parameters back to Hugging Face format
-- **Easy-to-use API**: Simplified interface for model conversion and weight loading
-- **Distributed Training Support**: Interface with Megatron-Core's advanced parallelism capabilities
+- **Online Weight Import**: Online loading HF weights with various parallelism strategies, no need to save extra Megatron-Core format weights
+- **Online Weight Export**: Online exporting weights to HF format for inference engines, with support for TP/PP/CP/VPP/EP/ETP parallelism strategies
+- **Distributed Training Support**: Seamless interface with Megatron-Core's advanced parallelism capabilities
+- **Simple API**: Intuitive interfaces for model conversion and weight management
 
 ## Examples
 
 The `example` directory contains scripts demonstrating common use cases:
 
-- `0.load_model_and_generate_single_gpu.py`: Loading a model and generating text
-- `1.load_model_and_export_single_gpu.py`: Loading a model and exporting weights
+- `0.load_model_and_generate_single_gpu.py`: Loading a model and generating text on a single GPU
+- `1.load_model_and_export_single_gpu.py`: Loading a model and exporting weights on a single GPU
+- `2.load_model_and_export_multiple_gpus.py`: Loading a model and exporting weights using multiple GPUs with TP/PP/CP/VPP parallelism
 
-## TODO
+## Development Roadmap
 
-### 1. Testing with Different Parallelism Strategies
-- [ ] Comprehensive testing with Tensor Parallelism (TP)
-- [ ] Testing with Pipeline Parallelism (PP)
-- [ ] Testing with Expert Parallelism (EP)
-- [ ] Testing with combined parallelism strategies (TP+PP+EP)
-- [ ] Benchmark performance across different parallelism configurations
+### Features
+- [ ] VLM (Vision Language Model) support
+- [ ] FP8 precision support
+- [ ] Compression techniques for efficient deployment
 
-### 2. Additional Examples
+### Additional Examples
 - [ ] Supervised Fine-Tuning (SFT) example
 - [ ] Continue pretraining example
 - [ ] Multi-modal model example
-- [ ] Inference optimization examples
+- [ ] Online export to inference engine example
 - [ ] Integration with popular training frameworks
 
-### 3. Correctness Verification Process
+### Correctness Verification Process
 - [ ] Develop a systematic validation pipeline
 - [ ] Add comparison tools for logits between HF and Megatron implementations
 - [ ] Create regression tests for weight loading
 - [ ] Implement validation tests for all supported parallelism modes
 - [ ] Document verification procedures for contributors
 
-### 4. How to Contribute
+### Community Contribution
 - [ ] Set up contribution guidelines
 - [ ] Create templates for issue reporting and pull requests
 - [ ] Document code style and testing requirements
 - [ ] Establish the review process
 - [ ] Provide guidance for adding support for new models
 
-### 5. Online Export
-- [x] Online export of Megatron model weights to inference engines
-- [ ] Add example of online export to inference engine
-
-### 6. Advanced Training Techniques
+### Advanced Training Techniques
 - [ ] Implement sequence packing for training
 - [ ] Implement dynamic batching
 - [ ] Support efficient mixed-precision training

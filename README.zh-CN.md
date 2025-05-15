@@ -18,18 +18,26 @@ pip install -e .
 ## 快速开始
 
 ```python
+from megatron.core import parallel_state as mpu
 from mbridge import AutoBridge
 
+# 初始化分布式环境
+mpu.initialize_model_parallel(
+    tensor_model_parallel_size=tp,
+    pipeline_model_parallel_size=pp,
+    virtual_pipeline_model_parallel_size=vpp,
+    context_parallel_size=cp,
+    expert_model_parallel_size=ep,
+)
+
 # 从Hugging Face加载模型
-bridge = AutoBridge.from_pretrained("/path/to/Qwen/Qwen2.5-7B-Instruct")
+HF_MODEL_PATH = "/path/to/Qwen/Qwen2.5-7B-Instruct"
+bridge = AutoBridge.from_pretrained(HF_MODEL_PATH)
 
-# 获取Megatron-Core模型
-model = bridge.get_model()
+# 获取Megatron-Core模型并从Hugging Face加载权重
+model = bridge.get_model(weight_path=HF_MODEL_PATH)
 
-# 使用模型生成内容
-# 详细用法请参见examples/0.load_model_and_generate_single_gpu.py
-
-# 导出权重回Hugging Face格式
+# 导出权重回Hugging Face格式用于推理引擎
 for key, weight in bridge.export_weights(model):
     # 处理或保存导出的权重
     print(f"已导出: {key}")
@@ -38,63 +46,60 @@ for key, weight in bridge.export_weights(model):
 ## 支持的模型
 
 当前支持的模型：
-- Qwen2
-- Qwen2-MoE
-- Qwen3
-- Qwen3-MoE
-- LLaMA2
-- DeepseekV3
+- [x] Qwen2
+- [x] Qwen2-MoE
+- [x] Qwen3
+- [x] Qwen3-MoE
+- [x] LLaMA2
+- [ ] DeepseekV3
+- [ ] Mixtral
 
 ## 功能亮点
 
 - **全面的模型支持**：支持多种模型架构，包括MoE（混合专家）模型
-- **参数导出**：将训练后的Megatron参数导出回Hugging Face格式
-- **易用的API**：简化的模型转换和权重加载接口
-- **分布式训练支持**：对接Megatron-Core的高级并行化能力
+- **在线权重导入**：支持在线加载HF权重，支持各种并行策略，无需保存额外的Megatron-Core格式权重
+- **在线权重导出**：支持在线导出权重到HF格式用于推理引擎，支持TP/PP/CP/VPP/EP/ETP等并行策略
+- **分布式训练支持**：无缝对接Megatron-Core的高级并行化能力
+- **简洁API**：直观的模型转换和权重管理接口
 
 ## 示例
 
 `example`目录包含展示常见用例的脚本：
 
-- `0.load_model_and_generate_single_gpu.py`：加载模型并生成文本
-- `1.load_model_and_export_single_gpu.py`：加载模型并导出权重
+- `0.load_model_and_generate_single_gpu.py`：在单GPU上加载模型并生成文本
+- `1.load_model_and_export_single_gpu.py`：在单GPU上加载模型并导出权重
+- `2.load_model_and_export_multiple_gpus.py`：使用多个GPU（TP/PP/CP/VPP并行）加载模型并导出权重
 
-## 待办事项
+## 开发路线图
 
-### 1. 不同并行策略下的测试
-- [ ] 使用张量并行（TP）进行全面测试
-- [ ] 使用流水线并行（PP）进行测试
-- [ ] 使用专家并行（EP）进行测试
-- [ ] 使用组合并行策略（TP+PP+EP）进行测试
-- [ ] 在不同并行配置下基准性能测试
+### 功能
+- [ ] VLM（视觉语言模型）支持
+- [ ] FP8精度支持
+- [ ] 高效部署的压缩技术
 
-### 2. 更多示例
+### 更多示例
 - [ ] 监督微调（SFT）示例
 - [ ] 继续预训练示例
 - [ ] 多模态模型示例
-- [ ] 推理优化示例
+- [ ] 在线导出到推理引擎示例
 - [ ] 与流行训练框架的集成
 
-### 3. 正确性验证流程
+### 正确性验证流程
 - [ ] 开发系统验证流程
 - [ ] 添加HF与Megatron实现之间的logits比较工具
 - [ ] 为权重加载创建回归测试
 - [ ] 为所有支持的并行模式实现验证测试
 - [ ] 为贡献者提供验证程序文档
 
-### 4. 如何贡献
+### 社区贡献
 - [ ] 建立贡献指南
 - [ ] 创建问题报告和拉取请求的模板
 - [ ] 记录代码风格和测试要求
 - [ ] 建立审查流程
 - [ ] 提供添加新模型支持的指导
 
-### 5. 在线导出
-- [x] 在线导出Megatron模型权重到推理引擎
-- [ ] 添加在线导出到推理引擎的示例
-
-### 6. 高级训练技术
-- [ ] 使用sequence packing进行训练
+### 高级训练技术
+- [ ] 实现序列打包（sequence packing）进行训练
 - [ ] 实现动态批处理
 - [ ] 支持高效的混合精度训练
 
