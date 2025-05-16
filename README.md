@@ -8,6 +8,14 @@ MBridge provides a seamless bridge between Hugging Face models and Megatron-Core
 
 MBridge allows you to convert popular Hugging Face models to Megatron-Core format, enabling you to leverage advanced parallelism strategies for large-scale training and inference. The library supports various model architectures and simplifies the process of transitioning between these frameworks. For Reinforcement Learning workflows, MBridge provides interfaces and tools needed to connect RL algorithms with Megatron-optimized models.
 
+## Feature Highlights
+
+- **Comprehensive Model Support**: Support for various model architectures including MoE models (Mixture of Experts)
+- **Online Weight Import**: Online loading HF weights with various parallelism strategies, auto shard the weights, no need to save extra Megatron-Core format weights
+- **Online Weight Export**: Online exporting weights to HF format for inference engines, with support for TP/PP/CP/VPP/EP/ETP parallelism strategies
+- **Memory Friendly**: Use per-tensor strategies, minimize the memory peak when loading/exporting HF format weights.
+- **Simple API**: Intuitive interfaces for model conversion and weight management
+
 ## Installation
 
 ```bash
@@ -54,13 +62,6 @@ Currently supported models:
 - [ ] DeepseekV3
 - [ ] Mixtral
 
-## Feature Highlights
-
-- **Comprehensive Model Support**: Support for various model architectures including MoE models (Mixture of Experts)
-- **Online Weight Import**: Online loading HF weights with various parallelism strategies, no need to save extra Megatron-Core format weights
-- **Online Weight Export**: Online exporting weights to HF format for inference engines, with support for TP/PP/CP/VPP/EP/ETP parallelism strategies
-- **Distributed Training Support**: Seamless interface with Megatron-Core's advanced parallelism capabilities
-- **Simple API**: Intuitive interfaces for model conversion and weight management
 
 ## Examples
 
