@@ -15,6 +15,7 @@ MBridge allows you to convert popular Hugging Face models to Megatron-Core forma
 - **Online Weight Export**: Online exporting weights to HF format for inference engines, with support for TP/PP/CP/VPP/EP/ETP parallelism strategies
 - **Memory Friendly**: Use per-tensor strategies, minimize the memory peak when loading/exporting HF format weights.
 - **Simple API**: Intuitive interfaces for model conversion and weight management
+- **Support Transformer Engine**: Use the powerful Transformer Engine to accelerate Megatron-Core models for better performance (use_te=False is not supported now)
 
 ## Installation
 
@@ -58,7 +59,7 @@ Currently supported models:
 - [x] Qwen2-MoE
 - [x] Qwen3
 - [x] Qwen3-MoE
-- [x] LLaMA2
+- [x] LLaMA
 - [ ] DeepseekV3
 - [ ] Mixtral
 

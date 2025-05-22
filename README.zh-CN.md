@@ -15,6 +15,7 @@ MBridge允许您将流行的Hugging Face模型转换为Megatron-Core格式，使
 - **在线权重导出**：支持在线导出权重到HF格式用于推理引擎，支持TP/PP/CP/VPP/EP/ETP等并行策略
 - **内存友好**：采用按张量策略，最小化加载/导出HF格式权重时的内存峰值
 - **简洁API**：直观的模型转换和权重管理接口
+- **支持Transformer Engine**：使用强大的Transformer Engine加速Megatron-Core模型，获得更好的性能（use_te=False目前不支持）
 
 ## 安装
 
@@ -58,7 +59,7 @@ for key, weight in bridge.export_weights(model):
 - [x] Qwen2-MoE
 - [x] Qwen3
 - [x] Qwen3-MoE
-- [x] LLaMA2
+- [x] LLaMA
 - [ ] DeepseekV3
 - [ ] Mixtral
 
