@@ -71,6 +71,11 @@ def load_some_hf_weight(hf_dir: str, hf_weight_names: list[str]) -> dict:
                 f"Weights {set(hf_weight_names)-set(ret.keys())} not found in safetensors files in {hf_dir}"
             )
         return ret
+    if len(safetensor_files) == 0:
+        if glob(os.path.join(hf_dir, "pytorch_model-*.bin")).__len__() > 0:
+            raise NotImplementedError(
+                "Not implemented for deprecated pytorch_model-*.bin format huggingface weights, please use safetensors format"
+            )
     raise ValueError(
         f"Weights {hf_weight_names} not found in safetensors files in {hf_dir}"
     )

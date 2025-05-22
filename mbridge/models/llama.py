@@ -4,8 +4,8 @@ from ..core import LLMBridge, register_model
 from ..core.bridge import Bridge, register_model
 
 
-@register_model("llama2")
-class LLaMA2Bridge(LLMBridge):
+@register_model("llama")
+class LLaMABridge(LLMBridge):
     """
     Bridge implementation for LLaMA2 models.
 

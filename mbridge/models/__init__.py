@@ -14,7 +14,7 @@ Classes:
 """
 
 from .deepseekv3 import DeepseekV3Bridge
-from .llama2 import LLaMA2Bridge
+from .llama import LLaMABridge
 from .qwen2 import Qwen2Bridge
 from .qwen2moe import Qwen2MoEBridge
 from .qwen3 import Qwen3Bridge
