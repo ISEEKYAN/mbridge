@@ -41,6 +41,8 @@ mpu.initialize_model_parallel(
 
 # Load a model from Hugging Face
 HF_MODEL_PATH = "/path/to/Qwen/Qwen2.5-7B-Instruct"
+# or llama model
+HF_MODEL_PATH = "/path/to/llama/llama3-8b-instruct"
 bridge = AutoBridge.from_pretrained(HF_MODEL_PATH)
 
 # Get a Megatron-Core model and load weights from Hugging Face

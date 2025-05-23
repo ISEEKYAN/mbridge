@@ -41,6 +41,8 @@ mpu.initialize_model_parallel(
 
 # 从Hugging Face加载模型
 HF_MODEL_PATH = "/path/to/Qwen/Qwen2.5-7B-Instruct"
+# or llama model
+HF_MODEL_PATH = "/path/to/llama/llama3-8b-instruct"
 bridge = AutoBridge.from_pretrained(HF_MODEL_PATH)
 
 # 获取Megatron-Core模型并从Hugging Face加载权重
