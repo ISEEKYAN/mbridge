@@ -13,7 +13,7 @@ from mbridge import AutoBridge
 from mbridge.core.util import load_one_hf_weight
 
 
-def init_distributed(tp=2, pp=1, cp=1, vpp=1, ep=1):
+def init_distributed(tp=2, pp=1, cp=1, vpp=1, ep=1, etp=None):
     """Initialize distributed environment"""
     torch.distributed.init_process_group("nccl")
     torch.cuda.set_device(torch.distributed.get_rank())
@@ -25,6 +25,7 @@ def init_distributed(tp=2, pp=1, cp=1, vpp=1, ep=1):
         virtual_pipeline_model_parallel_size=vpp,
         context_parallel_size=cp,
         expert_model_parallel_size=ep,
+        expert_tensor_parallel_size=etp,
     )
     model_parallel_cuda_manual_seed(0)
 
@@ -44,10 +45,20 @@ def main():
         "--vpp", type=int, default=1, help="Virtual pipeline model parallel size"
     )
     parser.add_argument("--ep", type=int, default=1, help="Expert model parallel size")
+    parser.add_argument(
+        "--etp", type=int, default=None, help="Expert tensor parallel size"
+    )
     args = parser.parse_args()
 
     # Initialize distributed environment
-    init_distributed(tp=args.tp, pp=args.pp, cp=args.cp, vpp=args.vpp, ep=args.ep)
+    init_distributed(
+        tp=args.tp,
+        pp=args.pp,
+        cp=args.cp,
+        vpp=args.vpp,
+        ep=args.ep,
+        etp=args.etp,
+    )
 
     # Load model
     hf_model_path = args.model_path

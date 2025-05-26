@@ -210,13 +210,17 @@ class Bridge(BaseBridge):
                 hf_weights = [hf_weights_map[x] for x in hf_names]
                 mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
 
-                # TODO: support ETP
-
-                # split mcore weights across tp
                 param = model.state_dict()[local_name]
-                mcore_weight_tp_split = self._weight_split_across_tp(
-                    local_name, mcore_weight, param, self.mpu.tp_size
-                )[self.mpu.tp_rank]
+                if ".mlp.experts.linear_fc" in local_name:
+                    # split mcore weights across etp
+                    mcore_weight_tp_split = self._weight_split_across_tp(
+                        local_name, mcore_weight, param, self.mpu.etp_size
+                    )[self.mpu.etp_rank]
+                else:
+                    # split mcore weights across tp
+                    mcore_weight_tp_split = self._weight_split_across_tp(
+                        local_name, mcore_weight, param, self.mpu.tp_size
+                    )[self.mpu.tp_rank]
                 # load
                 param.copy_(mcore_weight_tp_split)
 
@@ -337,7 +341,9 @@ class Bridge(BaseBridge):
         if hasattr(model, "decoder"):
             for idx, layer in enumerate(model.decoder.layers):
                 local_layer_to_global_layer[idx] = layer.layer_number - 1
-        all_param_names = list(model.state_dict().keys())
+        all_param_names = [
+            k for k in model.state_dict().keys() if "_extra_state" not in k
+        ]
         ret = {}
         for param_name in all_param_names:
             keyword = "decoder.layers."
@@ -620,7 +626,10 @@ class Bridge(BaseBridge):
         if self.mpu.tp_size == 1:
             assert len(mcore_weights) == 1
             return mcore_weights[0]
-        assert len(mcore_weights) == self.mpu.tp_size
+        if "mlp.experts.linear_fc" in mcore_weights_name:
+            assert len(mcore_weights) == self.mpu.etp_size
+        else:
+            assert len(mcore_weights) == self.mpu.tp_size
         if (
             "self_attention.linear_qkv." in mcore_weights_name
             and "layer_norm" not in mcore_weights_name

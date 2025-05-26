@@ -189,8 +189,6 @@ class LLMBridge(Bridge):
                     merge_params = self._weight_merge_across_tp(
                         name, params, broad_pp_param
                     )
-                    if not isinstance(merge_params, list):
-                        merge_params = [merge_params]
                     converted_names, converted_params = self._weight_to_hf_format(
                         name, merge_params
                     )
