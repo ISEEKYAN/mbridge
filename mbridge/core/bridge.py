@@ -200,29 +200,66 @@ class Bridge(BaseBridge):
                 for k, v in local_to_global_map.items()
                 if "_extra_state" not in k
             }
+            # only tp_rank0/etp_rank0 load from disk, others load from tp_rank0/etp_rank0
+            to_load_from_disk = []
+            for local_name, hf_names in local_to_hf_map.items():
+                if ".mlp.experts.linear_fc" in local_name:
+                    if self.mpu.etp_rank == 0:
+                        to_load_from_disk.extend(hf_names)
+                else:
+                    if self.mpu.tp_rank == 0:
+                        to_load_from_disk.extend(hf_names)
+
             # load huggingface weights
-            hf_weights_map = load_some_hf_weight(
-                weights_path, sum(list(local_to_hf_map.values()), [])
-            )
+            hf_weights_map = load_some_hf_weight(weights_path, to_load_from_disk)
             # import mcore weights
             for local_name, hf_names in local_to_hf_map.items():
-                # hf format to mcore format
-                hf_weights = [hf_weights_map[x] for x in hf_names]
-                mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
-
                 param = model.state_dict()[local_name]
+                # hf format to mcore format
+                if set(to_load_from_disk) & set(hf_names):
+                    hf_weights = [hf_weights_map[x] for x in hf_names]
+                    mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
+                else:
+                    mcore_weight = None
+                param_to_load = torch.empty_like(param)
                 if ".mlp.experts.linear_fc" in local_name:
                     # split mcore weights across etp
-                    mcore_weight_tp_split = self._weight_split_across_tp(
-                        local_name, mcore_weight, param, self.mpu.etp_size
-                    )[self.mpu.etp_rank]
+                    if self.mpu.etp_rank == 0:
+                        mcore_weights_tp_split = self._weight_split_across_tp(
+                            local_name, mcore_weight, param, self.mpu.etp_size
+                        )
+                        mcore_weights_tp_split = list(mcore_weights_tp_split)
+                        mcore_weights_tp_split = [
+                            t.to(param.device) for t in mcore_weights_tp_split
+                        ]
+                    else:
+                        mcore_weights_tp_split = None
+                    torch.distributed.scatter(
+                        param_to_load,
+                        mcore_weights_tp_split,
+                        src=torch.distributed.get_global_rank(self.mpu.etp_group, 0),
+                        group=self.mpu.etp_group,
+                    )
                 else:
                     # split mcore weights across tp
-                    mcore_weight_tp_split = self._weight_split_across_tp(
-                        local_name, mcore_weight, param, self.mpu.tp_size
-                    )[self.mpu.tp_rank]
+                    if self.mpu.tp_rank == 0:
+                        mcore_weights_tp_split = self._weight_split_across_tp(
+                            local_name, mcore_weight, param, self.mpu.tp_size
+                        )
+                        mcore_weights_tp_split = list(mcore_weights_tp_split)
+                        mcore_weights_tp_split = [
+                            t.to(param.device) for t in mcore_weights_tp_split
+                        ]
+                    else:
+                        mcore_weights_tp_split = None
+                    torch.distributed.scatter(
+                        param_to_load,
+                        mcore_weights_tp_split,
+                        src=torch.distributed.get_global_rank(self.mpu.tp_group, 0),
+                        group=self.mpu.tp_group,
+                    )
                 # load
-                param.copy_(mcore_weight_tp_split)
+                param.copy_(param_to_load)
 
     def set_extra_args(self, **kwargs):
         """
