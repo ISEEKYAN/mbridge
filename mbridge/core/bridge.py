@@ -230,11 +230,16 @@ class Bridge(ABC):
 
         def get_model_chunk_generator():
             for model in models:
-                yield from model.named_parameters()
+                for name, param in model.state_dict().items():
+                    if "_extra_state" in name:
+                        continue
+                    yield name, param
 
         weights_names = []
         for vpp_rank, model in enumerate(models):
-            for name, param in model.named_parameters():
+            for name, param in model.state_dict().items():
+                if "_extra_state" in name:
+                    continue
                 weights_names.append((self.mpu.pp_rank, vpp_rank, name))
         weights_names_all_pp = [None] * self.mpu.pp_size
         torch.distributed.all_gather_object(
