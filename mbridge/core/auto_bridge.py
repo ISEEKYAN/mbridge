@@ -2,16 +2,16 @@
 
 from transformers import AutoConfig
 
-from .bridge import _MODEL_REGISTRY, BaseBridge
+from .bridge import _MODEL_REGISTRY, Bridge
 
 
-class AutoBridge(BaseBridge):
+class AutoBridge:
     """
     Automatically selects the appropriate model bridge class based on the model type.
     """
 
     @classmethod
-    def from_pretrained(cls, hf_model_path):
+    def from_pretrained(cls, hf_model_path) -> Bridge:
         """
         Loads the appropriate bridge class from a pretrained model path.
 
@@ -26,7 +26,7 @@ class AutoBridge(BaseBridge):
         return cls.from_config(config)
 
     @classmethod
-    def from_config(cls, hf_config: AutoConfig):
+    def from_config(cls, hf_config: AutoConfig) -> Bridge:
         """
         Loads the appropriate bridge class from a Hugging Face configuration.
 
@@ -48,7 +48,7 @@ class AutoBridge(BaseBridge):
             )
 
     @classmethod
-    def list_supported_models(cls):
+    def list_supported_models(cls) -> list[str]:
         """
         Lists all supported model types.
 

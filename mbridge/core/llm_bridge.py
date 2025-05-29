@@ -4,6 +4,8 @@ from typing import Generator
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer import TransformerConfig
+from torch.nn import functional as F
 
 from .bridge import Bridge
 from .layer import LinearForLastLayer
@@ -21,6 +23,57 @@ class LLMBridge(Bridge):
     This class extends the base Bridge class to provide specific functionality
     for handling Large Language Models (LLMs) like GPT models.
     """
+
+    def _build_base_config(self, **kwargs):
+        """
+        Build the base configuration for the model.
+
+        Args:
+            **kwargs: Additional configuration overrides
+
+        Returns:
+            TransformerConfig: The constructed transformer configuration
+        """
+        hf_config = self.hf_config
+        dtype = self.dtype
+        base_config = {
+            # Model architecture parameters
+            "num_layers": hf_config.num_hidden_layers,
+            "hidden_size": hf_config.hidden_size,
+            "num_attention_heads": hf_config.num_attention_heads,
+            "num_query_groups": hf_config.num_key_value_heads,
+            "ffn_hidden_size": hf_config.intermediate_size,
+            "attention_dropout": hf_config.attention_dropout,
+            "hidden_dropout": getattr(hf_config, "hidden_dropout", 0.0),
+            "kv_channels": getattr(hf_config, "head_dim", None),
+            "layernorm_epsilon": hf_config.rms_norm_eps,
+            # Activation and normalization
+            "activation_func": F.silu,
+            "normalization": "RMSNorm",
+            "gated_linear_unit": True,
+            # Data types
+            "pipeline_dtype": dtype,
+            "params_dtype": dtype,
+            "bf16": dtype is torch.bfloat16,
+            # Parallel configuration
+            "tensor_model_parallel_size": self.mpu.tp_size,
+            "pipeline_model_parallel_size": self.mpu.pp_size,
+            "expert_model_parallel_size": self.mpu.ep_size,
+            "expert_tensor_parallel_size": self.mpu.etp_size,
+            "virtual_pipeline_model_parallel_size": self.mpu.vpp_size,
+            "context_parallel_size": self.mpu.cp_size,
+            "sequence_parallel": self.mpu.tp_size > 1,
+            # Common settings
+            "variable_seq_lengths": True,
+            "masked_softmax_fusion": True,
+            "moe_token_dispatcher_type": "alltoall",
+        }
+
+        # Update with any provided overrides
+        base_config.update(kwargs)
+        # print(f"Overridden TF init config: {base_config}")
+
+        return TransformerConfig(**base_config)
 
     def _get_gptmodel_args(self) -> dict:
         """
@@ -98,128 +151,3 @@ class LLMBridge(Bridge):
             return model
 
         return provider
-
-    def export_weights(
-        self, models: list[torch.nn.Module]
-    ) -> Generator[tuple[str, torch.Tensor], None, None]:
-
-        # map vpp layer number to global layer number
-        def get_layer_number(vpp_rank: int, local_layer_number: int) -> int:
-            unwrapped_model = unwrap_model(models[vpp_rank])
-            global_layer_number = (
-                unwrapped_model.decoder.layers[local_layer_number].layer_number - 1
-            )
-            return global_layer_number
-
-        def get_model_chunk_generator():
-            for model in models:
-                yield from model.named_parameters()
-
-        weights_names = []
-        for vpp_rank, model in enumerate(models):
-            for name, param in model.named_parameters():
-                weights_names.append((self.mpu.pp_rank, vpp_rank, name))
-        weights_names_all_pp = [None] * self.mpu.pp_size
-        torch.distributed.all_gather_object(
-            object_list=weights_names_all_pp, obj=weights_names, group=self.mpu.pp_group
-        )
-        weights_names_all_pp = sum(weights_names_all_pp, [])
-        model_chunk_generator = get_model_chunk_generator()
-        for iter_pp_rank, iter_vpp_rank, iter_name in weights_names_all_pp:
-            if iter_pp_rank == self.mpu.pp_rank:
-                try:
-                    name, param = next(model_chunk_generator)
-                except StopIteration:
-                    name, param = None, None
-                if "layers" in iter_name:
-                    local_layer_number = int(
-                        iter_name.split("layers.")[1].split(".")[0]
-                    )
-                    global_layer_number = get_layer_number(
-                        iter_vpp_rank, local_layer_number
-                    )
-                    name = iter_name.replace(
-                        f"layers.{local_layer_number}.",
-                        f"layers.{global_layer_number}.",
-                    )
-            else:
-                name, param = None, None
-
-            name = broadcast_str_from_megatron_pp(name)
-            broad_pp_param = broadcast_from_megatron_pp(param)
-
-            while name.startswith("module."):
-                name = name[len("module.") :]
-
-            # EP
-            if ".mlp.experts.linear_fc" in name and self.mpu.ep_size > 1:
-                num_experts = self.config.num_moe_experts
-                num_experts_per_rank = num_experts // self.mpu.ep_size
-                infer_params = [
-                    torch.empty_like(broad_pp_param) for _ in range(self.mpu.ep_size)
-                ]
-                torch.distributed.all_gather(
-                    infer_params, broad_pp_param, group=self.mpu.ep_group
-                )
-
-                name_prefix, local_expert_id = name.split(".weight")
-                local_expert_id = int(local_expert_id)
-                global_expert_ids = [
-                    num_experts_per_rank * ep_rank + local_expert_id
-                    for ep_rank in range(self.mpu.ep_size)
-                ]
-                global_expert_names = [
-                    f"{name_prefix}.weight{expert_id}"
-                    for expert_id in global_expert_ids
-                ]
-
-                for name, param in zip(global_expert_names, infer_params):
-                    if self.mpu.etp_size > 1:
-                        # gather etp
-                        etp_params = [
-                            torch.empty_like(param) for _ in range(self.mpu.etp_size)
-                        ]
-                        torch.distributed.all_gather(
-                            etp_params, param, group=self.mpu.etp_group
-                        )
-                        params = etp_params
-                    else:
-                        params = [param]
-
-                    merge_params = self._weight_merge_across_tp(
-                        name, params, broad_pp_param
-                    )
-                    converted_names, converted_params = self._weight_to_hf_format(
-                        name, merge_params
-                    )
-
-                    yield from zip(converted_names, converted_params)
-                continue
-
-            # TP
-            if (
-                hasattr(broad_pp_param, "tensor_model_parallel")
-                and broad_pp_param.tensor_model_parallel
-            ):
-                # allocate a new tensor with proper size
-                if self.mpu.tp_size <= 1:
-                    infer_params = [broad_pp_param]
-                else:
-                    infer_params = [
-                        torch.empty_like(broad_pp_param)
-                        for _ in range(self.mpu.tp_size)
-                    ]
-                    torch.distributed.all_gather(
-                        infer_params, broad_pp_param, group=self.mpu.tp_group
-                    )
-                infer_params = self._weight_merge_across_tp(
-                    name, infer_params, broad_pp_param
-                )
-            else:
-                infer_params = broad_pp_param
-
-            converted_names, converted_params = self._weight_to_hf_format(
-                name, infer_params
-            )
-
-            yield from zip(converted_names, converted_params)
