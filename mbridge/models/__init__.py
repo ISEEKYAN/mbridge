@@ -13,7 +13,7 @@ Classes:
     DeepseekV3Bridge: Bridge implementation for DeepseekV3 models
 """
 
-from .deepseekv3 import DeepseekV3Bridge
+from .deepseek_v3 import DeepseekV3Bridge
 from .llama import LLaMABridge
 from .qwen2 import Qwen2Bridge
 from .qwen2moe import Qwen2MoEBridge

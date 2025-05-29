@@ -25,10 +25,7 @@ class LLaMABridge(LLMBridge):
         """
         qkv_bias = getattr(self.hf_config, "attention_bias", False)
         return self._build_base_config(
-            use_cpu_initialization=False,
-            add_bias_linear=False,
-            add_qkv_bias=qkv_bias,
-            **self.extra_args
+            use_cpu_initialization=False, add_qkv_bias=qkv_bias
         )
 
     def _get_gptmodel_args(self) -> dict:

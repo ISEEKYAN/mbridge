@@ -24,6 +24,8 @@ class LLMBridge(Bridge):
     for handling Large Language Models (LLMs) like GPT models.
     """
 
+    TransformerConfigClass = TransformerConfig
+
     def _build_base_config(self, **kwargs):
         """
         Build the base configuration for the model.
@@ -67,13 +69,14 @@ class LLMBridge(Bridge):
             "variable_seq_lengths": True,
             "masked_softmax_fusion": True,
             "moe_token_dispatcher_type": "alltoall",
+            "add_bias_linear": False,
         }
 
         # Update with any provided overrides
         base_config.update(kwargs)
-        # print(f"Overridden TF init config: {base_config}")
+        base_config.update(self.extra_args)
 
-        return TransformerConfig(**base_config)
+        return self.TransformerConfigClass(**base_config)
 
     def _get_gptmodel_args(self) -> dict:
         """

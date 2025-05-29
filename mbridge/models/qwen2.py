@@ -25,9 +25,7 @@ class Qwen2Bridge(LLMBridge):
         """
         return self._build_base_config(
             use_cpu_initialization=False,
-            add_bias_linear=False,
             # qwen2
             add_qkv_bias=True,
             qk_layernorm=False,
-            **self.extra_args
         )

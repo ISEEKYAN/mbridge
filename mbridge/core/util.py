@@ -1,5 +1,7 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 import dataclasses
+import json
+import os
 from collections import defaultdict
 from functools import lru_cache
 
@@ -18,12 +20,20 @@ from megatron.core.utils import (
 )
 
 
+def load_hf_weight_names(hf_dir: str) -> list[str]:
+    """
+    Load Huggingface weight names
+    """
+    index_file = os.path.join(hf_dir, "model.safetensors.index.json")
+    with open(index_file, "r") as f:
+        index = json.load(f)["weight_map"]
+    return list(index.keys())
+
+
 def load_some_hf_weight(hf_dir: str, hf_weight_names: list[str]) -> dict:
     """
     Load Huggingface weights
     """
-    import json
-    import os
     from glob import glob
 
     from safetensors import safe_open

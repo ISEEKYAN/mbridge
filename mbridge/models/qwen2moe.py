@@ -8,7 +8,6 @@ class Qwen2MoEBridge(LLMBridge):
     def _build_config(self):
         return self._build_base_config(
             use_cpu_initialization=False,
-            add_bias_linear=False,
             # MoE specific
             moe_ffn_hidden_size=self.hf_config.moe_intermediate_size,
             moe_router_bias_update_rate=0.001,
@@ -28,7 +27,6 @@ class Qwen2MoEBridge(LLMBridge):
             # Qwen specific
             moe_router_pre_softmax=True,
             add_qkv_bias=True,
-            **self.extra_args,
         )
 
     def _model_provider(
