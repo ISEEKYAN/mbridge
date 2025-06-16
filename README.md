@@ -52,6 +52,9 @@ model = bridge.get_model(weight_path=HF_MODEL_PATH)
 for key, weight in bridge.export_weights(model):
     # Process or save the exported weights
     print(f"Exported: {key}")
+
+# save model with HF format
+bridge.save_weights(model, "path/to/save/model", memory_efficient=False) # set memory_efficient=True if the model is vary large
 ```
 
 ## Supported Models
@@ -62,7 +65,7 @@ Currently supported models:
 - [x] Qwen3
 - [x] Qwen3-MoE
 - [x] LLaMA
-- [ ] DeepseekV3
+- [x] DeepseekV3
 - [ ] Mixtral
 
 

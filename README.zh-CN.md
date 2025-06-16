@@ -52,6 +52,9 @@ model = bridge.get_model(weight_path=HF_MODEL_PATH)
 for key, weight in bridge.export_weights(model):
     # 处理或保存导出的权重
     print(f"已导出: {key}")
+
+# 保存模型到HF格式
+bridge.save_weights(model, "path/to/save/model", memory_efficient=False) # 如果模型很大，设置memory_efficient=True
 ```
 
 ## 支持的模型
@@ -62,7 +65,7 @@ for key, weight in bridge.export_weights(model):
 - [x] Qwen3
 - [x] Qwen3-MoE
 - [x] LLaMA
-- [ ] DeepseekV3
+- [x] DeepseekV3
 - [ ] Mixtral
 
 ## 示例
