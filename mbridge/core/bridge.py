@@ -1,7 +1,7 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 import os
 from abc import ABC, abstractmethod
-from typing import Generator
+from typing import Callable, Generator
 
 import torch
 from megatron.core.models.gpt.gpt_model import ModelType
@@ -66,7 +66,7 @@ class Bridge(ABC):
         overlap_param_gather_with_optimizer_step: bool = False,
         data_parallel_random_init: bool = True,
         optimizer_config: dict = None,
-        value_model: bool = False,
+        post_model_creation_callbacks: list[Callable[[torch.nn.Module], None]] = [],
         extra_provider_args: dict = {},
         **kwargs,
     ):
@@ -88,26 +88,25 @@ class Bridge(ABC):
             overlap_param_gather_with_optimizer_step: Whether to overlap parameter gathering
             data_parallel_random_init: Whether to use random initialization in data parallel
             optimizer_config: Optimizer configuration
-            value_model: Whether to create a value model
+            post_model_creation_callbacks: List of callbacks to be called after model creation
             extra_provider_args: Additional arguments for the model provider
             **kwargs: Additional arguments
 
         Returns:
             Model instance
         """
-        share_embeddings_and_output_weights = getattr(
-            self.hf_config, "tie_word_embeddings", False
-        )
-        if (
-            share_embeddings_and_output_weights
-            and self.mpu.vpp_size
-            and self.mpu.vpp_size > 1
-        ):
-            raise ValueError("tie_word_embeddings is not supported for VPP > 1")
+        # share_embeddings_and_output_weights = getattr(
+        #     self.hf_config, "tie_word_embeddings", False
+        # )
+        # if (
+        #     share_embeddings_and_output_weights
+        #     and self.mpu.vpp_size
+        #     and self.mpu.vpp_size > 1
+        # ):
+        #     raise ValueError("tie_word_embeddings is not supported for VPP > 1")
         model = get_model(
             self._model_provider(
-                share_embeddings_and_output_weights=share_embeddings_and_output_weights,
-                value_model=value_model,
+                post_model_creation_callbacks,
                 **extra_provider_args,
             ),
             model_type=model_type,
@@ -158,6 +157,11 @@ class Bridge(ABC):
                 else:
                     if self.mpu.tp_rank == 0:
                         to_load_from_disk.extend(hf_names)
+                    else:
+                        # special case for lm_head.weight
+                        # if make value model, every tp rank will load lm_head.weight
+                        if "lm_head.weight" in hf_names:
+                            to_load_from_disk.extend(hf_names)
 
             # load huggingface weights
             hf_weights_map = self.safetensor_io.load_some_hf_weight(to_load_from_disk)
@@ -170,6 +174,11 @@ class Bridge(ABC):
                     mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
                 else:
                     mcore_weight = None
+                if hf_names[0] == "lm_head.weight":
+                    if param.shape[0] != mcore_weight.shape[0]:
+                        # skip lm_head.weight when the model is a value model
+                        continue
+
                 param_to_load = torch.empty_like(param)
                 if ".mlp.experts.linear_fc" in local_name:
                     # split mcore weights across etp
@@ -416,15 +425,14 @@ class Bridge(ABC):
         raise NotImplementedError("Subclasses must implement this method")
 
     def _model_provider(
-        self, share_embeddings_and_output_weights=False, value_model=False
+        self, post_model_creation_callbacks: list[Callable[[torch.nn.Module], None]]
     ):
         """
         Create a model provider function.
         This method must be implemented by subclasses.
 
         Args:
-            share_embeddings_and_output_weights: Whether to share embedding weights
-            value_model: Whether to create a value model
+            post_model_creation_callbacks: List of callbacks to be called after model creation
 
         Returns:
             Function that provides a model
@@ -551,6 +559,12 @@ class Bridge(ABC):
         "mlp.linear_fc2.weight": ["model.layers.{layer_number}.mlp.down_proj.weight"],
     }
 
+    _DIRECT_MAPPING = {
+        "embedding.word_embeddings.weight": "model.embed_tokens.weight",
+        "decoder.final_layernorm.weight": "model.norm.weight",
+        "output_layer.weight": "lm_head.weight",
+    }
+
     def _weight_name_mapping_mlp(self, name: str) -> str:
         """
         Map MLP weight names from MCore to Hugging Face.
@@ -589,13 +603,9 @@ class Bridge(ABC):
         assert (
             "_extra_state" not in mcore_weights_name
         ), "extra_state should not be loaded"
-        direct_name_mapping = {
-            "embedding.word_embeddings.weight": "model.embed_tokens.weight",
-            "decoder.final_layernorm.weight": "model.norm.weight",
-            "output_layer.weight": "lm_head.weight",
-        }
-        if mcore_weights_name in direct_name_mapping:
-            return [direct_name_mapping[mcore_weights_name]]
+
+        if mcore_weights_name in self._DIRECT_MAPPING:
+            return [self._DIRECT_MAPPING[mcore_weights_name]]
 
         if "self_attention" in mcore_weights_name:
             return self._weight_name_mapping_attention(mcore_weights_name)

@@ -20,7 +20,7 @@ class LinearForLastLayer(torch.nn.Linear):
         output_size,
         *,
         config,
-        bias=True,
+        bias=False,
     ):
         """
         Initializes the LinearForLastLayer.

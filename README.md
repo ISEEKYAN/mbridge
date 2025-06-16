@@ -74,6 +74,21 @@ The `example` directory contains scripts demonstrating common use cases:
 - `1.load_model_and_export_single_gpu.py`: Loading a model and exporting weights on a single GPU
 - `2.load_model_and_export_multiple_gpus.py`: Loading a model and exporting weights using multiple GPUs with TP/PP/CP/VPP parallelism
 
+### Post Model Creation Callbacks
+
+MBridge provides a set of post model creation callbacks to customize the model after it is created.
+
+- `make_value_model`: Add a value model to the model
+- `freeze_moe_router`: Freeze the router of the model
+
+```python
+from mbridge.utils.post_creation_callbacks import make_value_model, freeze_moe_router
+
+bridge = AutoBridge.from_pretrained(HF_MODEL_PATH)
+model = bridge.get_model(weight_path=HF_MODEL_PATH, post_model_creation_callbacks=[make_value_model, freeze_moe_router])
+
+```
+
 ## Development Roadmap
 
 ### Features

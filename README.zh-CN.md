@@ -73,6 +73,19 @@ for key, weight in bridge.export_weights(model):
 - `1.load_model_and_export_single_gpu.py`：在单GPU上加载模型并导出权重
 - `2.load_model_and_export_multiple_gpus.py`：使用多个GPU（TP/PP/CP/VPP并行）加载模型并导出权重
 
+### 模型创建后回调
+
+MBridge提供了一些后模型创建回调来定制化模型。
+
+- `make_value_model`: 使模型变为 value model
+- `freeze_moe_router`: 冻结模型中的MoE路由器
+
+```python
+from mbridge.utils.post_creation_callbacks import make_value_model, freeze_moe_router
+
+bridge = AutoBridge.from_pretrained(HF_MODEL_PATH)
+model = bridge.get_model(weight_path=HF_MODEL_PATH, post_model_creation_callbacks=[make_value_model, freeze_moe_router])
+```
 ## 开发路线图
 
 ### 功能

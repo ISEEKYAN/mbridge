@@ -1,5 +1,5 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
-from typing import Generator
+from typing import Callable, Generator
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
@@ -8,7 +8,6 @@ from megatron.core.transformer import TransformerConfig
 from torch.nn import functional as F
 
 from .bridge import Bridge
-from .layer import LinearForLastLayer
 from .util import (
     broadcast_from_megatron_pp,
     broadcast_str_from_megatron_pp,
@@ -118,7 +117,7 @@ class LLMBridge(Bridge):
         return transformer_layer_spec
 
     def _model_provider(
-        self, share_embeddings_and_output_weights=False, value_model=False
+        self, post_model_creation_callbacks: list[Callable[[torch.nn.Module], None]]
     ):
         """
         Creates and returns a model provider function.
@@ -127,12 +126,15 @@ class LLMBridge(Bridge):
         when called with pre_process and post_process parameters.
 
         Args:
-            share_embeddings_and_output_weights: Whether to share embedding weights
-            value_model: Whether this is a value model with a custom output layer
+            post_model_creation_callbacks: List of callbacks to be called after model creation
 
         Returns:
             function: A provider function that creates and returns a GPTModel instance
         """
+
+        share_embeddings_and_output_weights = getattr(
+            self.hf_config, "tie_word_embeddings", False
+        )
 
         def provider(pre_process, post_process):
             transformer_layer_spec = self._get_transformer_layer_spec()
@@ -145,11 +147,13 @@ class LLMBridge(Bridge):
                 share_embeddings_and_output_weights=share_embeddings_and_output_weights,
                 **gptmodel_args,
             )
-            if post_process and value_model:
-                model.output_layer = LinearForLastLayer(
-                    input_size=self.config.hidden_size,
-                    output_size=1,
+            for callback in post_model_creation_callbacks:
+                callback(
+                    model,
+                    pre_process=pre_process,
+                    post_process=post_process,
                     config=self.config,
+                    hf_config=self.hf_config,
                 )
 
             return model

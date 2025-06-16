@@ -5,6 +5,11 @@ from ..core import LLMBridge, register_model
 
 @register_model("qwen2_moe")
 class Qwen2MoEBridge(LLMBridge):
+    _DIRECT_MAPPING = {
+        "embedding.word_embeddings.weight": "model.embed_tokens.weight",
+        "decoder.final_layernorm.weight": "model.norm.weight",
+        "output_layer.weight": "lm_head.weight",
+    }
     _ATTENTION_MAPPING = {
         "self_attention.linear_proj.weight": [
             "model.layers.{layer_number}.self_attn.o_proj.weight"
@@ -76,24 +81,6 @@ class Qwen2MoEBridge(LLMBridge):
             moe_router_pre_softmax=True,
             add_qkv_bias=True,
         )
-
-    def _model_provider(
-        self,
-        share_embeddings_and_output_weights=False,
-        value_model=False,
-        freeze_moe_router: bool = False,
-    ):
-        def provider(pre_process, post_process):
-            model = LLMBridge._model_provider(
-                self, share_embeddings_and_output_weights, value_model
-            )(pre_process, post_process)
-            if freeze_moe_router:
-                for layer in model.decoder.layers:
-                    layer.mlp.router.weight.requires_grad = False
-                    layer.mlp.shared_experts.gate_weight.requires_grad = False
-            return model
-
-        return provider
 
     def _weight_name_mapping_mlp(self, name: str) -> list[str]:
         layer_number = name.split(".")[2]

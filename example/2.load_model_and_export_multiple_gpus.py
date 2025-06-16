@@ -10,6 +10,7 @@ from megatron.core import parallel_state as mpu
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
 from mbridge import AutoBridge
+from mbridge.utils.post_creation_callbacks import freeze_moe_router, make_value_model
 
 
 def init_distributed(tp=2, pp=1, cp=1, vpp=1, ep=1, etp=None):
@@ -66,7 +67,9 @@ def main():
     hf_model_path = args.model_path
     print(f"rank{torch.distributed.get_rank()}: start loading model")
     bridge = AutoBridge.from_pretrained(hf_model_path)
-    model = bridge.get_model()
+    model = bridge.get_model(
+        post_model_creation_callbacks=[make_value_model, freeze_moe_router]
+    )
     print(
         f"rank{torch.distributed.get_rank()}: start loading weights from {hf_model_path}"
     )
@@ -75,14 +78,18 @@ def main():
     # export weights
     for k, v in bridge.export_weights(model):
         gt = bridge.safetensor_io.load_one_hf_weight(k).to(v.device)
-        assert v.shape == gt.shape, f"mismatch of {k} {v.shape=} {gt.shape=}"
-        assert v.sum().item() == gt.sum().item(), f"mismatch of {k}"
-        if torch.distributed.get_rank() == 1:
+        if k != "lm_head.weight":
+            assert v.shape == gt.shape, f"mismatch of {k} {v.shape=} {gt.shape=}"
+            assert v.sum().item() == gt.sum().item(), f"mismatch of {k}"
+        else:
+            if v.shape[0] == 1:
+                print(f"this is a value model, {k} {v.shape=} {gt.shape=}")
+        if torch.distributed.get_rank() == 0:
             print(k, "export ok")
     if args.save_path:
         bridge.save_weights(model, args.save_path, memory_efficient=False)
 
-    torch.distributed.destroy_process_group()
+    # torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":

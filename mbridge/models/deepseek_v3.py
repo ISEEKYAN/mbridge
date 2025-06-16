@@ -14,6 +14,11 @@ class DeepseekV3Bridge(LLMBridge):
     Specific bridge implementation for DeepseekV3 models.
     """
 
+    _DIRECT_MAPPING = {
+        "embedding.word_embeddings.weight": "model.embed_tokens.weight",
+        "decoder.final_layernorm.weight": "model.norm.weight",
+        "output_layer.weight": "lm_head.weight",
+    }
     _MLP_MAPPING = {
         "mlp.linear_fc1.layer_norm_weight": [
             "model.layers.{layer_number}.post_attention_layernorm.weight"
@@ -149,25 +154,6 @@ class DeepseekV3Bridge(LLMBridge):
             **mtp_args,
         )
 
-    def _model_provider(
-        self,
-        share_embeddings_and_output_weights=False,
-        value_model=False,
-        freeze_moe_router: bool = False,
-    ):
-
-        def provider(pre_process, post_process):
-            model = LLMBridge._model_provider(
-                self, share_embeddings_and_output_weights, value_model
-            )(pre_process, post_process)
-            if freeze_moe_router:
-                for layer in model.decoder.layers:
-                    if hasattr(layer.mlp, "router"):
-                        layer.mlp.router.weight.requires_grad = False
-            return model
-
-        return provider
-
     def _get_gptmodel_args(self) -> dict:
         """
         Gets the arguments for GPTModel initialization.
@@ -207,13 +193,8 @@ class DeepseekV3Bridge(LLMBridge):
         assert (
             "_extra_state" not in mcore_weights_name
         ), "extra_state should not be loaded"
-        direct_name_mapping = {
-            "embedding.word_embeddings.weight": "model.embed_tokens.weight",
-            "decoder.final_layernorm.weight": "model.norm.weight",
-            "output_layer.weight": "lm_head.weight",
-        }
-        if mcore_weights_name in direct_name_mapping:
-            return [direct_name_mapping[mcore_weights_name]]
+        if mcore_weights_name in self._DIRECT_MAPPING:
+            return [self._DIRECT_MAPPING[mcore_weights_name]]
 
         if (
             "self_attention" in mcore_weights_name

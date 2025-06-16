@@ -13,6 +13,11 @@ class Qwen2Bridge(LLMBridge):
     Hugging Face Qwen2 format and Megatron-Core.
     """
 
+    _DIRECT_MAPPING = {
+        "embedding.word_embeddings.weight": "model.embed_tokens.weight",
+        "decoder.final_layernorm.weight": "model.norm.weight",
+        "output_layer.weight": "lm_head.weight",
+    }
     _ATTENTION_MAPPING = {
         "self_attention.linear_proj.weight": [
             "model.layers.{layer_number}.self_attn.o_proj.weight"
