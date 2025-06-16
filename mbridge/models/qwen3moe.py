@@ -1,6 +1,6 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
-from ..core import LLMBridge, register_model
+from ..core import register_model
 from .qwen2moe import Qwen2MoEBridge
 
 
@@ -16,8 +16,8 @@ class Qwen3MoEBridge(Qwen2MoEBridge):
             moe_router_topk=self.hf_config.num_experts_per_tok,
             num_moe_experts=self.hf_config.num_experts,
             moe_aux_loss_coeff=self.hf_config.router_aux_loss_coef,
-            # moe_aux_loss_coeff=0.0,
-            moe_router_load_balancing_type="aux_loss",
+            # moe_router_load_balancing_type="aux_loss",
+            moe_router_load_balancing_type="none",  # default None for RL
             moe_grouped_gemm=True,
             moe_router_score_function="softmax",
             # Other optimizations

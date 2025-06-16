@@ -14,6 +14,41 @@ class LLaMABridge(LLMBridge):
     Hugging Face LLaMA2 format and Megatron-Core.
     """
 
+    _ATTENTION_MAPPING = {
+        "self_attention.linear_proj.weight": [
+            "model.layers.{layer_number}.self_attn.o_proj.weight"
+        ],
+        "self_attention.linear_qkv.layer_norm_weight": [
+            "model.layers.{layer_number}.input_layernorm.weight"
+        ],
+        "self_attention.q_layernorm.weight": [
+            "model.layers.{layer_number}.self_attn.q_norm.weight"
+        ],
+        "self_attention.k_layernorm.weight": [
+            "model.layers.{layer_number}.self_attn.k_norm.weight"
+        ],
+        "self_attention.linear_qkv.weight": [
+            "model.layers.{layer_number}.self_attn.q_proj.weight",
+            "model.layers.{layer_number}.self_attn.k_proj.weight",
+            "model.layers.{layer_number}.self_attn.v_proj.weight",
+        ],
+        "self_attention.linear_qkv.bias": [
+            "model.layers.{layer_number}.self_attn.q_proj.bias",
+            "model.layers.{layer_number}.self_attn.k_proj.bias",
+            "model.layers.{layer_number}.self_attn.v_proj.bias",
+        ],
+    }
+    _MLP_MAPPING = {
+        "mlp.linear_fc1.weight": [
+            "model.layers.{layer_number}.mlp.gate_proj.weight",
+            "model.layers.{layer_number}.mlp.up_proj.weight",
+        ],
+        "mlp.linear_fc1.layer_norm_weight": [
+            "model.layers.{layer_number}.post_attention_layernorm.weight"
+        ],
+        "mlp.linear_fc2.weight": ["model.layers.{layer_number}.mlp.down_proj.weight"],
+    }
+
     def _build_config(self):
         """
         Build the configuration for LLaMA2 models.
@@ -24,9 +59,7 @@ class LLaMABridge(LLMBridge):
             TransformerConfig: Configuration object for LLaMA2 models
         """
         qkv_bias = getattr(self.hf_config, "attention_bias", False)
-        return self._build_base_config(
-            use_cpu_initialization=False, add_qkv_bias=qkv_bias
-        )
+        return self._build_base_config(add_qkv_bias=qkv_bias)
 
     def _get_gptmodel_args(self) -> dict:
         """

@@ -14,6 +14,68 @@ class DeepseekV3Bridge(LLMBridge):
     Specific bridge implementation for DeepseekV3 models.
     """
 
+    _MLP_MAPPING = {
+        "mlp.linear_fc1.layer_norm_weight": [
+            "model.layers.{layer_number}.post_attention_layernorm.weight"
+        ],
+        "mlp.linear_fc2.weight": ["model.layers.{layer_number}.mlp.down_proj.weight"],
+        "mlp.shared_experts.linear_fc2.weight": [
+            "model.layers.{layer_number}.mlp.shared_experts.down_proj.weight"
+        ],
+        "mlp.linear_fc1.weight": [
+            "model.layers.{layer_number}.mlp.gate_proj.weight",
+            "model.layers.{layer_number}.mlp.up_proj.weight",
+        ],
+        "mlp.shared_experts.linear_fc1.weight": [
+            "model.layers.{layer_number}.mlp.shared_experts.gate_proj.weight",
+            "model.layers.{layer_number}.mlp.shared_experts.up_proj.weight",
+        ],
+        "pre_mlp_layernorm.weight": [
+            "model.layers.{layer_number}.post_attention_layernorm.weight"
+        ],
+        "mlp.router.weight": ["model.layers.{layer_number}.mlp.gate.weight"],
+        "mlp.router.expert_bias": [
+            "model.layers.{layer_number}.mlp.gate.e_score_correction_bias"
+        ],
+        "mlp.experts.linear_fc1.weight": [
+            "model.layers.{layer_number}.mlp.experts.{expert_id}.gate_proj.weight",
+            "model.layers.{layer_number}.mlp.experts.{expert_id}.up_proj.weight",
+        ],
+        "mlp.experts.linear_fc2.weight": [
+            "model.layers.{layer_number}.mlp.experts.{expert_id}.down_proj.weight"
+        ],
+    }
+
+    _ATTENTION_MAPPING = {
+        "input_layernorm.weight": [
+            "model.layers.{layer_number}.input_layernorm.weight"
+        ],
+        "self_attention.linear_proj.weight": [
+            "model.layers.{layer_number}.self_attn.o_proj.weight"
+        ],
+        "self_attention.linear_q_proj.weight": [
+            "model.layers.{layer_number}.self_attn.q_proj.weight"
+        ],
+        "self_attention.linear_kv_down_proj.weight": [
+            "model.layers.{layer_number}.self_attn.kv_a_proj_with_mqa.weight"
+        ],
+        "self_attention.linear_kv_up_proj.layer_norm_weight": [
+            "model.layers.{layer_number}.self_attn.kv_a_layernorm.weight"
+        ],
+        "self_attention.linear_kv_up_proj.weight": [
+            "model.layers.{layer_number}.self_attn.kv_b_proj.weight"
+        ],
+        "self_attention.linear_q_down_proj.weight": [
+            "model.layers.{layer_number}.self_attn.q_a_proj.weight"
+        ],
+        "self_attention.linear_q_up_proj.weight": [
+            "model.layers.{layer_number}.self_attn.q_b_proj.weight"
+        ],
+        "self_attention.linear_q_up_proj.layer_norm_weight": [
+            "model.layers.{layer_number}.self_attn.q_a_layernorm.weight"
+        ],
+    }
+
     TransformerConfigClass = MLATransformerConfig
 
     def _build_config(self):
@@ -41,8 +103,6 @@ class DeepseekV3Bridge(LLMBridge):
             mtp_args["mtp_loss_scaling_factor"] = 0.1
 
         return self._build_base_config(
-            use_cpu_initialization=False,
-            add_bias_linear=False,
             attention_backend=AttnBackend.fused,
             layernorm_epsilon=hf_config.rms_norm_eps,
             ffn_hidden_size=hf_config.intermediate_size,
@@ -57,9 +117,9 @@ class DeepseekV3Bridge(LLMBridge):
             moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size
             * hf_config.n_shared_experts,
             moe_aux_loss_coeff=getattr(hf_config, "aux_loss_alpha", 0.001),
-            moe_router_load_balancing_type="seq_aux_loss",
+            # moe_router_load_balancing_type="seq_aux_loss",
+            moe_router_load_balancing_type="none",  # default None for RL
             moe_shared_expert_overlap=True,
-            # moe_permute_fusion=True, # need TE 2.1+
             moe_grouped_gemm=True,
             moe_router_score_function="sigmoid",
             moe_router_pre_softmax=True,
@@ -83,8 +143,6 @@ class DeepseekV3Bridge(LLMBridge):
             moe_router_dtype="fp64",
             disable_bf16_reduced_precision_matmul=True,
             # other
-            # deallocate_pipeline_outputs=True,
-            # gradient_accumulation_fusion=True,
             persist_layer_norm=True,
             bias_activation_fusion=True,
             bias_dropout_fusion=True,
@@ -97,8 +155,6 @@ class DeepseekV3Bridge(LLMBridge):
         value_model=False,
         freeze_moe_router: bool = False,
     ):
-        if freeze_moe_router:
-            self.config.moe_router_load_balancing_type = "none"
 
         def provider(pre_process, post_process):
             model = LLMBridge._model_provider(
@@ -173,38 +229,6 @@ class DeepseekV3Bridge(LLMBridge):
                 f"Unsupported parameter name: {mcore_weights_name}"
             )
 
-    _MLP_MAPPING = {
-        "mlp.linear_fc1.layer_norm_weight": [
-            "model.layers.{layer_number}.post_attention_layernorm.weight"
-        ],
-        "mlp.linear_fc2.weight": ["model.layers.{layer_number}.mlp.down_proj.weight"],
-        "mlp.shared_experts.linear_fc2.weight": [
-            "model.layers.{layer_number}.mlp.shared_experts.down_proj.weight"
-        ],
-        "mlp.linear_fc1.weight": [
-            "model.layers.{layer_number}.mlp.gate_proj.weight",
-            "model.layers.{layer_number}.mlp.up_proj.weight",
-        ],
-        "mlp.shared_experts.linear_fc1.weight": [
-            "model.layers.{layer_number}.mlp.shared_experts.gate_proj.weight",
-            "model.layers.{layer_number}.mlp.shared_experts.up_proj.weight",
-        ],
-        "pre_mlp_layernorm.weight": [
-            "model.layers.{layer_number}.post_attention_layernorm.weight"
-        ],
-        "mlp.router.weight": ["model.layers.{layer_number}.mlp.gate.weight"],
-        "mlp.router.expert_bias": [
-            "model.layers.{layer_number}.mlp.gate.e_score_correction_bias"
-        ],
-        "mlp.experts.linear_fc1.weight": [
-            "model.layers.{layer_number}.mlp.experts.{expert_id}.gate_proj.weight",
-            "model.layers.{layer_number}.mlp.experts.{expert_id}.up_proj.weight",
-        ],
-        "mlp.experts.linear_fc2.weight": [
-            "model.layers.{layer_number}.mlp.experts.{expert_id}.down_proj.weight"
-        ],
-    }
-
     def _weight_name_mapping_mlp(self, name: str) -> list[str]:
         layer_number = name.split(".")[2]
         convert_names = []
@@ -226,36 +250,6 @@ class DeepseekV3Bridge(LLMBridge):
         if len(convert_names) == 0:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names
-
-    _ATTENTION_MAPPING = {
-        "input_layernorm.weight": [
-            "model.layers.{layer_number}.input_layernorm.weight"
-        ],
-        "self_attention.linear_proj.weight": [
-            "model.layers.{layer_number}.self_attn.o_proj.weight"
-        ],
-        "self_attention.linear_q_proj.weight": [
-            "model.layers.{layer_number}.self_attn.q_proj.weight"
-        ],
-        "self_attention.linear_kv_down_proj.weight": [
-            "model.layers.{layer_number}.self_attn.kv_a_proj_with_mqa.weight"
-        ],
-        "self_attention.linear_kv_up_proj.layer_norm_weight": [
-            "model.layers.{layer_number}.self_attn.kv_a_layernorm.weight"
-        ],
-        "self_attention.linear_kv_up_proj.weight": [
-            "model.layers.{layer_number}.self_attn.kv_b_proj.weight"
-        ],
-        "self_attention.linear_q_down_proj.weight": [
-            "model.layers.{layer_number}.self_attn.q_a_proj.weight"
-        ],
-        "self_attention.linear_q_up_proj.weight": [
-            "model.layers.{layer_number}.self_attn.q_b_proj.weight"
-        ],
-        "self_attention.linear_q_up_proj.layer_norm_weight": [
-            "model.layers.{layer_number}.self_attn.q_a_layernorm.weight"
-        ],
-    }
 
     def _convert_mtp_param(self, name: str) -> tuple[list[str]]:
         assert self.config.mtp_num_layers == 1, "only support one mtp layer for now"

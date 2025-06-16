@@ -1,10 +1,11 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
 from ..core import LLMBridge, register_model
+from .qwen2 import Qwen2Bridge
 
 
 @register_model("qwen3")
-class Qwen3Bridge(LLMBridge):
+class Qwen3Bridge(Qwen2Bridge):
     """
     Bridge implementation for Qwen3 models.
 
@@ -24,7 +25,6 @@ class Qwen3Bridge(LLMBridge):
             TransformerConfig: Configuration object for Qwen3 models
         """
         return self._build_base_config(
-            use_cpu_initialization=False,
             # qwen3
             qk_layernorm=True,
         )

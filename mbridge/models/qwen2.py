@@ -13,6 +13,41 @@ class Qwen2Bridge(LLMBridge):
     Hugging Face Qwen2 format and Megatron-Core.
     """
 
+    _ATTENTION_MAPPING = {
+        "self_attention.linear_proj.weight": [
+            "model.layers.{layer_number}.self_attn.o_proj.weight"
+        ],
+        "self_attention.linear_qkv.layer_norm_weight": [
+            "model.layers.{layer_number}.input_layernorm.weight"
+        ],
+        "self_attention.q_layernorm.weight": [
+            "model.layers.{layer_number}.self_attn.q_norm.weight"
+        ],
+        "self_attention.k_layernorm.weight": [
+            "model.layers.{layer_number}.self_attn.k_norm.weight"
+        ],
+        "self_attention.linear_qkv.weight": [
+            "model.layers.{layer_number}.self_attn.q_proj.weight",
+            "model.layers.{layer_number}.self_attn.k_proj.weight",
+            "model.layers.{layer_number}.self_attn.v_proj.weight",
+        ],
+        "self_attention.linear_qkv.bias": [
+            "model.layers.{layer_number}.self_attn.q_proj.bias",
+            "model.layers.{layer_number}.self_attn.k_proj.bias",
+            "model.layers.{layer_number}.self_attn.v_proj.bias",
+        ],
+    }
+    _MLP_MAPPING = {
+        "mlp.linear_fc1.weight": [
+            "model.layers.{layer_number}.mlp.gate_proj.weight",
+            "model.layers.{layer_number}.mlp.up_proj.weight",
+        ],
+        "mlp.linear_fc1.layer_norm_weight": [
+            "model.layers.{layer_number}.post_attention_layernorm.weight"
+        ],
+        "mlp.linear_fc2.weight": ["model.layers.{layer_number}.mlp.down_proj.weight"],
+    }
+
     def _build_config(self):
         """
         Build the configuration for Qwen2 models.
@@ -24,7 +59,6 @@ class Qwen2Bridge(LLMBridge):
             TransformerConfig: Configuration object for Qwen2 models
         """
         return self._build_base_config(
-            use_cpu_initialization=False,
             # qwen2
             add_qkv_bias=True,
             qk_layernorm=False,

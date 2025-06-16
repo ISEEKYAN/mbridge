@@ -70,6 +70,7 @@ class LLMBridge(Bridge):
             "masked_softmax_fusion": True,
             "moe_token_dispatcher_type": "alltoall",
             "add_bias_linear": False,
+            "use_cpu_initialization": False,
         }
 
         # Update with any provided overrides
