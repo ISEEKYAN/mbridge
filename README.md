@@ -66,7 +66,7 @@ Currently supported models:
 - [x] Qwen3-MoE
 - [x] LLaMA
 - [x] DeepseekV3
-- [ ] Mixtral
+- [x] Mixtral
 
 
 ## Examples
