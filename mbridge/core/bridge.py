@@ -1,4 +1,5 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+import os
 from abc import ABC, abstractmethod
 from typing import Generator
 
@@ -9,11 +10,11 @@ from torch.nn import functional as F
 from transformers import AutoConfig
 
 from .parallel_states import ParallelStates
+from .safetensor_io import SafeTensorIO
 from .util import (
     broadcast_from_megatron_pp,
     broadcast_str_from_megatron_pp,
     get_model,
-    load_some_hf_weight,
     unwrap_model,
 )
 
@@ -47,6 +48,7 @@ class Bridge(ABC):
         if self.mpu is None:
             self.mpu = ParallelStates.get_parallel_state()
         self.config = self._build_config()
+        self.safetensor_io = None
 
     def get_model(
         self,
@@ -136,6 +138,8 @@ class Bridge(ABC):
             models: List of model instances, supporting VPP (Virtual Pipeline Parallelism)
             weights_path: Path to the weights file
         """
+        self.safetensor_io = SafeTensorIO(weights_path)
+
         for i, model in enumerate(models):
             # map local weight names to global weight names
             local_to_global_map = self._weight_name_mapping_mcore_local_to_global(model)
@@ -156,7 +160,7 @@ class Bridge(ABC):
                         to_load_from_disk.extend(hf_names)
 
             # load huggingface weights
-            hf_weights_map = load_some_hf_weight(weights_path, to_load_from_disk)
+            hf_weights_map = self.safetensor_io.load_some_hf_weight(to_load_from_disk)
             # import mcore weights
             for local_name, hf_names in local_to_hf_map.items():
                 param = model.state_dict()[local_name]
@@ -206,6 +210,34 @@ class Bridge(ABC):
                 # load
                 param.copy_(param_to_load)
 
+    def save_weights(
+        self, models: list, weights_path: str, memory_efficient: bool = False
+    ) -> None:
+        """
+        Save weights from a Megatron-Core model into a Hugging Face model.
+        """
+        is_distributed = (
+            torch.distributed.is_available() and torch.distributed.is_initialized()
+        )
+        rank = torch.distributed.get_rank() if is_distributed else 0
+        if not os.path.exists(weights_path):
+            os.makedirs(weights_path)
+        per_tensor_generator = self.export_weights(models)
+        if rank != 0:
+            for _, _ in per_tensor_generator:
+                pass
+            return
+        if rank == 0:
+            if memory_efficient:
+                self.safetensor_io.save_hf_weight_memory_efficient(
+                    per_tensor_generator, weights_path
+                )
+            else:
+                self.safetensor_io.save_hf_weight(per_tensor_generator, weights_path)
+            self.safetensor_io.save_index(weights_path)
+            self.hf_config.save_pretrained(weights_path)
+        return
+
     def set_extra_args(self, **kwargs):
         """
         Set additional configuration arguments.
@@ -230,17 +262,41 @@ class Bridge(ABC):
 
         def get_model_chunk_generator():
             for model in models:
-                for name, param in model.state_dict().items():
-                    if "_extra_state" in name:
-                        continue
+                existing_keys = set()
+                for name, param in model.named_parameters():
+                    existing_keys.add(name)
                     yield name, param
+
+                # note
+                # there is a bug in megatron GPTModel
+                # decoder.layers[n].mlp.router.expert_bias" in GPTModel is not registered in named_parameter, but in state_dict().
+                # for now we patch it by adding those keys to extra_keys.
+                extra_keys = [
+                    x
+                    for x in model.state_dict().keys()
+                    if "_extra_state" not in x
+                    and "expert_bias" in x
+                    and x not in existing_keys
+                ]
+                for name in extra_keys:
+                    yield name, model.state_dict()[name].to(torch.cuda.current_device())
 
         weights_names = []
         for vpp_rank, model in enumerate(models):
-            for name, param in model.state_dict().items():
-                if "_extra_state" in name:
-                    continue
+            existing_keys = set()
+            for name, param in model.named_parameters():
+                existing_keys.add(name)
                 weights_names.append((self.mpu.pp_rank, vpp_rank, name))
+            extra_keys = [
+                x
+                for x in model.state_dict().keys()
+                if "_extra_state" not in x
+                and "expert_bias" in x
+                and x not in existing_keys
+            ]
+            for name in extra_keys:
+                yield name, model.state_dict()[name].to(torch.cuda.current_device())
+
         weights_names_all_pp = [None] * self.mpu.pp_size
         torch.distributed.all_gather_object(
             object_list=weights_names_all_pp, obj=weights_names, group=self.mpu.pp_group

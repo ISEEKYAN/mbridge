@@ -10,7 +10,6 @@ from megatron.core import parallel_state as mpu
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
 from mbridge import AutoBridge
-from mbridge.core.util import load_one_hf_weight
 
 
 def init_distributed(tp=2, pp=1, cp=1, vpp=1, ep=1, etp=None):
@@ -48,6 +47,9 @@ def main():
     parser.add_argument(
         "--etp", type=int, default=None, help="Expert tensor parallel size"
     )
+    parser.add_argument(
+        "--save_path", type=str, default=None, help="Path to save weights"
+    )
     args = parser.parse_args()
 
     # Initialize distributed environment
@@ -72,11 +74,15 @@ def main():
 
     # export weights
     for k, v in bridge.export_weights(model):
-        gt = load_one_hf_weight(hf_model_path, k).to(v.device)
-        assert v.shape == gt.shape, f"mismatch of {k}"
+        gt = bridge.safetensor_io.load_one_hf_weight(k).to(v.device)
+        assert v.shape == gt.shape, f"mismatch of {k} {v.shape=} {gt.shape=}"
         assert v.sum().item() == gt.sum().item(), f"mismatch of {k}"
         if torch.distributed.get_rank() == 1:
             print(k, "export ok")
+    if args.save_path:
+        bridge.save_weights(model, args.save_path, memory_efficient=False)
+
+    torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":

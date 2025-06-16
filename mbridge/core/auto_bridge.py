@@ -85,6 +85,16 @@ class AutoBridge:
             "Use from_pretrained() or from_config() class methods instead."
         )
 
+    def save_weights(self, models: list, weights_path: str) -> None:
+        """
+        This is a placeholder implementation. AutoBridge doesn't implement this method directly
+        as it delegates to specific bridge classes.
+        """
+        raise NotImplementedError(
+            "AutoBridge should not be instantiated directly. "
+            "Use from_pretrained() or from_config() class methods instead."
+        )
+
     def set_extra_args(self, **kwargs):
         """
         This is a placeholder implementation. AutoBridge doesn't implement this method directly

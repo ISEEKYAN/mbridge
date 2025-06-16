@@ -7,7 +7,6 @@ from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from transformers import AutoTokenizer
 
 from mbridge import AutoBridge
-from mbridge.core.util import load_hf_weight_names, load_some_hf_weight
 
 
 def init_distributed():
@@ -44,11 +43,11 @@ def main():
     bridge.load_weights(model, hf_model_path)
     print(f"Model loaded: {args.model_path}")
 
-    keys = load_hf_weight_names(hf_model_path)
+    keys = bridge.safetensor_io.load_hf_weight_names()
     loaded_keys = set()
     # export weights
     for k, v in bridge.export_weights(model):
-        gt = load_some_hf_weight(hf_model_path, [k])[k].cuda()
+        gt = bridge.safetensor_io.load_one_hf_weight(k).cuda()
         assert v.shape == gt.shape, f"mismatch of {k}"
         assert v.sum().item() == gt.sum().item(), f"mismatch of {k}"
         loaded_keys.add(k)
