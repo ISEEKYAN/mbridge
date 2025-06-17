@@ -71,7 +71,7 @@ class AutoBridge:
             "Use from_pretrained() or from_config() class methods instead."
         )
 
-    def load_weights(self, models: list, weights_path: str) -> None:
+    def load_weights(self, models: list, weights_path: str, memory_efficient: bool = False) -> None:
         """
         This is a placeholder implementation. AutoBridge doesn't implement this method directly
         as it delegates to specific bridge classes.
@@ -85,7 +85,7 @@ class AutoBridge:
             "Use from_pretrained() or from_config() class methods instead."
         )
 
-    def save_weights(self, models: list, weights_path: str) -> None:
+    def save_weights(self, models: list, weights_path: str, memory_efficient: bool = False) -> None:
         """
         This is a placeholder implementation. AutoBridge doesn't implement this method directly
         as it delegates to specific bridge classes.
