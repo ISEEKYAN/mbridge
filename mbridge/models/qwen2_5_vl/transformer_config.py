@@ -48,12 +48,13 @@ def get_vision_model_config(config):
 
     from megatron.core import parallel_state
 
-    if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
-        config.num_layers = (
-            32 * parallel_state.get_virtual_pipeline_model_parallel_world_size()
-        )  # depth
-    else:
-        config.num_layers = 32  # depth
+    # if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
+    #     config.num_layers = (
+    #         32 * parallel_state.get_virtual_pipeline_model_parallel_world_size()
+    #     )  # depth
+    # else:
+    #     config.num_layers = 32  # depth
+    config.num_layers = 32  # depth
     config.num_attention_heads = 16  # num_heads
     config.add_bias_linear = True  # all nn.Linear has bias (MLP, attn)
     config.add_qkv_bias = True  # qkv_proj in attn has bias
