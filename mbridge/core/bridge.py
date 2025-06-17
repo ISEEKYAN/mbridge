@@ -129,7 +129,12 @@ class Bridge(ABC):
             self.load_weights(model, weight_path)
         return model
 
-    def load_weights(self, models: list[torch.nn.Module], weights_path: str, memory_efficient: bool = False) -> None:
+    def load_weights(
+        self,
+        models: list[torch.nn.Module],
+        weights_path: str,
+        memory_efficient: bool = False,
+    ) -> None:
         """
         Load weights from a Hugging Face model into a Megatron-Core model.
 
@@ -165,7 +170,9 @@ class Bridge(ABC):
 
             # load huggingface weights
             if not memory_efficient:
-                hf_weights_map = self.safetensor_io.load_some_hf_weight(to_load_from_disk)
+                hf_weights_map = self.safetensor_io.load_some_hf_weight(
+                    to_load_from_disk
+                )
 
             # import mcore weights
             for local_name, hf_names in local_to_hf_map.items():
@@ -175,12 +182,14 @@ class Bridge(ABC):
                     if not memory_efficient:
                         hf_weights = [hf_weights_map[x] for x in hf_names]
                     else:
-                        hf_weights = [self.safetensor_io.load_one_hf_weight(x) for x in hf_names]
+                        hf_weights = [
+                            self.safetensor_io.load_one_hf_weight(x) for x in hf_names
+                        ]
                     mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
                 else:
                     mcore_weight = None
                 if hf_names[0] == "lm_head.weight":
-                    if param.shape[0] != mcore_weight.shape[0]:
+                    if param.shape[0] == 1 and mcore_weight.shape[0] != 1:
                         # skip lm_head.weight when the model is a value model
                         continue
 
