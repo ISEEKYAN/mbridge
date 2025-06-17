@@ -6,7 +6,7 @@ setup(
     description="Bridge between Reinforcement Learning and Megatron-Core",
     author="Yan Bai",
     author_email="bayan@nvidia.com",
-    packages=find_packages(),
+    packages=find_packages(include=['mbridge', 'mbridge.*']),
     install_requires=[
         "megatron-core>=0.12.0",
         "transformers",
