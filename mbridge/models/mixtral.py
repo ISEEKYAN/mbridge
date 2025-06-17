@@ -47,7 +47,9 @@ class MixtralBridge(LLMBridge):
         "pre_mlp_layernorm": [
             "model.layers.{layer_number}.post_attention_layernorm.weight"
         ],
-        "mlp.router.weight": ["model.layers.{layer_number}.block_sparse_moe.gate.weight"],
+        "mlp.router.weight": [
+            "model.layers.{layer_number}.block_sparse_moe.gate.weight"
+        ],
         "mlp.experts.linear_fc1": [
             "model.layers.{layer_number}.block_sparse_moe.experts.{expert_id}.w1.weight",
             "model.layers.{layer_number}.block_sparse_moe.experts.{expert_id}.w3.weight",

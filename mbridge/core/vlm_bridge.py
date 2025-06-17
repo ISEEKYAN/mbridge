@@ -1,8 +1,8 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
-from .bridge import Bridge
+from .llm_bridge import LLMBridge
 
 
-class VLMBridge(Bridge):
+class VLMBridge(LLMBridge):
     """
     Bridge implementation for Vision-Language Models.
 

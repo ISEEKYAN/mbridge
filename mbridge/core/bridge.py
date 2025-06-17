@@ -165,6 +165,7 @@ class Bridge(ABC):
 
             # load huggingface weights
             hf_weights_map = self.safetensor_io.load_some_hf_weight(to_load_from_disk)
+
             # import mcore weights
             for local_name, hf_names in local_to_hf_map.items():
                 param = model.state_dict()[local_name]
@@ -260,14 +261,7 @@ class Bridge(ABC):
     def export_weights(
         self, models: list[torch.nn.Module]
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
-
-        # map vpp layer number to global layer number
-        def get_layer_number(vpp_rank: int, local_layer_number: int) -> int:
-            unwrapped_model = unwrap_model(models[vpp_rank])
-            global_layer_number = (
-                unwrapped_model.decoder.layers[local_layer_number].layer_number - 1
-            )
-            return global_layer_number
+        models = [unwrap_model(model) for model in models]
 
         def get_model_chunk_generator():
             for model in models:
@@ -304,7 +298,7 @@ class Bridge(ABC):
                 and x not in existing_keys
             ]
             for name in extra_keys:
-                yield name, model.state_dict()[name].to(torch.cuda.current_device())
+                weights_names.append((self.mpu.pp_rank, vpp_rank, name))
 
         weights_names_all_pp = [None] * self.mpu.pp_size
         torch.distributed.all_gather_object(
@@ -312,31 +306,23 @@ class Bridge(ABC):
         )
         weights_names_all_pp = sum(weights_names_all_pp, [])
         model_chunk_generator = get_model_chunk_generator()
+        local_to_global_maps = [
+            self._weight_name_mapping_mcore_local_to_global(model, consider_ep=False)
+            for model in models
+        ]
         for iter_pp_rank, iter_vpp_rank, iter_name in weights_names_all_pp:
+            local_to_global_map = local_to_global_maps[iter_vpp_rank]
             if iter_pp_rank == self.mpu.pp_rank:
                 try:
                     name, param = next(model_chunk_generator)
                 except StopIteration:
                     name, param = None, None
-                if "layers" in iter_name:
-                    local_layer_number = int(
-                        iter_name.split("layers.")[1].split(".")[0]
-                    )
-                    global_layer_number = get_layer_number(
-                        iter_vpp_rank, local_layer_number
-                    )
-                    name = iter_name.replace(
-                        f"layers.{local_layer_number}.",
-                        f"layers.{global_layer_number}.",
-                    )
+                name = local_to_global_map[iter_name]
             else:
                 name, param = None, None
 
             name = broadcast_str_from_megatron_pp(name)
             broad_pp_param = broadcast_from_megatron_pp(param)
-
-            while name.startswith("module."):
-                name = name[len("module.") :]
 
             # EP
             if ".mlp.experts.linear_fc" in name and self.mpu.ep_size > 1:
@@ -379,7 +365,6 @@ class Bridge(ABC):
                     converted_names, converted_params = self._weight_to_hf_format(
                         name, merge_params
                     )
-
                     yield from zip(converted_names, converted_params)
                 continue
 
@@ -449,7 +434,7 @@ class Bridge(ABC):
         return provider
 
     def _weight_name_mapping_mcore_local_to_global(
-        self, model: torch.nn.Module
+        self, model: torch.nn.Module, consider_ep: bool = True
     ) -> dict[str, str]:
         """
         Map local weight names to global weight names, supporting VPP and EP.
@@ -480,8 +465,9 @@ class Bridge(ABC):
                 )
             else:
                 ret[param_name] = param_name
+
         # ep
-        if self.mpu.ep_size > 1:
+        if self.mpu.ep_size > 1 and consider_ep:
             num_experts = self.config.num_moe_experts
             num_experts_per_rank = num_experts // self.mpu.ep_size
             local_expert_to_global_expert = {
@@ -489,8 +475,9 @@ class Bridge(ABC):
                 for i in range(num_experts_per_rank)
             }
             for k in ret.keys():
-                if ".mlp.experts.linear_fc" in k:
-                    name_prefix, local_expert_id = k.split(".weight")
+                v = ret[k]
+                if ".mlp.experts.linear_fc" in v:
+                    name_prefix, local_expert_id = v.split(".weight")
                     global_expert_idx = local_expert_to_global_expert[
                         int(local_expert_id)
                     ]
@@ -523,7 +510,7 @@ class Bridge(ABC):
         ],
     }
 
-    def _weight_name_mapping_attention(self, name: str) -> str:
+    def _weight_name_mapping_attention(self, name: str) -> list[str]:
         """
         Map attention weight names from MCore to Hugging Face.
 
@@ -565,7 +552,7 @@ class Bridge(ABC):
         "output_layer.weight": "lm_head.weight",
     }
 
-    def _weight_name_mapping_mlp(self, name: str) -> str:
+    def _weight_name_mapping_mlp(self, name: str) -> list[str]:
         """
         Map MLP weight names from MCore to Hugging Face.
 
@@ -668,7 +655,10 @@ class Bridge(ABC):
             v = qkv[:, q_len + k_len :].reshape(*single_out_shape)
             return hf_names, [q, k, v]
 
-        elif "linear_fc1.weight" in mcore_weights_name:
+        elif (
+            "linear_fc1.weight" in mcore_weights_name
+            or "linear_fc1.bias" in mcore_weights_name
+        ):
             # split gate_proj and up_proj
             assert len(hf_names) == 2
             gate, up = mcore_weights.chunk(2)
@@ -725,7 +715,10 @@ class Bridge(ABC):
 
             qkv = torch.cat([q, k, v], dim=1).view(*out_shape).contiguous()
             return qkv
-        elif "linear_fc1.weight" in mcore_weights_name:
+        elif (
+            "linear_fc1.weight" in mcore_weights_name
+            or "linear_fc1.bias" in mcore_weights_name
+        ):
             # merge gate_proj and up_proj
             assert len(hf_weights) == 2
             gate, up = hf_weights
@@ -762,7 +755,10 @@ class Bridge(ABC):
             and "layer_norm" not in mcore_weights_name
         ):
             return torch.cat(mcore_weights, dim=0)
-        elif "linear_fc1.weight" in mcore_weights_name:
+        elif (
+            "linear_fc1.weight" in mcore_weights_name
+            or "linear_fc1.bias" in mcore_weights_name
+        ):
             # if the tensor is gate and proj
             gate_lst = []
             up_lst = []
@@ -810,14 +806,14 @@ class Bridge(ABC):
             and "layer_norm" not in mcore_weights_name
         ):
             return mcore_weights.chunk(tp_split_size)
-        elif "linear_fc1.weight" in mcore_weights_name:
-            _, [gate, up] = self._weight_to_hf_format(mcore_weights_name, mcore_weights)
+        elif (
+            "linear_fc1.weight" in mcore_weights_name
+            or "linear_fc1.bias" in mcore_weights_name
+        ):
+            gate, up = mcore_weights.chunk(2)
             gates = gate.chunk(tp_split_size)
             ups = up.chunk(tp_split_size)
-            ret = [
-                self._weight_to_mcore_format(mcore_weights_name, [g, u])
-                for g, u in zip(gates, ups)
-            ]
+            ret = [torch.cat([g, u], dim=0) for g, u in zip(gates, ups)]
         elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
             ret = mcore_weights.chunk(tp_split_size, dim=1)
         else:

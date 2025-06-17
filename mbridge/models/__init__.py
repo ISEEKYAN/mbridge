@@ -17,6 +17,7 @@ from .deepseek_v3 import DeepseekV3Bridge
 from .llama import LLaMABridge
 from .mixtral import MixtralBridge
 from .qwen2 import Qwen2Bridge
+from .qwen2_5_vl import Qwen2_5VLBridge
 from .qwen2moe import Qwen2MoEBridge
 from .qwen3 import Qwen3Bridge
 from .qwen3moe import Qwen3MoEBridge
