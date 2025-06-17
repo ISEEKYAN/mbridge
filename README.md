@@ -67,6 +67,7 @@ Currently supported models:
 - [x] LLaMA
 - [x] DeepseekV3
 - [x] Mixtral
+- [x] Qwen2.5-VL
 
 
 ## Examples
