@@ -16,8 +16,7 @@ Version: 0.1.0
 __version__ = "0.1.0"
 
 # Import models module to ensure registration decorators are executed
-from . import models
-from . import utils
+from . import models, utils
 
 # Export core classes
 from .core.auto_bridge import AutoBridge
