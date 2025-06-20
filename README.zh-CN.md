@@ -20,8 +20,7 @@ MBridge允许您将流行的Hugging Face模型转换为Megatron-Core格式，使
 ## 安装
 
 ```bash
-# pip install mbridge
-pip install -e .
+pip install mbridge
 ```
 
 ## 快速开始
