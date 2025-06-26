@@ -2,6 +2,7 @@
 
 MBridge provides a seamless bridge between Hugging Face models and Megatron-Core's optimized implementation for efficient distributed training and inference. It also offers necessary tools and processes for integrating Reinforcement Learning (RL) with Megatron.
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ISEEKYAN/mbridge)
 [中文文档](README.zh-CN.md)
 
 ## Overview
