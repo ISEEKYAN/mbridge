@@ -19,7 +19,7 @@ pip install sentencepiece tokenizers transformers ipdb termcolor
 ```
 bash run_webui.sh
 ```
-
+or open https://huggingface.co/spaces/ISEEKYAN/megatron_memory_estimator
 
 ### User your own mcore scripts
 Bascially you will need to replace the `pretrain_gpt.py` with `estimate.py`, everything should be the same.
