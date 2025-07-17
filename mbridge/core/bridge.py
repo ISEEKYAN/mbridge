@@ -1,13 +1,12 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 import os
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Callable, Generator
 
 import torch
 from megatron.core.models.gpt.gpt_model import ModelType
-from megatron.core.transformer import MLATransformerConfig, TransformerConfig
-from torch.nn import functional as F
 from transformers import AutoConfig
+from transformers.utils.hub import cached_file
 
 from .parallel_states import ParallelStates
 from .safetensor_io import SafeTensorIO
@@ -74,7 +73,7 @@ class Bridge(ABC):
         Get a model instance.
 
         Args:
-            weight_path: Path to model weights
+            weight_path: Path to model weights or Hugging Face model identifier
             model_type: Type of model to create
             wrap_with_ddp: Whether to wrap with DDP
             fp16: Whether to use FP16 precision
@@ -126,7 +125,7 @@ class Bridge(ABC):
             **kwargs,
         )
         if weight_path:
-            self.load_weights(model, weight_path)
+            self.load_weights(model, self._get_actual_hf_path(weight_path))
         return model
 
     def load_weights(
@@ -140,9 +139,9 @@ class Bridge(ABC):
 
         Args:
             models: List of model instances, supporting VPP (Virtual Pipeline Parallelism)
-            weights_path: Path to the weights file
+            weights_path: Path to the weights file or Hugging Face model identifier
         """
-        self.safetensor_io = SafeTensorIO(weights_path)
+        self.safetensor_io = SafeTensorIO(self._get_actual_hf_path(weights_path))
 
         for i, model in enumerate(models):
             # map local weight names to global weight names
@@ -842,6 +841,18 @@ class Bridge(ABC):
             ret = mcore_weights.chunk(tp_split_size, dim=partition_dim)
         return ret
 
+    def _get_actual_hf_path(self, weight_path: str) -> str:
+        """
+        Get the actual Hugging Face path for the model weights.
+
+        Args:
+            weight_path: Path to the model weights or Hugging Face model identifier
+
+        Returns:
+            str: Actual path to the Hugging Face model weights
+        """
+
+        return os.path.dirname(cached_file(weight_path, "config.json"))
 
 # Model registry
 _MODEL_REGISTRY = {}
