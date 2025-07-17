@@ -8,6 +8,8 @@ Accurate, Configurable, Modularized memory estimator for (not only) MoE LLMs
 
 2. Simulate the model construction and forward/backward/optimizer.step procedures to calculate accurate memory consumption.
 
+See [slides](./MoEMemoryEstimator.pdf) for more details.
+
 ## Dependencies
 ```
 pip install sentencepiece tokenizers transformers ipdb termcolor
