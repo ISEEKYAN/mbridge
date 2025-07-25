@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import Callable, Generator
+from typing import Callable, Generator, Optional
 
 import torch
 
@@ -330,8 +330,8 @@ class Qwen2_5VLBridge(VLMBridge):
             self.hf_config, "tie_word_embeddings", False
         )
 
-        def provider(pre_process, post_process):
-            transformer_layer_spec = self._get_transformer_layer_spec()
+        def provider(pre_process, post_process, vp_stage: Optional[int] = None):
+            transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
 
             from megatron.core.extensions.transformer_engine import (
                 TEColumnParallelLinear,

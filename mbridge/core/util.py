@@ -1,5 +1,6 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 import dataclasses
+import inspect
 import json
 import os
 from collections import defaultdict
@@ -53,14 +54,25 @@ def get_model(
                 ), "Interleaved schedule not supported for model with encoder on separate PP rank"
             model = []
             for i in range(virtual_pipeline_model_parallel_size):
-                mpu.set_virtual_pipeline_model_parallel_rank(i)
                 # Set pre_process and post_process only after virtual rank is set.
-                pre_process = mpu.is_pipeline_first_stage()
-                post_process = mpu.is_pipeline_last_stage()
+                if (
+                    "vp_stage"
+                    in inspect.signature(mpu.is_pipeline_first_stage).parameters
+                ):
+                    pre_process = mpu.is_pipeline_first_stage(
+                        ignore_virtual=False, vp_stage=i
+                    )
+                    post_process = mpu.is_pipeline_last_stage(
+                        ignore_virtual=False, vp_stage=i
+                    )
+                else:
+                    pre_process = mpu.is_pipeline_first_stage()
+                    post_process = mpu.is_pipeline_last_stage()
                 this_model = model_provider_func(
-                    pre_process=pre_process, post_process=post_process
+                    pre_process=pre_process, post_process=post_process, vp_stage=i
                 )
                 this_model.model_type = model_type
+                this_model.vp_stage = i
                 model.append(this_model)
         else:
             pre_process = mpu.is_pipeline_first_stage()

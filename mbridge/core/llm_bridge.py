@@ -1,5 +1,6 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
-from typing import Callable, Generator
+import inspect
+from typing import Callable, Generator, Optional
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
@@ -95,7 +96,7 @@ class LLMBridge(Bridge):
             rotary_base=self.hf_config.rope_theta,
         )
 
-    def _get_transformer_layer_spec(self):
+    def _get_transformer_layer_spec(self, vp_stage: Optional[int] = None):
         """
         Gets the transformer layer specification.
 
@@ -111,8 +112,14 @@ class LLMBridge(Bridge):
         assert (
             self.config.normalization == "RMSNorm"
         ), "only RMSNorm is supported for now"
+        # check if get_gpt_decoder_block_spec has vp_stage parameter
+        sig = inspect.signature(get_gpt_decoder_block_spec)
+        self.has_vp_stage = "vp_stage" in sig.parameters  # for mcore 0.12 compatibility
+        extra_args = {}
+        if self.has_vp_stage:
+            extra_args["vp_stage"] = vp_stage
         transformer_layer_spec = get_gpt_decoder_block_spec(
-            self.config, use_transformer_engine=True
+            self.config, use_transformer_engine=True, **extra_args
         )
         return transformer_layer_spec
 
@@ -136,9 +143,11 @@ class LLMBridge(Bridge):
             self.hf_config, "tie_word_embeddings", False
         )
 
-        def provider(pre_process, post_process):
-            transformer_layer_spec = self._get_transformer_layer_spec()
+        def provider(pre_process, post_process, vp_stage: Optional[int] = None):
+            transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
             gptmodel_args = self._get_gptmodel_args()
+            if vp_stage is not None and self.has_vp_stage:
+                gptmodel_args["vp_stage"] = vp_stage
             model = GPTModel(
                 config=self.config,
                 transformer_layer_spec=transformer_layer_spec,
