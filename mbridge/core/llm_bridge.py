@@ -38,6 +38,8 @@ class LLMBridge(Bridge):
         """
         hf_config = self.hf_config
         dtype = self.dtype
+        overlap_p2p_comm = self.mpu.vpp_size is not None and self.mpu.pp_size > 1
+        batch_p2p_comm = not overlap_p2p_comm
         base_config = {
             # Model architecture parameters
             "num_layers": hf_config.num_hidden_layers,
@@ -71,6 +73,8 @@ class LLMBridge(Bridge):
             "moe_token_dispatcher_type": "alltoall",
             "add_bias_linear": False,
             "use_cpu_initialization": False,
+            "overlap_p2p_comm": overlap_p2p_comm,
+            "batch_p2p_comm": batch_p2p_comm,
         }
 
         # Update with any provided overrides
