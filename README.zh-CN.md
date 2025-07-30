@@ -67,6 +67,7 @@ bridge.save_weights(model, "path/to/save/model", memory_efficient=False) # 如�
 - [x] DeepseekV3
 - [x] Mixtral
 - [x] Qwen2.5-VL
+- [x] Mimo
 
 ## 示例
 
