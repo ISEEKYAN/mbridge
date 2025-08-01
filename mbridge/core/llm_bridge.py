@@ -39,7 +39,7 @@ class LLMBridge(Bridge):
         hf_config = self.hf_config
         dtype = self.dtype
         overlap_p2p_comm = self.mpu.vpp_size is not None and self.mpu.pp_size > 1
-        batch_p2p_comm = not overlap_p2p_comm
+        batch_p2p_comm = False
         base_config = {
             # Model architecture parameters
             "num_layers": hf_config.num_hidden_layers,
