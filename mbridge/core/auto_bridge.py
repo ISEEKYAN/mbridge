@@ -11,7 +11,7 @@ class AutoBridge:
     """
 
     @classmethod
-    def from_pretrained(cls, hf_model_path) -> Bridge:
+    def from_pretrained(cls, hf_model_path, trust_remote_code=False) -> Bridge:
         """
         Loads the appropriate bridge class from a pretrained model path.
 
@@ -21,7 +21,7 @@ class AutoBridge:
         Returns:
             Bridge: An instance of the appropriate bridge class for the model
         """
-        config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
+        config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=trust_remote_code)
 
         return cls.from_config(config)
 
