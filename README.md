@@ -68,6 +68,7 @@ Currently supported models:
 - [x] DeepseekV3
 - [x] Mixtral
 - [x] Qwen2.5-VL
+- [x] Mimo
 
 
 ## Examples

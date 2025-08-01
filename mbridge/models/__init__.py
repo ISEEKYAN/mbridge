@@ -11,10 +11,12 @@ Classes:
     Qwen3Bridge: Bridge implementation for Qwen3 models
     LLaMA2Bridge: Bridge implementation for LLaMA2 models
     DeepseekV3Bridge: Bridge implementation for DeepseekV3 models
+    MimoBridge: Bridge implementation for MIMO models
 """
 
 from .deepseek_v3 import DeepseekV3Bridge
 from .llama import LLaMABridge
+from .mimo import MimoBridge
 from .mixtral import MixtralBridge
 from .qwen2 import Qwen2Bridge
 from .qwen2_5_vl import Qwen2_5VLBridge

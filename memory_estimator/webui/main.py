@@ -48,6 +48,7 @@ SUPPORTED_MODELS = [
     "moonshotai/Moonlight-16B-A3B",
     "moonshotai/Kimi-K2-Instruct",
     "deepseek-ai/DeepSeek-V3",
+    "XiaomiMiMo/MiMo-7B-RL",
 ]
 
 
