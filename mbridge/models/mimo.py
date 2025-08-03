@@ -59,21 +59,9 @@ class MimoBridge(Qwen2Bridge):
         return super()._weight_name_mapping_mcore_to_hf(mcore_weights_name)
 
     def _convert_mtp_param(self, name: str) -> list[str]:
-        """
-        Convert MTP layer parameters from MCore to HF format.
-
-        Following DeepSeek V3's approach, MTP layers can contain:
-        - Direct mapped components (LayerNorms, projections)
-        - Transformer components that reuse existing attention/MLP mappings
-
-        Args:
-            name: MCore parameter name containing "mtp"
-
-        Returns:
-            list: Corresponding HF parameter names
-        """
+        """Convert MTP layer parameters from MCore to HF format."""
         # For now, assume single MTP layer support
-        if "mtp_layers." not in name:
+        if "mtp.layers." not in name:
             raise NotImplementedError(f"Invalid MTP parameter name: {name}")
 
         # Get the MTP layer index
@@ -82,23 +70,35 @@ class MimoBridge(Qwen2Bridge):
 
         # Direct mappings for MTP-specific components
         direct_name_mapping = {
-            f"mtp.layers.{mtp_layer_idx}.input_layernorm.weight": f"model.mtp_layers.{mtp_layer_idx}.input_layernorm.weight",
-            f"mtp.layers.{mtp_layer_idx}.post_attention_layernorm.weight": f"model.mtp_layers.{mtp_layer_idx}.post_attention_layernorm.weight",
-            f"mtp.layers.{mtp_layer_idx}.token_layernorm.weight": f"model.mtp_layers.{mtp_layer_idx}.token_layernorm.weight",
-            f"mtp.layers.{mtp_layer_idx}.hidden_layernorm.weight": f"model.mtp_layers.{mtp_layer_idx}.hidden_layernorm.weight",
+            f"mtp.layers.{mtp_layer_idx}.enorm.weight": f"model.mtp_layers.{mtp_layer_idx}.token_layernorm.weight",
+            f"mtp.layers.{mtp_layer_idx}.hnorm.weight": f"model.mtp_layers.{mtp_layer_idx}.hidden_layernorm.weight",
+            f"mtp.layers.{mtp_layer_idx}.eh_proj.weight": f"model.mtp_layers.{mtp_layer_idx}.input_proj.weight",
             f"mtp.layers.{mtp_layer_idx}.final_layernorm.weight": f"model.mtp_layers.{mtp_layer_idx}.final_layernorm.weight",
-            f"mtp.layers.{mtp_layer_idx}.input_proj.weight": f"model.mtp_layers.{mtp_layer_idx}.input_proj.weight",
         }
 
         if name in direct_name_mapping:
             return [direct_name_mapping[name]]
 
         # Handle transformer components within MTP
-        # Check if this is a self_attention or mlp component
-        if "self_attention" in name or "input_layernorm.weight" in name:
-            convert_names = self._weight_name_mapping_attention(name)
-        elif "mlp" in name:
-            convert_names = self._weight_name_mapping_mlp(name)
+        # Check if this is a transformer_layer component
+        if "transformer_layer" in name:
+            # Create a proxy name to use with parent class methods
+            # Convert mtp.layers.{idx}.transformer_layer.* to decoder.layers.{idx}.*
+            proxy_name = name.replace(f"mtp.layers.{mtp_layer_idx}.transformer_layer", f"decoder.layers.{mtp_layer_idx}")
+            
+            if "self_attention" in proxy_name or "input_layernorm.weight" in proxy_name:
+                convert_names = super()._weight_name_mapping_attention(proxy_name)
+            elif "mlp" in proxy_name:
+                convert_names = super()._weight_name_mapping_mlp(proxy_name)
+            else:
+                raise NotImplementedError(f"Unsupported transformer component in MTP: {name}")
+            
+            # Replace the layer index in converted names to point to mtp_layers
+            convert_names = [
+                cn.replace(f"model.layers.{mtp_layer_idx}", f"model.mtp_layers.{mtp_layer_idx}")
+                for cn in convert_names
+            ]
+            return convert_names
         else:
             raise NotImplementedError(f"Unsupported MTP parameter name: {name}")
         return convert_names
