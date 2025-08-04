@@ -5,47 +5,49 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore")
-import os
-import torch
-from functools import partial
-from contextlib import nullcontext
 import inspect
-
+import os
+from contextlib import nullcontext
+from functools import partial
 from typing import Union
-from megatron.training import get_args
-from megatron.training import print_rank_0
-from megatron.training import get_timers
-from megatron.training import get_tokenizer
+
+import megatron.legacy.model
+import torch
 from megatron.core import mpu
-from megatron.core.enums import ModelType
 from megatron.core.datasets.blended_megatron_dataset_builder import (
     BlendedMegatronDatasetBuilder,
 )
-from megatron.core.datasets.utils import get_blend_from_list
-from megatron.core.datasets.gpt_dataset import GPTDatasetConfig
-from megatron.core.datasets.gpt_dataset import MockGPTDataset, GPTDataset
-import megatron.legacy.model
-from megatron.training import pretrain
-from megatron.core.utils import StragglerDetector
-from megatron.core.transformer.spec_utils import import_module
-from megatron.training.utils import (
-    get_batch_on_this_cp_rank,
-    get_batch_on_this_tp_rank,
+from megatron.core.datasets.gpt_dataset import (
+    GPTDataset,
+    GPTDatasetConfig,
+    MockGPTDataset,
 )
-from megatron.training.arguments import core_transformer_config_from_args
-from megatron.training.yaml_arguments import core_transformer_config_from_yaml
+from megatron.core.datasets.utils import get_blend_from_list
+from megatron.core.enums import ModelType
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_local_spec,
     get_gpt_layer_with_transformer_engine_spec,
 )
+from megatron.core.transformer.spec_utils import import_module
+from megatron.core.utils import StragglerDetector
+from megatron.training import (
+    get_args,
+    get_timers,
+    get_tokenizer,
+    pretrain,
+    print_rank_0,
+)
+from megatron.training.arguments import core_transformer_config_from_args
 from megatron.training.initialize import initialize_megatron
-from moe_mem_estimator.gpt_model import GPTModel
+from megatron.training.utils import get_batch_on_this_cp_rank, get_batch_on_this_tp_rank
+from megatron.training.yaml_arguments import core_transformer_config_from_yaml
 from moe_mem_estimator.base import (
     is_pipeline_first_stage,
     is_pipeline_last_stage,
     set_global_config,
     set_pipeline_model_parallel_rank,
 )
+from moe_mem_estimator.gpt_model import GPTModel
 from moe_mem_estimator.layers import MLASelfAttention, MoELayer
 
 
@@ -55,24 +57,29 @@ def _calculate_rank_memory(config, args, input_shape, pp_rank=0, pp_size=1):
     """
     # Build the model for the current rank
     set_global_config(config)
-    pre_process = (pp_rank == 0)
-    post_process = (pp_rank == pp_size - 1)
-    
+    pre_process = pp_rank == 0
+    post_process = pp_rank == pp_size - 1
+
     use_te = True
-    if hasattr(config, 'spec') and config.spec is not None:
+    if hasattr(config, "spec") and config.spec is not None:
         transformer_layer_spec = import_module(config.spec)
     else:
         if use_te:
             transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
-                config.num_moe_experts, config.moe_grouped_gemm, config.qk_layernorm,
-                config.multi_latent_attention, config.fp8
+                config.num_moe_experts,
+                config.moe_grouped_gemm,
+                config.qk_layernorm,
+                config.multi_latent_attention,
+                config.fp8,
             )
         else:
             transformer_layer_spec = get_gpt_layer_local_spec(
-                config.num_moe_experts, config.moe_grouped_gemm, config.qk_layernorm,
-                config.multi_latent_attention
+                config.num_moe_experts,
+                config.moe_grouped_gemm,
+                config.qk_layernorm,
+                config.multi_latent_attention,
             )
-            
+
     model = GPTModel(
         config=config,
         transformer_layer_spec=transformer_layer_spec,
@@ -80,13 +87,13 @@ def _calculate_rank_memory(config, args, input_shape, pp_rank=0, pp_size=1):
         max_sequence_length=args.max_position_embeddings,
         pre_process=pre_process,
         post_process=post_process,
-        fp16_lm_cross_entropy=getattr(config, 'fp16_lm_cross_entropy', False),
+        fp16_lm_cross_entropy=getattr(config, "fp16_lm_cross_entropy", False),
         parallel_output=True,
         share_embeddings_and_output_weights=args.tie_word_embeddings,
         position_embedding_type="rope",
-        rotary_percent=getattr(args, 'rotary_percent', 1.0),
-        rotary_base=getattr(args, 'rotary_base', 10000),
-        rope_scaling=getattr(config, 'use_rope_scaling', False),
+        rotary_percent=getattr(args, "rotary_percent", 1.0),
+        rotary_base=getattr(args, "rotary_base", 10000),
+        rope_scaling=getattr(config, "use_rope_scaling", False),
     )
 
     # --- Start of detailed memory calculation logic ---
@@ -95,7 +102,8 @@ def _calculate_rank_memory(config, args, input_shape, pp_rank=0, pp_size=1):
     output_shape = model.mock_forward(input_shape)
 
     num_parameter_this_shard_sparse = sum(
-        layer.mlp.num_parameter() for layer in model.decoder.layers.modules
+        layer.mlp.num_parameter()
+        for layer in model.decoder.layers.modules
         if isinstance(layer.mlp, MoELayer)
     )
     num_activation_this_shard_mlp = sum(
@@ -107,17 +115,21 @@ def _calculate_rank_memory(config, args, input_shape, pp_rank=0, pp_size=1):
         layers_this_pprank = len(model.decoder.layers.modules)
         vpp_size = layers_this_pprank // config.num_layers_per_virtual_pipeline_stage
         if vpp_size > 0:
-            num_microbatch_this_pp_rank = (pp_size * (vpp_size - 1) + (pp_size - pp_rank) * 2 - 1) / vpp_size
+            num_microbatch_this_pp_rank = (
+                pp_size * (vpp_size - 1) + (pp_size - pp_rank) * 2 - 1
+            ) / vpp_size
 
     # Activation Recomputation
     # The base activation number is for one microbatch. With pipeline parallelism,
     # the total activation is multiplied by the number of microbatches in flight.
     # Recomputation reduces this by re-calculating activations during the backward pass
     # instead of storing them.
-    
+
     # This is the activation memory without any recomputation.
-    num_activation = (num_activation - model.num_act_post) * num_microbatch_this_pp_rank + model.num_act_post
-    
+    num_activation = (
+        num_activation - model.num_act_post
+    ) * num_microbatch_this_pp_rank + model.num_act_post
+
     if config.recompute_granularity == "full":
         # This logic is transplanted from the more detailed `report_memory_usage_one_pp_rank`
         recompute_num_layers = config.recompute_num_layers
@@ -154,12 +166,14 @@ def _calculate_rank_memory(config, args, input_shape, pp_rank=0, pp_size=1):
                 * num_microbatch_this_pp_rank
             )
             recomputed_activation = max(peak1, peak2)
-        
+
         if isinstance(model.decoder.layers.modules[0].self_attention, MLASelfAttention):
-             recomputed_activation += model.decoder.layers.modules[0].self_attention.core_attention.num_activation()
-        
+            recomputed_activation += model.decoder.layers.modules[
+                0
+            ].self_attention.core_attention.num_activation()
+
         num_activation = recomputed_activation
-    
+
     elif config.recompute_granularity == "selective":
         # Selective recomputation is the default in Megatron-LM and is handled
         # by Transformer Engine. The base `num_activation` calculation from `GPTModel`
@@ -167,48 +181,60 @@ def _calculate_rank_memory(config, args, input_shape, pp_rank=0, pp_size=1):
         # This is already the case, so we do nothing here.
         pass
 
-
     # Context Parallelism
     if config.context_parallel_size > 1:
-        num_activation = (num_activation - num_activation_this_shard_mlp) / config.context_parallel_size + num_activation_this_shard_mlp
+        num_activation = (
+            num_activation - num_activation_this_shard_mlp
+        ) / config.context_parallel_size + num_activation_this_shard_mlp
 
     # Calculate bytes per parameter for optimizer states
     if args.use_distributed_optimizer:
-        base_optim_bytes = 6 # FP16 weight, FP32 master weight
-        world_optim_bytes = 12 # FP32 grad, FP32 momentum, FP32 variance
+        base_optim_bytes = 6  # FP16 weight, FP32 master weight
+        world_optim_bytes = 12  # FP32 grad, FP32 momentum, FP32 variance
     else:
-        base_optim_bytes = 18 # All states on each GPU
+        base_optim_bytes = 18  # All states on each GPU
         world_optim_bytes = 0
 
-    num_bytes_per_parameter = base_optim_bytes + (world_optim_bytes / (args.data_parallel_size * config.context_parallel_size))
-    
+    num_bytes_per_parameter = base_optim_bytes + (
+        world_optim_bytes / (args.data_parallel_size * config.context_parallel_size)
+    )
+
     # Handle MoE optimizer state sharding if applicable
     if num_parameter_this_shard_sparse > 0 and config.expert_model_parallel_size > 1:
-        moe_dp_size = args.data_parallel_size * config.tensor_model_parallel_size // (config.expert_model_parallel_size * args.expert_tensor_parallel_size)
-        num_bytes_per_parameter_moe = base_optim_bytes + (world_optim_bytes / moe_dp_size)
-        
+        moe_dp_size = (
+            args.data_parallel_size
+            * config.tensor_model_parallel_size
+            // (config.expert_model_parallel_size * args.expert_tensor_parallel_size)
+        )
+        num_bytes_per_parameter_moe = base_optim_bytes + (
+            world_optim_bytes / moe_dp_size
+        )
+
         weight_and_optimizer_memory = (
-            (num_parameter_this_shard - num_parameter_this_shard_sparse) * num_bytes_per_parameter +
-            num_parameter_this_shard_sparse * num_bytes_per_parameter_moe
+            (num_parameter_this_shard - num_parameter_this_shard_sparse)
+            * num_bytes_per_parameter
+            + num_parameter_this_shard_sparse * num_bytes_per_parameter_moe
         ) / NUM_BYTES_IN_GIGABYTE
     else:
-        weight_and_optimizer_memory = (num_parameter_this_shard * num_bytes_per_parameter) / NUM_BYTES_IN_GIGABYTE
+        weight_and_optimizer_memory = (
+            num_parameter_this_shard * num_bytes_per_parameter
+        ) / NUM_BYTES_IN_GIGABYTE
 
     activation_memory = num_activation * 2 / NUM_BYTES_IN_GIGABYTE  # Use GIGABYTE
     total_memory = weight_and_optimizer_memory + activation_memory
-    
+
     report = {
         "pp_rank": pp_rank,
         "parameters_b": num_parameter_this_shard / 1e9,
-        "activation_b": num_activation / 1e9, # Renamed from _gb to _b
+        "activation_b": num_activation / 1e9,  # Renamed from _gb to _b
         "weight_optimizer_gb": round(weight_and_optimizer_memory, 2),
         "activation_gb": round(activation_memory, 2),
         "total_gb": round(total_memory, 2),
         "details": model.dump(),
-        "model_breakdown": str(model)
+        "model_breakdown": str(model),
     }
     print(model)
-    
+
     return report, output_shape
 
 
@@ -224,13 +250,15 @@ def estimate_from_config(config, args):
     if pp_size > 1:
         for pp_rank in range(pp_size):
             set_pipeline_model_parallel_rank(pp_rank)
-            report_for_rank, new_input_shape = _calculate_rank_memory(config, args, input_shape, pp_rank, pp_size)
+            report_for_rank, new_input_shape = _calculate_rank_memory(
+                config, args, input_shape, pp_rank, pp_size
+            )
             reports.append(report_for_rank)
-            input_shape = new_input_shape # Pass output shape to the next stage
+            input_shape = new_input_shape  # Pass output shape to the next stage
     else:
         report_for_rank, _ = _calculate_rank_memory(config, args, input_shape, 0, 1)
         reports.append(report_for_rank)
-        
+
     return reports
 
 
@@ -288,6 +316,7 @@ def model_provider() -> GPTModel:
 
 NUM_BYTES_IN_MEGABYTE = 1024 * 1024
 NUM_BYTES_IN_GIGABYTE = 1024 * 1024 * 1024
+
 
 def report_memory_usage():
     args = get_args()

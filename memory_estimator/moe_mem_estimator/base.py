@@ -2,8 +2,8 @@
 from abc import ABC
 
 from megatron.core.transformer.transformer_config import TransformerConfig
-from torch.nn.modules.module import _addindent
 from termcolor import colored
+from torch.nn.modules.module import _addindent
 
 
 def prehook_save_input_shape(func):
@@ -68,16 +68,15 @@ class MemEstimator(metaclass=MetaBase):
 
     def dump(self):
         ret = {}
-        ret['name'] = self._get_name()
-        ret['n_params'] = self.num_parameter()
-        ret['n_act'] = self.num_activation()
+        ret["name"] = self._get_name()
+        ret["n_params"] = self.num_parameter()
+        ret["n_act"] = self.num_activation()
         modules = {}
         for key, module in self._modules.items():
             modules[key] = module.dump()
-        if len(modules)>0:
-            ret['modules'] = modules
+        if len(modules) > 0:
+            ret["modules"] = modules
         return ret
-        
 
     def _get_name(self):
         return self.__class__.__name__
@@ -209,4 +208,4 @@ def cum_mul(l: list):
         return ret
     except:
         return 0
-        __import__('ipdb').set_trace()
+        __import__("ipdb").set_trace()

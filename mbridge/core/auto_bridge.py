@@ -21,7 +21,9 @@ class AutoBridge:
         Returns:
             Bridge: An instance of the appropriate bridge class for the model
         """
-        config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=trust_remote_code)
+        config = AutoConfig.from_pretrained(
+            hf_model_path, trust_remote_code=trust_remote_code
+        )
 
         return cls.from_config(config)
 

@@ -15,30 +15,30 @@ class MimoBridge(Qwen2Bridge):
     This class extends Qwen2Bridge to provide specific configurations and
     optimizations for Mimo models, handling the conversion between
     Hugging Face Mimo format and Megatron-Core.
-    
+
     MiMo adds MTP (Multi-Token Prediction) layers on top of Qwen2 architecture.
     """
-    
+
     def _build_config(self):
         """Override to add MTP configuration."""
         hf_config = self.hf_config
-        
+
         # Add MTP configuration if present
         mtp_args = {}
         if "num_nextn_predict_layers" in hf_config:
             mtp_args["mtp_num_layers"] = hf_config.num_nextn_predict_layers
             mtp_args["mtp_loss_scaling_factor"] = 0.1
-        
+
         return self._build_base_config(
             add_qkv_bias=True,
             qk_layernorm=False,
             **mtp_args,
         )
-    
+
     def _get_gptmodel_args(self) -> dict:
         """Override to add MTP block spec if needed."""
         ret = super()._get_gptmodel_args()
-        
+
         # Add MTP block spec if MTP layers are present
         if self.config.mtp_num_layers is not None:
             transformer_layer_spec = self.config
@@ -46,40 +46,40 @@ class MimoBridge(Qwen2Bridge):
                 self.config, transformer_layer_spec, use_transformer_engine=True
             )
             ret["mtp_block_spec"] = mtp_block_spec
-            
+
         return ret
-    
+
     def _weight_name_mapping_mcore_to_hf(self, mcore_weights_name: str) -> list[str]:
         """Override to handle MTP layer mappings."""
         # Check if this is an MTP layer weight
         if "mtp" in mcore_weights_name:
             return self._convert_mtp_param(mcore_weights_name)
-        
+
         # Otherwise use parent class mapping
         return super()._weight_name_mapping_mcore_to_hf(mcore_weights_name)
-    
+
     def _convert_mtp_param(self, name: str) -> list[str]:
         """
         Convert MTP layer parameters from MCore to HF format.
-        
+
         Following DeepSeek V3's approach, MTP layers can contain:
         - Direct mapped components (LayerNorms, projections)
         - Transformer components that reuse existing attention/MLP mappings
-        
+
         Args:
             name: MCore parameter name containing "mtp"
-            
+
         Returns:
             list: Corresponding HF parameter names
         """
         # For now, assume single MTP layer support
         if "mtp_layers." not in name:
             raise NotImplementedError(f"Invalid MTP parameter name: {name}")
-        
+
         # Get the MTP layer index
         parts = name.split(".")
         mtp_layer_idx = parts[2]  # mtp.layers.{idx}
-        
+
         # Direct mappings for MTP-specific components
         direct_name_mapping = {
             f"mtp.layers.{mtp_layer_idx}.input_layernorm.weight": f"model.mtp_layers.{mtp_layer_idx}.input_layernorm.weight",
@@ -89,10 +89,10 @@ class MimoBridge(Qwen2Bridge):
             f"mtp.layers.{mtp_layer_idx}.final_layernorm.weight": f"model.mtp_layers.{mtp_layer_idx}.final_layernorm.weight",
             f"mtp.layers.{mtp_layer_idx}.input_proj.weight": f"model.mtp_layers.{mtp_layer_idx}.input_proj.weight",
         }
-        
+
         if name in direct_name_mapping:
             return [direct_name_mapping[name]]
-        
+
         # Handle transformer components within MTP
         # Check if this is a self_attention or mlp component
         if "self_attention" in name or "input_layernorm.weight" in name:
@@ -102,5 +102,3 @@ class MimoBridge(Qwen2Bridge):
         else:
             raise NotImplementedError(f"Unsupported MTP parameter name: {name}")
         return convert_names
-
-

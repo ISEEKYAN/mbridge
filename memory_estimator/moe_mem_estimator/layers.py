@@ -1,50 +1,49 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
-from .base import (
-    MemEstimator,
-    set_global_config,
-    get_tensor_model_parallel_world_size,
-    get_tensor_model_parallel_rank,
-    cum_mul,
-    get_expert_tensor_parallel_world_size,
-    get_expert_tensor_parallel_rank,
-    get_pipeline_model_parallel_world_size,
-    get_pipeline_model_parallel_rank,
-    get_expert_model_parallel_rank,
-    get_expert_model_parallel_world_size,
-    is_pipeline_first_stage,
-    is_pipeline_last_stage,
-    _addindent,
-    colored,
-)
-
-from megatron.core.transformer.spec_utils import ModuleSpec
+import math
+import types
+import warnings
+from copy import deepcopy
 from typing import Dict, Literal, Optional, Union
-from megatron.core.transformer.transformer_config import (
-    TransformerConfig,
-    MLATransformerConfig,
+
+from megatron.core.extensions.transformer_engine import (
+    _get_extra_te_kwargs,
+    condition_init_method,
+    get_expert_parallel_rng_tracker_name,
 )
 from megatron.core.model_parallel_config import ModelParallelConfig
-from megatron.core.tensor_parallel.utils import VocabUtility
-from megatron.core.transformer.transformer_block import (
-    TransformerBlockSubmodules,
-)
 from megatron.core.models.common.embeddings import (
     _yarn_get_mscale,
     apply_rotary_pos_emb,
 )
-from megatron.core.extensions.transformer_engine import (
-    _get_extra_te_kwargs,
-    get_expert_parallel_rng_tracker_name,
-    condition_init_method,
-)
+from megatron.core.tensor_parallel.utils import VocabUtility
+from megatron.core.transformer import transformer_layer
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.mlp import MLPSubmodules
+from megatron.core.transformer.spec_utils import ModuleSpec, import_module
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
+from megatron.core.transformer.transformer_config import (
+    MLATransformerConfig,
+    TransformerConfig,
+)
 from megatron.core.utils import divide
-from megatron.core.transformer.spec_utils import import_module
-from megatron.core.transformer import transformer_layer
-import types, math
-import warnings
-from copy import deepcopy
+
+from .base import (
+    MemEstimator,
+    _addindent,
+    colored,
+    cum_mul,
+    get_expert_model_parallel_rank,
+    get_expert_model_parallel_world_size,
+    get_expert_tensor_parallel_rank,
+    get_expert_tensor_parallel_world_size,
+    get_pipeline_model_parallel_rank,
+    get_pipeline_model_parallel_world_size,
+    get_tensor_model_parallel_rank,
+    get_tensor_model_parallel_world_size,
+    is_pipeline_first_stage,
+    is_pipeline_last_stage,
+    set_global_config,
+)
 
 
 class LanguageModelEmbedding(MemEstimator):
@@ -219,7 +218,6 @@ class ColumnParallelLinear(MemEstimator):
             self.weight = (self.output_size_per_partition, self.input_size)
         else:
             self.weight = (self.output_size_per_partition, self.input_size)
-
 
         if bias:
             self.bias = [self.output_size_per_partition]
@@ -1564,9 +1562,9 @@ def build_module(
 
 
 from megatron.core.transformer.transformer_block import (
-    TransformerBlockSubmodules,
     BaseTransformerLayer,
     LayerNormImpl,
+    TransformerBlockSubmodules,
 )
 
 

@@ -1,23 +1,24 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
-from .base import (
-    MemEstimator,
-    set_global_config,
-    get_tensor_model_parallel_world_size,
-    get_tensor_model_parallel_rank,
-    cum_mul,
-)
-
-from megatron.core.transformer.spec_utils import ModuleSpec
 from typing import Dict, Literal, Optional, Union
-from megatron.core.transformer.transformer_config import TransformerConfig
+
 from megatron.core.model_parallel_config import ModelParallelConfig
 from megatron.core.tensor_parallel.utils import VocabUtility
+from megatron.core.transformer.enums import ModelType
+from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import (
     TransformerBlockSubmodules,
     _get_block_submodules,
 )
-from megatron.core.transformer.enums import ModelType
-from .layers import LanguageModelEmbedding, TransformerBlock, ColumnParallelLinear
+from megatron.core.transformer.transformer_config import TransformerConfig
+
+from .base import (
+    MemEstimator,
+    cum_mul,
+    get_tensor_model_parallel_rank,
+    get_tensor_model_parallel_world_size,
+    set_global_config,
+)
+from .layers import ColumnParallelLinear, LanguageModelEmbedding, TransformerBlock
 
 
 class GPTModel(MemEstimator):
