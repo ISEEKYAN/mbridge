@@ -7,7 +7,6 @@ from megatron.core.transformer import MLATransformerConfig
 from megatron.core.transformer.enums import AttnBackend
 
 from ..core import LLMBridge, register_model
-from .ext.deepseek_v3.dequant_fp8_safetensor_io import DequantFP8SafeTensorIO
 
 
 @register_model("deepseek_v3")
@@ -214,6 +213,7 @@ class DeepseekV3Bridge(LLMBridge):
 
     def _get_safetensor_io(self, weights_path: str):
         if self.dtype == torch.bfloat16:
+            from .ext.deepseek_v3.dequant_fp8_safetensor_io import DequantFP8SafeTensorIO
             return DequantFP8SafeTensorIO(self._get_actual_hf_path(weights_path))
         else:
             raise NotImplemented("only support bfloat16 for now")
