@@ -3,6 +3,8 @@
 MBridge提供了Hugging Face模型和Megatron-Core优化实现之间的无缝桥接，用于高效的分布式训练和推理。同时，MBridge还提供了强化学习（RL）接入Megatron所需的必要工具和流程。
 
 [English Documentation](README.md)
+## 202508更新
+- 支持以bf16训练DeepSeekV3模型时，直接加载FP8 HF格式权重，无需保存额外的Megatron-Core格式权重（MTP暂未支持，基于DeepSeek官方提供的反量化kernel）用法查看example/4
 
 ## 概述
 

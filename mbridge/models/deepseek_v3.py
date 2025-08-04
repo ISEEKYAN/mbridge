@@ -1,11 +1,13 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
 
+import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
 from megatron.core.transformer import MLATransformerConfig
 from megatron.core.transformer.enums import AttnBackend
 
 from ..core import LLMBridge, register_model
+from .ext.deepseek_v3.dequant_fp8_safetensor_io import DequantFP8SafeTensorIO
 
 
 @register_model("deepseek_v3")
@@ -171,7 +173,7 @@ class DeepseekV3Bridge(LLMBridge):
             rotary_base=self.hf_config.rope_theta,
         )
 
-        if self.config.mtp_num_layers is not None:
+        if self.config.mtp_num_layers is not None and self.config.mtp_num_layers > 0:
             transformer_layer_spec = self.config
             mtp_block_spec = get_gpt_mtp_block_spec(
                 self.config, transformer_layer_spec, use_transformer_engine=True
@@ -209,6 +211,12 @@ class DeepseekV3Bridge(LLMBridge):
             raise NotImplementedError(
                 f"Unsupported parameter name: {mcore_weights_name}"
             )
+
+    def _get_safetensor_io(self, weights_path: str):
+        if self.dtype == torch.bfloat16:
+            return DequantFP8SafeTensorIO(self._get_actual_hf_path(weights_path))
+        else:
+            raise NotImplemented("only support bfloat16 for now")
 
     def _weight_name_mapping_mlp(self, name: str) -> list[str]:
         layer_number = name.split(".")[2]

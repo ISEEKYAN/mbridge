@@ -5,6 +5,9 @@ MBridge provides a seamless bridge between Hugging Face models and Megatron-Core
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ISEEKYAN/mbridge)
 [中文文档](README.zh-CN.md)
 
+## 202508 Update
+- Support loading FP8 HF weights directly when training DeepSeekV3 models with bfloat16, without saving extra Megatron-Core format weights (MTP is not supported yet, based on the dequantization kernel provided by DeepSeek) see example/4
+
 ## Overview
 
 MBridge allows you to convert popular Hugging Face models to Megatron-Core format, enabling you to leverage advanced parallelism strategies for large-scale training and inference. The library supports various model architectures and simplifies the process of transitioning between these frameworks. For Reinforcement Learning workflows, MBridge provides interfaces and tools needed to connect RL algorithms with Megatron-optimized models.

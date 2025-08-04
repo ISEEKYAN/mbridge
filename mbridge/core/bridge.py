@@ -128,6 +128,9 @@ class Bridge(ABC):
             self.load_weights(model, self._get_actual_hf_path(weight_path))
         return model
 
+    def _get_safetensor_io(self, weights_path: str):
+        return SafeTensorIO(self._get_actual_hf_path(weights_path))
+
     def load_weights(
         self,
         models: list[torch.nn.Module],
@@ -141,7 +144,7 @@ class Bridge(ABC):
             models: List of model instances, supporting VPP (Virtual Pipeline Parallelism)
             weights_path: Path to the weights file or Hugging Face model identifier
         """
-        self.safetensor_io = SafeTensorIO(self._get_actual_hf_path(weights_path))
+        self.safetensor_io = self._get_safetensor_io(weights_path)
 
         for i, model in enumerate(models):
             # map local weight names to global weight names
@@ -201,7 +204,8 @@ class Bridge(ABC):
                         )
                         mcore_weights_tp_split = list(mcore_weights_tp_split)
                         mcore_weights_tp_split = [
-                            t.to(param.device) for t in mcore_weights_tp_split
+                            t.to(param.device, dtype=param.dtype).contiguous()
+                            for t in mcore_weights_tp_split
                         ]
                     else:
                         mcore_weights_tp_split = None
@@ -219,7 +223,8 @@ class Bridge(ABC):
                         )
                         mcore_weights_tp_split = list(mcore_weights_tp_split)
                         mcore_weights_tp_split = [
-                            t.to(param.device) for t in mcore_weights_tp_split
+                            t.to(param.device, dtype=param.dtype).contiguous()
+                            for t in mcore_weights_tp_split
                         ]
                     else:
                         mcore_weights_tp_split = None
@@ -853,6 +858,7 @@ class Bridge(ABC):
         """
 
         return os.path.dirname(cached_file(weight_path, "config.json"))
+
 
 # Model registry
 _MODEL_REGISTRY = {}
