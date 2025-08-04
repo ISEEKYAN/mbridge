@@ -193,6 +193,13 @@ def get_model(
         kwargs = {"grad_reduce_in_fp32": True, "use_distributed_optimizer": True}
         if ddp_config is not None:
             kwargs.update(ddp_config)
+        if optimizer_config is not None:
+            import warnings
+            warnings.warn(
+                "optimizer_config is deprecated to set DistributedDataParallelConfig, use ddp_config instead",
+                DeprecationWarning,
+            )
+            kwargs.update(optimizer_config)
         if use_custom_fsdp and use_precision_aware_optimizer:
             kwargs["preserve_fp32_weights"] = False
 
