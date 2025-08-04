@@ -36,6 +36,7 @@ def get_model(
     init_model_with_meta_device: bool = False,
     overlap_param_gather_with_optimizer_step: bool = False,
     data_parallel_random_init: bool = True,
+    ddp_config: dict = None,
     optimizer_config: dict = None,
 ):
     """Build the model.
@@ -190,8 +191,8 @@ def get_model(
 
         # default
         kwargs = {"grad_reduce_in_fp32": True, "use_distributed_optimizer": True}
-        if optimizer_config:
-            kwargs.update(optimizer_config)
+        if ddp_config is not None:
+            kwargs.update(ddp_config)
         if use_custom_fsdp and use_precision_aware_optimizer:
             kwargs["preserve_fp32_weights"] = False
 
