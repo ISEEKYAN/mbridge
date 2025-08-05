@@ -195,6 +195,7 @@ def get_model(
             kwargs.update(ddp_config)
         if optimizer_config is not None:
             import warnings
+
             warnings.warn(
                 "optimizer_config is deprecated to set DistributedDataParallelConfig, use ddp_config instead",
                 DeprecationWarning,
