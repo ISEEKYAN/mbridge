@@ -4,13 +4,14 @@ from collections import namedtuple
 from typing import List
 
 import torch
-from megatron.core import InferenceParams, parallel_state
+from megatron.core import InferenceParams, tensor_parallel
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+from .attention import Qwen2_5VLSelfAttention
 from .transformer_config import Qwen2VLTransformerConfig
 from .vision_model import Qwen2_5VisionModel
 
@@ -21,46 +22,52 @@ class Qwen2_5VLModel(MegatronModule):
 
     Args:
         language_transformer_config (TransformerConfig): Transformer config for the language model.
-        language_transformer_layer_spec (ModuleSpec): Specifies module to use for transformer layers of the language model.
+        language_transformer_layer_spec (ModuleSpec): Specifies module to use for transformer layers of the
+            language model.
         language_vocab_size (int): Language model vocabulary size.
-        language_max_sequence_length (int): Language model maximum sequence length. This is used for positional embedding.
+        language_max_sequence_length (int): Language model maximum sequence length. This is used for
+            positional embedding.
         vision_transformer_config (TransformerConfig): Transformer config for the vision model.
-        vision_transformer_layer_spec (ModuleSpec): Specifies module to use for transformer layers of the vision model.
-        drop_vision_class_token (bool): Drop vision class token(s) before input to the language model.
-        vision_projection_config (TransformerConfig): Config for the projection from vision model outputs to language model inputs.
-        vision_projection_layer_spec (ModuleSpec): Specifies the module to use for the vision projection.
+        vision_transformer_layer_spec (ModuleSpec): Specifies module to use for transformer layers of the
+            vision model.
+        vision_projection_config (TransformerConfig): Config for the projection from vision model outputs to
+            language model inputs.
+        vision_projection_layer_spec (ModuleSpec): Specifies the module to use for the vision
+            projection.
         vision_projection_type (str): Type of the vision projection to use. Default is a 2-layer MLP.
-        allow_missing_vision_projection_checkpoint (bool): Allow vision projection weights to be missing when loading a checkpoint. Default False.
-        parallel_output (bool): Do not gather the outputs, keep them split across tensor parallel ranks. This is typically True for training and False for inference.
-        language_position_embedding_type (str): Position embedding type to use in the language model. Default learned absolute.
-        language_rotary_percent (float): Percent of rotary dimension to use for rotary position embeddings in the language model. Defaults to 1.0.
-        pre_process (bool): Include the embedding layer in the gpt decoder (used with pipeline parallelism). Defaults to True.
-        post_process (bool): Include an output layer and a layernorm in the gpt decoder (used with pipeline parallelism). Defaults to True.
-        add_encoder (bool): Construct the encoder module (used with pipeline parallelism). Defaults to True. When we use pipelining, the encoder
+        parallel_output (bool): Do not gather the outputs, keep them split across tensor parallel ranks. This
+            is typically True for training and False for inference.
+        language_rotary_percent (float): Percent of rotary dimension to use for rotary position embeddings
+            in the language model. Defaults to 1.0.
+        pre_process (bool): Include the embedding layer in the gpt decoder (used with pipeline parallelism).
+            Defaults to True.
+        post_process (bool): Include an output layer and a layernorm in the gpt decoder (used with pipeline
+            parallelism). Defaults to True.
+        add_encoder (bool): Construct the encoder module (used with pipeline parallelism). Defaults to True.
+            When we use pipelining, the encoder
             will live on only a subset of the pipeline stages (specifically, only the first stage).
-        add_decoder (bool): Construct the decoder module (used with pipeline parallelism). Defaults to True. When we use pipelining, the decoder
+        add_decoder (bool): Construct the decoder module (used with pipeline parallelism). Defaults to True.
+            When we use pipelining, the decoder
             will live on only a subset of the pipeline stages (specifically, every stage after the first one).
         img_h (int): The height of each image that the ViT will see.
         img_w (int): The width of each image that the ViT will see.
         patch_dim (int): The size of each patch side.
-        img_embedding_idx (int): Index in the language_embeddings tensor where image_embeddings should be inserted. Defaults to 0.
+        img_embedding_idx (int): Index in the language_embeddings tensor where image_embeddings should be
+            inserted. Defaults to 0.
     """
 
     def __init__(
         self,
-        language_transformer_config: Qwen2VLTransformerConfig,
+        language_transformer_config: TransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
         language_vocab_size: int,
         language_max_sequence_length: int,
         vision_transformer_config: TransformerConfig,
         vision_transformer_layer_spec: ModuleSpec,
-        # drop_vision_class_token: bool,
         vision_projection_config: TransformerConfig,
         vision_projection_layer_spec: ModuleSpec,
         vision_projection_type: str = "mlp",
-        allow_missing_vision_projection_checkpoint: bool = False,
         parallel_output: bool = True,
-        language_position_embedding_type: str = "rope",
         language_rotary_percent: float = 1.0,
         pre_process: bool = True,
         post_process: bool = True,
@@ -73,6 +80,13 @@ class Qwen2_5VLModel(MegatronModule):
         video_token_id: int = 151656,
     ) -> None:
         super().__init__(config=language_transformer_config)
+
+        # patch self_attention to use qwen2_5_vl attention
+        vision_transformer_layer_spec.submodules.self_attention.module = (
+            Qwen2_5VLSelfAttention
+        )
+        for layer_spec in language_transformer_layer_spec.layer_specs:
+            layer_spec.submodules.self_attention.module = Qwen2_5VLSelfAttention
 
         logging.getLogger(__name__).warning(
             "Qwen2VL model is under development and may be missing features."
@@ -108,6 +122,7 @@ class Qwen2_5VLModel(MegatronModule):
                 pre_process=True,
                 post_process=True,
             )
+
         self.language_model = GPTModel(
             config=language_transformer_config,
             transformer_layer_spec=language_transformer_layer_spec,
@@ -185,11 +200,6 @@ class Qwen2_5VLModel(MegatronModule):
         inference_params: InferenceParams = None,
         packed_seq_params: PackedSeqParams = None,
         extra_block_kwargs: dict = None,
-        # vision_data: torch.Tensor = None,
-        # vision_grid_thw: torch.Tensor = None,
-        # video_start_index: int = -1,
-        # image_input_mask: torch.Tensor = None,
-        # video_input_mask: torch.Tensor = None,
         pixel_values: torch.Tensor = None,
         pixel_values_videos: torch.Tensor = None,
         image_grid_thw: torch.Tensor = None,
@@ -201,7 +211,8 @@ class Qwen2_5VLModel(MegatronModule):
             image_data (torch.Tensor): input image of shape [total_thw_size, n_features].
             input_ids (torch.Tensor): input text ids [batch, text_seq_len].
             position_ids (torch.Tensor): input text position ids [batch, text_seq_len].
-            attention_mask (torch.Tensor): attention mask for the language model [batch, 1, combined_seq_len, combined_seq_len].
+            attention_mask (torch.Tensor): attention mask for the language model [batch, 1, combined_seq_len,
+                combined_seq_len].
             labels (torch.Tensor): Optional target text labels [batch, combined_seq_len].
             inference_params (InferenceParams): Inference-time parameters including KV cache.
 
@@ -211,7 +222,8 @@ class Qwen2_5VLModel(MegatronModule):
                 others -- mixture
             *_input_mask: should not be None in the first PP stage
         Returns:
-            output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape [b, s, vocab_size].
+            output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
+                [b, s, vocab_size].
         """
         video_start_index = 0
         vision_grid_thw = None
@@ -223,13 +235,9 @@ class Qwen2_5VLModel(MegatronModule):
             video_start_index = image_mask.sum().item()
         if video_grid_thw is not None:
             video_mask = input_ids == self.video_token_id
-            vision_grid_thw = torch.cat([vision_grid_thw, video_grid_thw], dim=0)
-            vision_data = torch.cat([vision_data, pixel_values_videos], dim=0)
-            video_start_index = image_mask.sum().item() + video_mask.sum().item()
-        use_inference_kv_cache = (
-            inference_params is not None
-            and "image_tokens_count" in inference_params.key_value_memory_dict
-        )
+            if vision_grid_thw is None:
+                vision_grid_thw = torch.cat([vision_grid_thw, video_grid_thw], dim=0)
+                vision_data = torch.cat([vision_data, pixel_values_videos], dim=0)
         use_inference_kv_cache = (
             inference_params is not None
             and "image_tokens_count" in inference_params.key_value_memory_dict
@@ -253,10 +261,12 @@ class Qwen2_5VLModel(MegatronModule):
                 #     vision_embeddings.shape[0]
                 # )
 
-            # If running inference, we can skip image token computation if they were computed already earlier for this sample.
+            # If running inference, we can skip image token computation if they were computed already earlier
+            # for this sample.
             if use_inference_kv_cache:
                 language_embeddings: torch.Tensor = self.language_model.embedding(
-                    input_ids=input_ids, position_ids=None  # NOTE: disable
+                    input_ids=input_ids,
+                    position_ids=None,  # NOTE: disable
                 )  # [text_seq_len, b, h_language]
                 # NOTE: why not cat here? is it the combined embeddings useless?
                 combined_embeddings = language_embeddings
@@ -272,28 +282,51 @@ class Qwen2_5VLModel(MegatronModule):
                     video_embeds = vision_embeds[video_start_index:]
                 else:
                     raise ValueError(
-                        f"Expect video token start index in range [0, {vision_embeds.shape[0]}], but got {video_start_index}"
+                        f"Expect video token start index in range [0, {vision_embeds.shape[0]}], but got "
+                        f"{video_start_index}"
                     )
-                image_input_mask = None
-                video_input_mask = None
-                if image_embeds is not None:
-                    # image_input_mask = image_input_mask.T  # shape [seqlen, mbs]
-                    image_input_mask = (input_ids == self.image_token_id).T.contiguous()
-                if video_embeds is not None:
-                    # video_input_mask = video_input_mask.T
-                    video_input_mask = (input_ids == self.video_token_id).T.contiguous()
+
                 combined_embeddings = self.language_model.embedding(
                     input_ids=input_ids,
                     position_ids=None,  # NOTE: disable
-                    image_input_mask=image_input_mask,
-                    video_input_mask=video_input_mask,
-                    image_embeds=image_embeds,
-                    video_embeds=video_embeds,
                 )  # [text_seq_len, b, h_language]
+
+                if image_embeds is not None or video_embeds is not None:
+                    combined_embeddings = combined_embeddings.transpose(
+                        0, 1
+                    ).contiguous()
+                    if image_embeds is not None:
+                        image_mask = (input_ids == self.image_token_id).contiguous()
+                        if image_mask.sum() > 0:
+                            combined_embeddings = combined_embeddings.clone()
+                            combined_embeddings[image_mask] = image_embeds.to(
+                                dtype=combined_embeddings.dtype,
+                                device=combined_embeddings.device,
+                            )
+                    if video_embeds is not None:
+                        video_mask = (input_ids == self.video_token_id).contiguous()
+                        if video_mask.sum() > 0:
+                            combined_embeddings = combined_embeddings.clone()
+                            combined_embeddings[video_mask] = video_embeds.to(
+                                dtype=combined_embeddings.dtype,
+                                device=combined_embeddings.device,
+                            )
+                    combined_embeddings = combined_embeddings.transpose(
+                        0, 1
+                    ).contiguous()
+
             else:
                 combined_embeddings = self.language_model.embedding(
-                    input_ids=input_ids, position_ids=None  # NOTE: disable
+                    input_ids=input_ids,
+                    position_ids=None,  # NOTE: disable
                 )  # [text_seq_len, b, h_language]
+            if self.config.sequence_parallel:
+                combined_embeddings = (
+                    tensor_parallel.scatter_to_sequence_parallel_region(
+                        combined_embeddings
+                    )
+                )
+                combined_embeddings = combined_embeddings.contiguous()
         else:
             combined_embeddings = None
 
@@ -316,4 +349,5 @@ class Qwen2_5VLModel(MegatronModule):
             packed_seq_params=packed_seq_params,  # currently always None
             **(extra_block_kwargs or {}),
         )
+
         return output
