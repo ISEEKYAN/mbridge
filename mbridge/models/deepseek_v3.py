@@ -1,8 +1,14 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
 
+from typing import Callable, Generator, Optional
+
 import torch
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
+from megatron.core.models.gpt.gpt_layer_specs import (
+    get_gpt_layer_with_transformer_engine_spec,
+    get_gpt_mtp_block_spec,
+)
+from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.transformer import MLATransformerConfig
 from megatron.core.transformer.enums import AttnBackend
 
@@ -146,7 +152,7 @@ class DeepseekV3Bridge(LLMBridge):
             beta_fast=mla_rope_config["beta_fast"],
             beta_slow=mla_rope_config["beta_slow"],
             # mcore 0.12 moe
-            moe_router_dtype="fp64",
+            moe_router_dtype="fp32",
             disable_bf16_reduced_precision_matmul=True,
             # other
             persist_layer_norm=True,
@@ -172,14 +178,83 @@ class DeepseekV3Bridge(LLMBridge):
             rotary_base=self.hf_config.rope_theta,
         )
 
-        if self.config.mtp_num_layers is not None and self.config.mtp_num_layers > 0:
-            transformer_layer_spec = self.config
-            mtp_block_spec = get_gpt_mtp_block_spec(
-                self.config, transformer_layer_spec, use_transformer_engine=True
-            )
-            ret["mtp_block_spec"] = mtp_block_spec
-
         return ret
+
+    def _model_provider(
+        self, post_model_creation_callbacks: list[Callable[[torch.nn.Module], None]]
+    ):
+        """
+        Creates and returns a model provider function.
+
+        The returned function creates a GPTModel with the specified configuration
+        when called with pre_process and post_process parameters.
+
+        Args:
+            post_model_creation_callbacks: List of callbacks to be called after model creation
+
+        Returns:
+            function: A provider function that creates and returns a GPTModel instance
+        """
+
+        share_embeddings_and_output_weights = getattr(
+            self.hf_config, "tie_word_embeddings", False
+        )
+
+        def provider(pre_process, post_process, vp_stage: Optional[int] = None):
+            transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
+            gptmodel_args = self._get_gptmodel_args()
+            if vp_stage is not None and self.has_vp_stage:
+                gptmodel_args["vp_stage"] = vp_stage
+
+            if (
+                self.config.mtp_num_layers is not None
+                and self.config.mtp_num_layers > 0
+            ):
+                if (
+                    hasattr(transformer_layer_spec, "layer_specs")
+                    and len(transformer_layer_spec.layer_specs) == 0
+                ):
+                    # Get the decoder layer spec explicitly if no decoder layer in the last stage,
+                    # Only happens with block spec (TransformerBlockSubmodules) when using MoE.
+                    # transformer_layer_spec_for_mtp = _get_transformer_layer_spec(use_te, config) # from copy https://github.com/NVIDIA/Megatron-LM/blob/core_v0.13.0rc4/pretrain_gpt.py#L173
+                    transformer_layer_spec_for_mtp = (
+                        get_gpt_layer_with_transformer_engine_spec(
+                            num_experts=self.config.num_moe_experts,
+                            moe_grouped_gemm=self.config.moe_grouped_gemm,
+                            qk_layernorm=self.config.qk_layernorm,
+                            multi_latent_attention=True,
+                        )
+                    )
+                else:
+                    transformer_layer_spec_for_mtp = transformer_layer_spec
+                mtp_block_spec = get_gpt_mtp_block_spec(
+                    self.config,
+                    transformer_layer_spec_for_mtp,
+                    use_transformer_engine=True,
+                    vp_stage=vp_stage,
+                )
+                gptmodel_args["mtp_block_spec"] = mtp_block_spec
+                print(f"mtp_block_spec: {mtp_block_spec}")
+            model = GPTModel(
+                config=self.config,
+                transformer_layer_spec=transformer_layer_spec,
+                pre_process=pre_process,
+                post_process=post_process,
+                share_embeddings_and_output_weights=share_embeddings_and_output_weights,
+                **gptmodel_args,
+            )
+            for callback in post_model_creation_callbacks:
+                callback(
+                    model,
+                    pre_process=pre_process,
+                    post_process=post_process,
+                    config=self.config,
+                    hf_config=self.hf_config,
+                )
+
+            return model
+
+        return provider
 
     def _weight_name_mapping_mcore_to_hf(self, mcore_weights_name: str) -> list[str]:
         """
@@ -213,7 +288,10 @@ class DeepseekV3Bridge(LLMBridge):
 
     def _get_safetensor_io(self, weights_path: str):
         if self.dtype == torch.bfloat16:
-            from .ext.deepseek_v3.dequant_fp8_safetensor_io import DequantFP8SafeTensorIO
+            from .ext.deepseek_v3.dequant_fp8_safetensor_io import (
+                DequantFP8SafeTensorIO,
+            )
+
             return DequantFP8SafeTensorIO(self._get_actual_hf_path(weights_path))
         else:
             raise NotImplemented("only support bfloat16 for now")

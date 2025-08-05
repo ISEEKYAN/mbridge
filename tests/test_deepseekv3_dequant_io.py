@@ -3,7 +3,6 @@ import os
 import torch
 
 
-
 def test_dequant_fp8_safetensor_io():
     if "DEEPSEEK_V3_HF_DIR" not in os.environ:
         print("DEEPSEEK_V3_HF_DIR is not set")
@@ -11,6 +10,7 @@ def test_dequant_fp8_safetensor_io():
     from mbridge.models.ext.deepseek_v3.dequant_fp8_safetensor_io import (
         DequantFP8SafeTensorIO,
     )
+
     hf_dir = os.environ["DEEPSEEK_V3_HF_DIR"]
     io = DequantFP8SafeTensorIO(hf_dir)
     weight_names = [

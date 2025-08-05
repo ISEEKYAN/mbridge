@@ -12,10 +12,7 @@ Start the Ray cluster:
 
 Run this script from any machine (typically the head):
     python 4.launch_deepseeekv3_with_ray.py \
-        --model_path /path/to/hf_model \
-        --num_nodes 2 \
-        --gpus_per_node 4 \
-        --tp 2 --pp 1 --cp 1
+        --model_path /path/to/hf_model 
 
 The script creates world_size=num_nodes*gpus_per_node Ray workers, binds one GPU to each, sets the necessary distributed environment variables and launches Megatron with the DeepSeek-V3 model.
 """
@@ -120,13 +117,44 @@ def worker_fn(
         num_layers_in_first_pipeline_stage=num_layers_in_first_pipeline_stage,
         num_layers_in_last_pipeline_stage=num_layers_in_last_pipeline_stage,
     )
-    bridge.config.mtp_num_layers = 0
+    # bridge.config.mtp_num_layers = 0
     model = bridge.get_model(post_model_creation_callbacks=[], wrap_with_ddp=False)
 
-    bridge.load_weights(model, hf_model_path, memory_efficient=True)
+    # maintain router bias dtype
+    for m in model:
+        from mbridge.core.util import unwrap_model
+
+        m = unwrap_model(m)
+        if hasattr(m, "decoder"):
+            for l in m.decoder.layers:
+                if (
+                    hasattr(l, "mlp")
+                    and hasattr(l.mlp, "router")
+                    and hasattr(l.mlp.router, "_maintain_float32_expert_bias")
+                ):
+                    print(f"maintain router bias dtype for {l.mlp.router}")
+                    l.mlp.router._maintain_float32_expert_bias()
+
+    # bridge.load_weights(model, hf_model_path, memory_efficient=True)
 
     print(f"[rank {rank}] Model loaded, proceeding with post-processing ...")
 
+    #########################################################
+    ## if you want to save distributed_checkpoint, you need to save it here
+    ## note: it is not verified
+    #########################################################
+    # save_distributed_checkpoint = False
+    # if save_distributed_checkpoint:
+    #     from megatron.training.checkpointing import save_checkpoint
+    #     save_checkpoint(
+    #         iteration=0,
+    #         model=model,
+    #         optimizer=None,
+    #         opt_param_scheduler=None,
+    #         num_floating_point_operations_so_far=0
+    #     )
+
+    # verify if the weights are loaded correctly
     for k, v in bridge.export_weights(model):
         if torch.distributed.get_rank() != 0:
             continue
@@ -203,10 +231,8 @@ def main():
 
     world_size = args.num_nodes * args.gpus_per_node
 
-    # 取 driver 所在节点的 IP 作为 master_addr
     master_addr = socket.gethostbyname(ray.util.get_node_ip_address())
 
-    # 启动所有 worker
     futures = []
     rank = 0
     for _node_idx in range(args.num_nodes):
@@ -230,11 +256,10 @@ def main():
             )
             rank += 1
 
-    # 等待所有 worker 结束
     for res in ray.get(futures):
         print(res)
 
-    print("所有 worker 执行完毕！")
+    print("all done")
 
 
 if __name__ == "__main__":

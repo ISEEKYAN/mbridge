@@ -6,7 +6,7 @@ MBridge provides a seamless bridge between Hugging Face models and Megatron-Core
 [中文文档](README.zh-CN.md)
 
 ## 202508 Update
-- Support loading FP8 HF weights directly when training DeepSeekV3 models with bfloat16, without saving extra Megatron-Core format weights (MTP is not supported yet, based on the dequantization kernel provided by DeepSeek) see example/4
+- Support loading FP8 HF weights directly when training DeepSeekV3 models with bfloat16, without saving extra Megatron-Core format weights (MTP included, based on the dequantization kernel provided by DeepSeek) see example/4
 
 ## Overview
 
