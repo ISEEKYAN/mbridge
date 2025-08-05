@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mbridge"
-version = "0.1.13"
+version = "0.13.0"
 authors = [
     { name = "Yan Bai", email = "bayan@nvidia.com" },
 ]
