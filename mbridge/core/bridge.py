@@ -64,6 +64,7 @@ class Bridge(ABC):
         init_model_with_meta_device: bool = False,
         overlap_param_gather_with_optimizer_step: bool = False,
         data_parallel_random_init: bool = True,
+        ddp_config: dict = None,
         optimizer_config: dict = None,
         post_model_creation_callbacks: list[Callable[[torch.nn.Module], None]] = [],
         extra_provider_args: dict = {},
@@ -121,6 +122,7 @@ class Bridge(ABC):
             init_model_with_meta_device=init_model_with_meta_device,
             overlap_param_gather_with_optimizer_step=overlap_param_gather_with_optimizer_step,
             data_parallel_random_init=data_parallel_random_init,
+            ddp_config=ddp_config,
             optimizer_config=optimizer_config,
             **kwargs,
         )
