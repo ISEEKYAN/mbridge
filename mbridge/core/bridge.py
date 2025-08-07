@@ -184,11 +184,28 @@ class Bridge(ABC):
                 # hf format to mcore format
                 if set(to_load_from_disk) & set(hf_names):
                     if not memory_efficient:
-                        hf_weights = [hf_weights_map[x] for x in hf_names]
+                        hf_weights = []
+                        for name in hf_names:
+                            if isinstance(name, tuple):
+                                name, expert_id = name
+                                hf_weights.append(hf_weights_map[name][expert_id])
+                            else:
+                                hf_weights.append(hf_weights_map[name])
                     else:
-                        hf_weights = [
-                            self.safetensor_io.load_one_hf_weight(x) for x in hf_names
-                        ]
+                        hf_weights = []
+                        for name in hf_names:
+                            if isinstance(name, tuple):
+                                name, expert_id = name
+                                hf_weights.append(
+                                    self.safetensor_io.load_one_hf_weight(name)[
+                                        expert_id
+                                    ]
+                                )
+                            else:
+                                hf_weights.append(
+                                    self.safetensor_io.load_one_hf_weight(name)
+                                )
+
                     mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
                 else:
                     mcore_weight = None
@@ -353,15 +370,15 @@ class Bridge(ABC):
                 torch.distributed.all_gather(
                     infer_params, broad_pp_param, group=self.mpu.ep_group
                 )
-
-                name_prefix, local_expert_id = name.split(".weight")
+                weight_or_bias = "weight" if "weight" in name else "bias"
+                name_prefix, local_expert_id = name.split(f".{weight_or_bias}")
                 local_expert_id = int(local_expert_id)
                 global_expert_ids = [
                     num_experts_per_rank * ep_rank + local_expert_id
                     for ep_rank in range(self.mpu.ep_size)
                 ]
                 global_expert_names = [
-                    f"{name_prefix}.weight{expert_id}"
+                    f"{name_prefix}.{weight_or_bias}{expert_id}"
                     for expert_id in global_expert_ids
                 ]
 

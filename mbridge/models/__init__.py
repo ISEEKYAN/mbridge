@@ -15,6 +15,7 @@ Classes:
 """
 
 from .deepseek_v3 import DeepseekV3Bridge
+from .gpt_oss import GPTOSSBridge
 from .llama import LLaMABridge
 from .mimo import MimoBridge
 from .mixtral import MixtralBridge
