@@ -5,6 +5,7 @@ MBridge提供了Hugging Face模型和Megatron-Core优化实现之间的无缝桥
 [English Documentation](README.md)
 ## 202508更新
 - 支持以bf16训练DeepSeekV3模型时，直接加载FP8 HF格式权重，无需保存额外的Megatron-Core格式权重（包含MTP支持，基于DeepSeek官方提供的反量化kernel）用法查看example/4
+- 支持GPT-OSS 20B/120B，使用NeMo的day 0支持, https://docs.nvidia.com/nemo-framework/user-guide/latest/llms/gpt_oss.html
 
 ## 概述
 

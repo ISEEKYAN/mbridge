@@ -388,6 +388,8 @@ class GPTOSSBridge(LLMBridge):
             self._weight_name_mapping_mcore_local_to_global(model, consider_ep=False)
             for model in models
         ]
+
+        all_experts = {}
         for iter_pp_rank, iter_vpp_rank, iter_name in weights_names_all_pp:
             local_to_global_map = local_to_global_maps[iter_vpp_rank]
             if iter_pp_rank == self.mpu.pp_rank:
@@ -423,7 +425,6 @@ class GPTOSSBridge(LLMBridge):
                     f"{name_prefix}.{weight_or_bias}{expert_id}"
                     for expert_id in global_expert_ids
                 ]
-                all_experts = {}
                 for name, param in zip(global_expert_names, infer_params):
                     if self.mpu.etp_size > 1:
                         # gather etp
@@ -443,7 +444,14 @@ class GPTOSSBridge(LLMBridge):
                     converted_names, converted_params = self._weight_to_hf_format(
                         name, merge_params
                     )
-                    yield from zip(converted_names, converted_params)
+                    name, expert_id = converted_names[0]
+                    all_experts[expert_id] = converted_params[0]
+                if all_experts.__len__() == num_experts:
+                    conbined_weights = torch.stack(
+                        [all_experts[i] for i in range(num_experts)]
+                    )
+                    all_experts.clear()
+                    yield name, conbined_weights
                 continue
 
             # TP
@@ -471,6 +479,15 @@ class GPTOSSBridge(LLMBridge):
             converted_names, converted_params = self._weight_to_hf_format(
                 name, infer_params
             )
+            if ".mlp.experts.linear_fc" in name and self.mpu.ep_size == 1:
+                num_experts = self.config.num_moe_experts
+                if all_experts.__len__() == num_experts:
+                    conbined_weights = torch.stack(
+                        [all_experts[i] for i in range(num_experts)]
+                    )
+                    all_experts.clear()
+                    yield name, conbined_weights
+                continue
 
             yield from zip(converted_names, converted_params)
 
@@ -535,4 +552,72 @@ class GPTOSSBridge(LLMBridge):
             return interleave(hf_weights[0])
         if len(hf_weights) == 1:
             return hf_weights[0]
+        raise NotImplementedError(f"Unsupported parameter name: {mcore_weights_name}")
+
+    def _weight_to_hf_format(
+        self, mcore_weights_name: str, mcore_weights: torch.Tensor
+    ) -> tuple[list[str], list[torch.Tensor]]:
+        """
+        Export MCore weights to Hugging Face format.
+
+        Takes MCore weight names and tensor, outputs Hugging Face weight names and tensors.
+        Due to MCore's runtime optimizations involving weight merging, output can be a list.
+
+        Args:
+            mcore_weights_name: MCore weight name
+            mcore_weights: MCore weight tensor
+
+        Returns:
+            tuple: (hf_names, hf_weights) - lists of Hugging Face weight names and tensors
+
+        Raises:
+            NotImplementedError: If the parameter name is unsupported
+        """
+        hf_names = self._weight_name_mapping_mcore_to_hf(mcore_weights_name)
+        if (
+            "self_attention.linear_qkv." in mcore_weights_name
+            and "layer_norm" not in mcore_weights_name
+        ):
+            # split qkv
+            assert len(hf_names) == 3
+            # split qkv
+            num_key_value_heads = self.hf_config.num_key_value_heads
+            hidden_dim = self.hf_config.hidden_size
+            num_attention_heads = self.hf_config.num_attention_heads
+            head_dim = getattr(
+                self.hf_config, "head_dim", hidden_dim // num_attention_heads
+            )
+            out_shape = (
+                [num_key_value_heads, -1, hidden_dim]
+                if ".bias" not in mcore_weights_name
+                else [num_key_value_heads, -1]
+            )
+            qkv = mcore_weights.view(*out_shape)
+            q_len = head_dim * num_attention_heads // num_key_value_heads
+            k_len = head_dim
+            v_len = head_dim
+            single_out_shape = (
+                [-1, hidden_dim] if ".bias" not in mcore_weights_name else [-1]
+            )
+            q = qkv[:, :q_len].reshape(*single_out_shape)
+            k = qkv[:, q_len : q_len + k_len].reshape(*single_out_shape)
+            v = qkv[:, q_len + k_len :].reshape(*single_out_shape)
+            return hf_names, [q, k, v]
+
+        elif (
+            "linear_fc1.weight" in mcore_weights_name
+            or "linear_fc1.bias" in mcore_weights_name
+        ):
+
+            def uninterleave(elem):
+                gate, up = torch.chunk(elem, 2, dim=0)
+                output = torch.empty_like(elem)
+                output[::2, ...] = gate
+                output[1::2, ...] = up
+                return output
+
+            return hf_names, [uninterleave(mcore_weights)]
+
+        if len(hf_names) == 1:
+            return [hf_names[0]], [mcore_weights]
         raise NotImplementedError(f"Unsupported parameter name: {mcore_weights_name}")

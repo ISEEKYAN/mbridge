@@ -7,6 +7,7 @@ MBridge provides a seamless bridge between Hugging Face models and Megatron-Core
 
 ## 202508 Update
 - Support loading FP8 HF weights directly when training DeepSeekV3 models with bfloat16, without saving extra Megatron-Core format weights (MTP included, based on the dequantization kernel provided by DeepSeek) see example/4
+- Support loading GPT-OSS 20B/120B, with NeMo's day 0 support. https://docs.nvidia.com/nemo-framework/user-guide/latest/llms/gpt_oss.html
 
 ## Overview
 

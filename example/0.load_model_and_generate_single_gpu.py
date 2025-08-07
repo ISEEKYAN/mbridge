@@ -42,7 +42,7 @@ def generate_sequence(prompt, model, hf_model_path, max_new_tokens=100):
     position_ids = torch.arange(input_ids.shape[1], device=input_ids.device).unsqueeze(
         0
     )
-    attention_mask = torch.ones_like(input_ids).to(input_ids.device)
+    attention_mask = torch.ones_like(input_ids).to(input_ids.device).bool()
 
     generated_tokens = []
     cur_input_ids = input_ids
@@ -54,7 +54,7 @@ def generate_sequence(prompt, model, hf_model_path, max_new_tokens=100):
         # Move inputs to GPU
         cur_input_ids = cur_input_ids.cuda()
         cur_position_ids = cur_position_ids.cuda()
-        cur_attention_mask = cur_attention_mask.cuda()
+        cur_attention_mask = cur_attention_mask.cuda().bool()
 
         # Forward inference with the model
         with torch.no_grad():
