@@ -2,6 +2,8 @@
 
 MBridge provides a seamless bridge between Hugging Face models and Megatron-Core's optimized implementation for efficient distributed training and inference. It also offers necessary tools and processes for integrating Reinforcement Learning (RL) with Megatron.
 
+MBridge is a prototype project, the idea has been adopted as [Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge). For more advanced features such as training loop, mixed precision(FP8, BF16, FP4 etc.), PEFT, please refer to Megatron-Bridge.
+
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ISEEKYAN/mbridge)
 [中文文档](README.zh-CN.md)
 
@@ -99,34 +101,13 @@ model = bridge.get_model(weight_path=HF_MODEL_PATH, post_model_creation_callback
 
 ## Development Roadmap
 
-### Features
-- [ ] VLM (Vision Language Model) support
-- [ ] FP8 precision support
+MBridge will continue to maintain support for popular models, but will not develop more advanced features.
+See [Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge) for more advanced features.
 
-### Additional Examples
-- [ ] Supervised Fine-Tuning (SFT) example
-- [ ] Continue pretraining example
-- [ ] Multi-modal model example
-- [ ] Online export to inference engine example
-- [ ] Integration with popular training frameworks
-
-### Correctness Verification Process
-- [ ] Develop a systematic validation pipeline
-- [ ] Add comparison tools for logits between HF and Megatron implementations
-- [ ] Create regression tests for weight loading
-- [ ] Implement validation tests for all supported parallelism modes
-- [ ] Document verification procedures for contributors
-
-### Community Contribution
-- [ ] Set up contribution guidelines
-- [ ] Create templates for issue reporting and pull requests
-- [ ] Document code style and testing requirements
-- [ ] Establish the review process
-- [ ] Provide guidance for adding support for new models
-
-### Advanced Training Techniques
-- [ ] Implement sequence packing for training
-- [ ] Implement dynamic batching
+## Acknowledgements
+- [veRL](https://github.com/volcengine/verl) has adopted MBridge as a connector to Megatron-Core.
+- [slime](https://github.com/THUDM/slime) has adopted MBridge as Megatron-Core checkpoint converter.
+- [Nemo-RL](https://github.com/NVIDIA-NeMo/RL) has adopted Megatron-Bridge as Megatron-Core connector.
 
 ## License
 

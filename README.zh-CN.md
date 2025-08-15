@@ -1,6 +1,7 @@
 # MBridge: 连接Megatron-Core与Hugging Face/强化学习
 
 MBridge提供了Hugging Face模型和Megatron-Core优化实现之间的无缝桥接，用于高效的分布式训练和推理。同时，MBridge还提供了强化学习（RL）接入Megatron所需的必要工具和流程。
+MBridge 是一个原型项目，其理念已被采纳为NVIDIA官方维护的 [Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge)。如需训练循环、混合精度（FP8、BF16、FP4 等）、PEFT 等更高级功能，请参见 Megatron-Bridge。
 
 [English Documentation](README.md)
 ## 202508更新
@@ -94,34 +95,13 @@ model = bridge.get_model(weight_path=HF_MODEL_PATH, post_model_creation_callback
 ```
 ## 开发路线图
 
-### 功能
-- [ ] VLM（视觉语言模型）支持
-- [ ] FP8精度支持
+MBridge 将持续维护对热门模型的支持，但不会开发更多高级功能。更多高级功能请参见 [Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge)。
 
-### 更多示例
-- [ ] 监督微调（SFT）示例
-- [ ] 继续预训练示例
-- [ ] 多模态模型示例
-- [ ] 在线导出到推理引擎示例
-- [ ] 与流行训练框架的集成
 
-### 正确性验证流程
-- [ ] 开发系统验证流程
-- [ ] 添加HF与Megatron实现之间的logits比较工具
-- [ ] 为权重加载创建回归测试
-- [ ] 为所有支持的并行模式实现验证测试
-- [ ] 为贡献者提供验证程序文档
-
-### 社区贡献
-- [ ] 建立贡献指南
-- [ ] 创建问题报告和拉取请求的模板
-- [ ] 记录代码风格和测试要求
-- [ ] 建立审查流程
-- [ ] 提供添加新模型支持的指导
-
-### 高级训练技术
-- [ ] 实现序列打包（sequence packing）进行训练
-- [ ] 实现动态批处理
+## 致谢
+- [veRL](https://github.com/volcengine/verl) 已将 MBridge 作为连接 Megatron-Core 的组件。
+- [slime](https://github.com/THUDM/slime) 已将 MBridge 作为 Megatron-Core 权重转换器。
+- [Nemo-RL](https://github.com/NVIDIA-NeMo/RL) 已将 Megatron-Bridge 作为连接 Megatron-Core 的组件。
 
 ## 许可证
 
