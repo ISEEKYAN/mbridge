@@ -115,6 +115,14 @@
                                 </select>
                             </div>
                         </div>
+                        <!-- Pipeline Layout Row Added -->
+                        <div class="form-row">
+                            <div class="form-group" style="width: 100%;">
+                                <label for="pipeline-layout">Pipeline Layout (comma-separated layers per stage):</label>
+                                <input type="text" id="pipeline-layout" name="pipeline_model_parallel_layout" placeholder="e.g., Et|(tt|)*30L">
+                            </div>
+                        </div>
+                        <!-- End Pipeline Layout Row -->
 
                         <div id="validation-message" class="error-message" style="display: none;"></div>
                         <div class="button-container">

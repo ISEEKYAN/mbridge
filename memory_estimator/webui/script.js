@@ -37,7 +37,7 @@ function setupEventListeners() {
         });
     });
 
-    const liveValidationInputs = ['num-gpus', 'tp', 'pp', 'ep', 'cp', 'etp', 'config-editor'];
+    const liveValidationInputs = ['num-gpus', 'tp', 'pp', 'ep', 'cp', 'etp', 'config-editor', 'pipeline-layout'];
     liveValidationInputs.forEach(id => {
         const input = document.getElementById(id);
         if(input) {
@@ -102,17 +102,31 @@ async function loadSelectedModelConfig() {
         return;
     }
 
+        // 优先直接从 HuggingFace 仓库拉取配置文件
+        const hfUrl = `https://huggingface.co/${selectedConfig}/raw/main/config.json`;
         try {
-        const response = await fetch(`/get-megatron-config/${encodeURIComponent(selectedConfig)}`);
-        configData = await response.json();
-        if (configData.error) {
-            editor.value = `Error: ${configData.error}`;
+            const resp = await fetch(hfUrl, { mode: 'cors' });
+            if (resp.ok) {
+                configData = await resp.json();
+                editor.value = JSON.stringify(configData, null, 2);
             } else {
-            editor.value = JSON.stringify(configData, null, 2);
+                throw new Error(`HF returned status ${resp.status}`);
             }
-        } catch (error) {
-        editor.value = 'Failed to fetch model configuration.';
-        console.error('Error fetching model config:', error);
+        } catch (hfErr) {
+            console.warn('Direct HF fetch failed, fallback to backend:', hfErr);
+            // 回退到后端接口（兼容本地部署无 CORS 或私有模型）
+            try {
+                const response = await fetch(`/get-megatron-config/${encodeURIComponent(selectedConfig)}`);
+                configData = await response.json();
+                if (configData.error) {
+                    editor.value = `Error: ${configData.error}`;
+                } else {
+                    editor.value = JSON.stringify(configData, null, 2);
+                }
+            } catch (beErr) {
+                editor.value = 'Failed to fetch model configuration.';
+                console.error('Backend config fetch error:', beErr);
+            }
         }
 
     // Trigger validation and UI updates after loading new config
@@ -157,6 +171,7 @@ function getFormValues(isSubmission = false) {
 
     const vppInput = formData.get('vpp');
     const etpInput = formData.get('etp');
+    const pipelineLayoutInput = formData.get('pipeline_model_parallel_layout');
 
     return {
             hf_model_path: hfPath,
@@ -176,6 +191,7 @@ function getFormValues(isSubmission = false) {
         etp: etpInput ? parseInt(etpInput) : null,
         num_layers_in_first_pipeline_stage: formData.get('num_layers_in_first_pipeline_stage') ? parseInt(formData.get('num_layers_in_first_pipeline_stage')) : null,
         num_layers_in_last_pipeline_stage: formData.get('num_layers_in_last_pipeline_stage') ? parseInt(formData.get('num_layers_in_last_pipeline_stage')) : null,
+        pipeline_model_parallel_layout: pipelineLayoutInput ? pipelineLayoutInput.trim() : null,
         overhead: parseInt(formData.get('overhead')),
     };
 }
@@ -593,6 +609,7 @@ function restoreForm(params) {
     setElementValue('etp', params.etp);
     setElementValue('num_layers_in_first_pipeline_stage', params.num_layers_in_first_pipeline_stage);
     setElementValue('num_layers_in_last_pipeline_stage', params.num_layers_in_last_pipeline_stage);
+    setElementValue('pipeline-layout', params.pipeline_model_parallel_layout);
     setElementValue('overhead', params.overhead, 10);
     
     const modelSelect = document.getElementById('model-select');

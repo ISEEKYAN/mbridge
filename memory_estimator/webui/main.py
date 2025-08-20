@@ -6,7 +6,7 @@ import tempfile
 from typing import Optional
 
 import requests
-from estimate import estimate_from_config
+from estimate_013 import estimate_from_config
 from fastapi import Body, FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -100,6 +100,9 @@ class MBridgeEstimateConfig(BaseModel):
     num_layers_in_first_pipeline_stage: Optional[int] = None
     num_layers_in_last_pipeline_stage: Optional[int] = None
 
+    # New field: custom pipeline-model-parallel layout
+    pipeline_model_parallel_layout: Optional[str] = None  # Comma-separated ints
+
     @field_validator("num_gpus")
     def num_gpus_must_be_multiple_of_8(cls, v):
         if v <= 0 or v % 8 != 0:
@@ -148,7 +151,7 @@ async def estimate_with_mbridge(config: MBridgeEstimateConfig):
                 mode="w+",
                 delete=False,
                 suffix=".json",
-                dir=os.path.join(WEBUI_DIR, "model-configs"),
+                dir=os.path.join("/dev/shm"),
             ) as tmp:
                 json.dump(config.custom_hf_config, tmp)
                 tmp_path = tmp.name
@@ -170,7 +173,7 @@ async def estimate_with_mbridge(config: MBridgeEstimateConfig):
         if not os.path.isabs(hf_model_path) and not hf_model_path.startswith(
             ("http", "./", "../")
         ):
-            hf_model_path = os.path.join(WEBUI_DIR, "model-configs", hf_model_path)
+            hf_model_path = os.path.join("/dev/shm", hf_model_path)
         bridge = AutoBridge.from_pretrained(hf_model_path)
         tf_config = bridge.config
         hf_config = bridge.hf_config
@@ -196,6 +199,16 @@ async def estimate_with_mbridge(config: MBridgeEstimateConfig):
         tf_config.num_layers_in_last_pipeline_stage = (
             config.num_layers_in_last_pipeline_stage
         )
+
+    # Handle custom pipeline layout if provided
+    if config.pipeline_model_parallel_layout:
+        from megatron.core.transformer.pipeline_parallel_layer_layout import (
+            PipelineParallelLayerLayout,
+        )
+
+        tf_config.pipeline_model_parallel_layout = PipelineParallelLayerLayout(
+            config.pipeline_model_parallel_layout, config.pp
+        )
     # print(tf_config)
 
     # Create a minimal 'args' object with parameters not present in TransformerConfig
@@ -216,17 +229,15 @@ async def estimate_with_mbridge(config: MBridgeEstimateConfig):
     args.padded_vocab_size = getattr(hf_config, "vocab_size")
     args.max_position_embeddings = getattr(hf_config, "max_position_embeddings")
     args.tie_word_embeddings = getattr(hf_config, "tie_word_embeddings", False)
+    args.world_size = config.num_gpus
 
-    # This function now returns a list of reports, one for each PP rank
-    raw_reports_list = estimate_from_config(tf_config, args)
+    # This function now returns (aggregated_pp_reports, raw_chunk_reports)
+    aggregated_reports, raw_chunk_reports = estimate_from_config(tf_config, args)
 
-    # The report from estimate.py now has the correct units (GB), so no conversion is needed.
-    # We just need to remove the complex 'details' part for the main display table.
     processed_reports = []
-    for report in raw_reports_list:
-        # Create a copy of the report and remove the 'details' key
-        processed_report = report.copy()
-        processed_report.pop("details", None)
-        processed_reports.append(processed_report)
+    for rpt in aggregated_reports:
+        p = rpt.copy()
+        p.pop("details", None)
+        processed_reports.append(p)
 
-    return {"processed_report": processed_reports, "raw_report": raw_reports_list}
+    return {"processed_report": processed_reports, "raw_report": raw_chunk_reports}

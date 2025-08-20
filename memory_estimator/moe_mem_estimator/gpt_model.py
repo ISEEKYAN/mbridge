@@ -40,6 +40,8 @@ class GPTModel(MemEstimator):
         rotary_base: int = 10000,
         rope_scaling: bool = False,
         seq_len_interpolation_factor: Optional[float] = None,
+        mtp_block_spec: Optional[ModuleSpec] = None,
+        vp_stage: Optional[int] = None,
     ):
         super().__init__()
 
@@ -82,6 +84,7 @@ class GPTModel(MemEstimator):
             spec=transformer_layer_spec,
             pre_process=self.pre_process,
             post_process=self.post_process,
+            vp_stage=vp_stage,
         )
 
         # Output
@@ -131,7 +134,8 @@ class GPTModel(MemEstimator):
             ret += self.num_act_pre
             input_shape = self.embedding.mock_forward(input_shape)
         ret += self.decoder.num_activation(input_shape)
-        self.num_act_per_layer = self.decoder.layers.modules[0].num_activation()
+        if self.decoder.layers.modules.__len__() > 0:
+            self.num_act_per_layer = self.decoder.layers.modules[0].num_activation()
         input_shape = self.decoder.mock_forward(input_shape)
         self.num_act_between_layers = cum_mul(input_shape)
 
