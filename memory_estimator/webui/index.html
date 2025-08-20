@@ -8,7 +8,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>Megatron Memory Estimator</h1>
+        <h1>Megatron Memory Estimator v0.13</h1>
         <div class="disclaimer-banner">
     Note: This estimator only measures the GPU memory directly managed by PyTorch when running Megatron. It does not include extra consumption from NCCL communication buffers, kernel fusion, overlap optimizations, CUDA Graphs, etc. Please use the "Overhead per GPU" option below to account for these additional costs.
 </div>
@@ -18,6 +18,9 @@
                 <div class="config-column">
                     <form id="config-form">
                 <h2>Configuration</h2>
+                <p class="config-hint" style="font-size: 0.9em; color: #666; margin-top: -0.5em; margin-bottom: 1em;">
+                    For detailed explanations of each parameter, please see the&nbsp;<a href="https://github.com/NVIDIA/Megatron-LM/blob/core_r0.13.0/megatron/training/arguments.py#L2266" target="_blank">Megatron-LM arguments documentation</a>.
+                </p>
                         <div class="form-group">
                             <label for="model-select">Select a Local Config:</label>
                             <select id="model-select" name="model">
@@ -46,6 +49,17 @@
                             <label for="use-distributed-optimizer" class="inline-label">Use Distributed Optimizer</label>
                         </div>
 
+                        <!-- 新增：Embedding/Loss Pipeline Split 选项 -->
+                        <div class="form-group vpp-dependent" style="display: none;">
+                            <input type="checkbox" id="account_for_embedding_in_pipeline_split" name="account_for_embedding_in_pipeline_split">
+                            <label for="account_for_embedding_in_pipeline_split" class="inline-label">Account for Embedding in PP Split</label>
+                        </div>
+                        <div class="form-group vpp-dependent" style="display: none;">
+                            <input type="checkbox" id="account_for_loss_in_pipeline_split" name="account_for_loss_in_pipeline_split">
+                            <label for="account_for_loss_in_pipeline_split" class="inline-label">Account for Loss in PP Split</label>
+                        </div>
+                        <!-- 选项结束 -->
+
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="recompute-granularity">Recomputation:</label>
@@ -67,6 +81,29 @@
                                 <input type="number" id="recompute-num-layers" name="recompute_num_layers" value="1" min="1">
                             </div>
                         </div>
+
+                        <!-- 新增：Selective Recompute 模块选择 -->
+                        <div class="form-row selective-options" style="display: none;">
+                            <div class="form-group">
+                                <label><input type="checkbox" name="recompute_modules" value="core_attn"> core_attn</label>
+                            </div>
+                            <div class="form-group">
+                                <label><input type="checkbox" name="recompute_modules" value="moe_act"> moe_act</label>
+                            </div>
+                            <div class="form-group">
+                                <label><input type="checkbox" name="recompute_modules" value="layernorm"> layernorm</label>
+                            </div>
+                            <div class="form-group">
+                                <label><input type="checkbox" name="recompute_modules" value="mla_up_proj"> mla_up_proj</label>
+                            </div>
+                            <div class="form-group">
+                                <label><input type="checkbox" name="recompute_modules" value="mlp"> mlp</label>
+                            </div>
+                            <div class="form-group">
+                                <label><input type="checkbox" name="recompute_modules" value="moe"> moe</label>
+                            </div>
+                        </div>
+                        <!-- Selective Recompute 结束 -->
 
                         <div class="form-row">
                             <div class="form-group">
