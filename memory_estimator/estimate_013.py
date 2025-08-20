@@ -54,6 +54,8 @@ from moe_mem_estimator.base import (
 from moe_mem_estimator.gpt_model import GPTModel
 from moe_mem_estimator.layers import MLASelfAttention, MoELayer
 
+torch.distributed.get_rank = lambda: 0
+torch.cuda.get_device_capability = lambda: [8]
 
 def estimate_from_config(config, args):
     """
