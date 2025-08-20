@@ -418,7 +418,7 @@ function updateHistoryView() {
                     <span>Sequence: ${sequenceInfo}</span>
                 </div>
             </td>
-            <td>${pp0Result.weight_optimizer_gb || 'N/A'}</td>
+            <td>${pp0Result.weight_grad_optimizer_gb || 'N/A'}</td>
             <td>${pp0Result.activation_gb || 'N/A'}</td>
             <td>${totalGb}</td>
             <td>

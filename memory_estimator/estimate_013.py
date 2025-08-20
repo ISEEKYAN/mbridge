@@ -293,7 +293,7 @@ def report_memory_usage(args, config=None):
     print("\n===== Summary (per PP rank) =====")
     for r in cli_reports:
         print(
-            f"PP{r['pp_rank']}  total {r['total_gb']} GB  (model {r['weight_optimizer_gb']} GB  act {r['activation_gb']} GB)"
+            f"PP{r['pp_rank']}  total {r['total_gb']} GB  (weight_grad {r['weight_grad_gb']} GB weight_grad_optim {r['weight_grad_optim_gb']} GB  act {r['activation_gb']} GB)"
         )
 
 
@@ -448,7 +448,7 @@ def report_memory_usage_one_pp_rank(
             )
         )
         print(f"{num_bytes_per_parameter_dense=} {num_bytes_per_parameter_moe=}")
-
+        weight_grad_memory = num_parameter_this_shard_all * 6 / NUM_BYTES_IN_GIGABYTE
         weight_grad_optim_memory = (
             (num_parameter_this_shard_all - num_parameter_this_shard_sparse_all)
             * num_bytes_per_parameter_dense
@@ -456,6 +456,7 @@ def report_memory_usage_one_pp_rank(
         ) / NUM_BYTES_IN_GIGABYTE
     else:
         print(f"{num_bytes_per_parameter=}")
+        weight_grad_memory = num_parameter_this_shard_all * 6 / NUM_BYTES_IN_GIGABYTE
         weight_grad_optim_memory = (
             num_parameter_this_shard_all
             * num_bytes_per_parameter
@@ -481,7 +482,8 @@ def report_memory_usage_one_pp_rank(
         "pp_rank": pp_rank,
         "parameters_b": num_parameter_this_shard_all / 1e9,
         "activation_b": num_activation_all / 1e9,
-        "weight_optimizer_gb": round(weight_grad_optim_memory, 2),
+        "weight_grad_gb": round(weight_grad_memory, 2),
+        "weight_grad_optim_gb": round(weight_grad_optim_memory, 2),
         "activation_gb": round(activation_memory, 2),
         "total_gb": round(total_memory, 2),
         "model_breakdown": model_breakdown_concat,
