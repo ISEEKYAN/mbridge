@@ -11,8 +11,6 @@ from contextlib import nullcontext
 from functools import partial
 from typing import Union
 
-import megatron.legacy.model
-import torch
 from megatron.core import mpu
 from megatron.core.datasets.blended_megatron_dataset_builder import (
     BlendedMegatronDatasetBuilder,

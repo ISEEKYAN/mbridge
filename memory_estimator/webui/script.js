@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateParallelismOptions();
     validateParallelismLive();
     toggleEpBasedOnConfig(); // Disable EP initially
+    toggleVppDependentOptions(); // 初始化 VPP 相关复选框显隐
 });
 
 // Utility: convert ANSI color codes (red 31, green 32) to HTML spans for display
@@ -35,15 +36,24 @@ function setupEventListeners() {
         recomputeOptions.forEach(opt => {
             opt.style.display = e.target.value === 'full' ? 'block' : 'none';
         });
+
+        // 新增：Selective 模式下展示复选框
+        const selectiveOptions = document.querySelectorAll('.selective-options');
+        selectiveOptions.forEach(opt => {
+            opt.style.display = e.target.value === 'selective' ? 'block' : 'none';
+        });
     });
 
-    const liveValidationInputs = ['num-gpus', 'tp', 'pp', 'ep', 'cp', 'etp', 'config-editor'];
+    const liveValidationInputs = ['num-gpus', 'tp', 'pp', 'ep', 'cp', 'etp', 'vpp', 'config-editor', 'pipeline-layout'];
     liveValidationInputs.forEach(id => {
         const input = document.getElementById(id);
         if(input) {
             input.addEventListener('change', validateParallelismLive);
             if (id === 'num-gpus') {
                 input.addEventListener('change', updateParallelismOptions);
+            }
+            if (id === 'vpp') {
+                input.addEventListener('change', toggleVppDependentOptions);
             }
         }
     });
@@ -102,17 +112,31 @@ async function loadSelectedModelConfig() {
         return;
     }
 
+        // 优先直接从 HuggingFace 仓库拉取配置文件
+        const hfUrl = `https://huggingface.co/${selectedConfig}/raw/main/config.json`;
         try {
-        const response = await fetch(`/get-megatron-config/${encodeURIComponent(selectedConfig)}`);
-        configData = await response.json();
-        if (configData.error) {
-            editor.value = `Error: ${configData.error}`;
+            const resp = await fetch(hfUrl, { mode: 'cors' });
+            if (resp.ok) {
+                configData = await resp.json();
+                editor.value = JSON.stringify(configData, null, 2);
             } else {
-            editor.value = JSON.stringify(configData, null, 2);
+                throw new Error(`HF returned status ${resp.status}`);
             }
-        } catch (error) {
-        editor.value = 'Failed to fetch model configuration.';
-        console.error('Error fetching model config:', error);
+        } catch (hfErr) {
+            console.warn('Direct HF fetch failed, fallback to backend:', hfErr);
+            // 回退到后端接口（兼容本地部署无 CORS 或私有模型）
+            try {
+                const response = await fetch(`/get-megatron-config/${encodeURIComponent(selectedConfig)}`);
+                configData = await response.json();
+                if (configData.error) {
+                    editor.value = `Error: ${configData.error}`;
+                } else {
+                    editor.value = JSON.stringify(configData, null, 2);
+                }
+            } catch (beErr) {
+                editor.value = 'Failed to fetch model configuration.';
+                console.error('Backend config fetch error:', beErr);
+            }
         }
 
     // Trigger validation and UI updates after loading new config
@@ -157,6 +181,10 @@ function getFormValues(isSubmission = false) {
 
     const vppInput = formData.get('vpp');
     const etpInput = formData.get('etp');
+    const pipelineLayoutInput = formData.get('pipeline_model_parallel_layout');
+
+    // 新增：收集 selective 模式下用户选择的模块
+    const recomputeModules = formData.getAll('recompute_modules');
 
     return {
             hf_model_path: hfPath,
@@ -168,6 +196,8 @@ function getFormValues(isSubmission = false) {
         recompute_granularity: formData.get('recompute_granularity'),
         recompute_method: formData.get('recompute_method'),
         recompute_num_layers: parseInt(formData.get('recompute_num_layers')),
+        // 新增字段
+        recompute_modules: recomputeModules,
         tp: parseInt(formData.get('tp')),
         pp: parseInt(formData.get('pp')),
         ep: parseInt(formData.get('ep')) || 1, // Default to 1 if disabled/null
@@ -176,7 +206,11 @@ function getFormValues(isSubmission = false) {
         etp: etpInput ? parseInt(etpInput) : null,
         num_layers_in_first_pipeline_stage: formData.get('num_layers_in_first_pipeline_stage') ? parseInt(formData.get('num_layers_in_first_pipeline_stage')) : null,
         num_layers_in_last_pipeline_stage: formData.get('num_layers_in_last_pipeline_stage') ? parseInt(formData.get('num_layers_in_last_pipeline_stage')) : null,
+        pipeline_model_parallel_layout: pipelineLayoutInput ? pipelineLayoutInput.trim() : null,
         overhead: parseInt(formData.get('overhead')),
+        // 新增:
+        account_for_embedding_in_pipeline_split: document.getElementById('account_for_embedding_in_pipeline_split').checked,
+        account_for_loss_in_pipeline_split: document.getElementById('account_for_loss_in_pipeline_split').checked,
     };
 }
 
@@ -393,6 +427,25 @@ function updateHistoryView() {
         const formattedSeqLen = seqLen >= 1024 ? `${seqLen / 1024}k` : seqLen;
         const sequenceInfo = `${params.mbs || 'N/A'}*${formattedSeqLen}`;
 
+        // 新增：生成重算方式描述
+        let recomputeInfo = '';
+        switch (params.recompute_granularity) {
+            case 'none':
+                recomputeInfo = 'Recompute: None';
+                break;
+            case 'full':
+                const method = params.recompute_method || 'uniform';
+                const layers = params.recompute_num_layers ? params.recompute_num_layers : '';
+                recomputeInfo = `Recompute: Full (${method}${layers ? ',' + layers + 'L' : ''})`;
+                break;
+            case 'selective':
+                const mods = Array.isArray(params.recompute_modules) && params.recompute_modules.length ? params.recompute_modules.join('+') : '';
+                recomputeInfo = `Recompute: Selective${mods ? ' (' + mods + ')' : ''}`;
+                break;
+            default:
+                recomputeInfo = '';
+        }
+
         row.innerHTML = `
             <td>
                 <div>${modelName}</div>
@@ -400,9 +453,10 @@ function updateHistoryView() {
                     <span>GPUs: ${params.num_gpus || 'N/A'}</span>
                     <span>${parallelismInfo}</span>
                     <span>Sequence: ${sequenceInfo}</span>
+                    ${recomputeInfo ? `<span>${recomputeInfo}</span>` : ''}
                 </div>
             </td>
-            <td>${pp0Result.weight_optimizer_gb || 'N/A'}</td>
+            <td>${pp0Result.weight_grad_optim_gb || 'N/A'}</td>
             <td>${pp0Result.activation_gb || 'N/A'}</td>
             <td>${totalGb}</td>
             <td>
@@ -590,10 +644,17 @@ function restoreForm(params) {
     setElementValue('ep', params.ep, 1);
     setElementValue('cp', params.cp, 1);
     setElementValue('vpp', params.vpp);
+    // 在设置 vpp 之后更新依赖显示
+    toggleVppDependentOptions();
     setElementValue('etp', params.etp);
     setElementValue('num_layers_in_first_pipeline_stage', params.num_layers_in_first_pipeline_stage);
     setElementValue('num_layers_in_last_pipeline_stage', params.num_layers_in_last_pipeline_stage);
+    setElementValue('pipeline-layout', params.pipeline_model_parallel_layout);
     setElementValue('overhead', params.overhead, 10);
+    
+    // 新增 checkbox 恢复
+    setElementValue('account_for_embedding_in_pipeline_split', params.account_for_embedding_in_pipeline_split, false);
+    setElementValue('account_for_loss_in_pipeline_split', params.account_for_loss_in_pipeline_split, false);
     
     const modelSelect = document.getElementById('model-select');
     if (modelSelect && params.hf_model_path) {
@@ -712,4 +773,15 @@ function toggleEpBasedOnConfig() {
         epSelect.disabled = true;
         epSelect.value = 1; // Reset to 1 if disabled
     }
+} 
+
+// 新增：根据 vpp 输入显示/隐藏依赖选项
+function toggleVppDependentOptions() {
+    const vppInput = document.getElementById('vpp');
+    const dependents = document.querySelectorAll('.vpp-dependent');
+    if (!vppInput) return;
+    const shouldShow = vppInput.value && parseInt(vppInput.value) > 0;
+    dependents.forEach(el => {
+        el.style.display = shouldShow ? 'block' : 'none';
+    });
 } 

@@ -182,19 +182,25 @@ def get_virtual_pipeline_model_parallel_world_size():
     return _global_config.virtual_pipeline_model_parallel_size
 
 
-def is_pipeline_first_stage(ignore_virtual=False):
+def is_pipeline_first_stage(ignore_virtual=False, vp_stage=None):
     """Return True if in the first pipeline model-parallel stage, False otherwise."""
-    if not ignore_virtual:
-        if (
-            get_virtual_pipeline_model_parallel_world_size() is not None
-            and get_virtual_pipeline_model_parallel_rank() != 0
-        ):
+    if (
+        not ignore_virtual
+        and get_virtual_pipeline_model_parallel_world_size() is not None
+    ):
+        if vp_stage != 0:
             return False
     return get_pipeline_model_parallel_rank() == 0
 
 
-def is_pipeline_last_stage(ignore_virtual=False):
+def is_pipeline_last_stage(ignore_virtual=False, vp_stage=None):
     """Return True if in the last pipeline-model-parallel stage, False otherwise."""
+    if (
+        not ignore_virtual
+        and get_virtual_pipeline_model_parallel_world_size() is not None
+    ):
+        if vp_stage != (get_virtual_pipeline_model_parallel_world_size() - 1):
+            return False
     return get_pipeline_model_parallel_rank() == (
         get_pipeline_model_parallel_world_size() - 1
     )

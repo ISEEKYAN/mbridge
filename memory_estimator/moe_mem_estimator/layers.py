@@ -249,7 +249,13 @@ class ColumnParallelLinear(MemEstimator):
         return cum_mul(input_shape[:-1]) * self.weight[0]
 
     def mock_forward(self, input_shape: list[int]):
-        assert self.weight[-1] == input_shape[-1]
+        try:
+            assert self.weight[-1] == input_shape[-1]
+        except:
+
+            print(f"{self.weight=} {input_shape=}")
+            __import__("ipdb").set_trace()
+            raise
         return input_shape[:-1] + [self.weight[0]]
 
 
@@ -585,6 +591,10 @@ class TEGroupedMLP(MemEstimator):
 
         self.activation_func = self.config.activation_func
 
+        self.activation_recompute = (
+            self.config.recompute_granularity == "selective"
+            and "moe_act" in self.config.recompute_modules
+        )
         self.linear_fc2 = build_module(
             submodules.linear_fc2,
             self.num_local_experts,
@@ -606,11 +616,13 @@ class TEGroupedMLP(MemEstimator):
 
     def num_activation(self, input_shape: list[int], tokens_per_expert=None):
         ret = 0
-        ret += self.linear_fc1.num_activation(input_shape)
+        if not self.activation_recompute:
+            ret += self.linear_fc1.num_activation(input_shape)
         input_shape = self.linear_fc1.mock_forward(input_shape)
 
         # activation
-        ret += cum_mul(input_shape) / 2  # swiglu or gelu
+        if not self.activation_recompute:
+            ret += cum_mul(input_shape) / 2  # swiglu or gelu
         input_shape = deepcopy(input_shape)
         input_shape[-1] //= 2
 
@@ -791,19 +803,22 @@ class TransformerBlock(MemEstimator):
         post_layer_norm: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
+        vp_stage: Optional[int] = None,
     ):
         super().__init__()
         self.config = config
 
-        self.submodules = _get_block_submodules(config, spec)
+        self.submodules = _get_block_submodules(config, spec, vp_stage)
         self.post_layer_norm = post_layer_norm
         self.pre_process = pre_process
         self.post_process = post_process
+        self.vp_stage = vp_stage
         self.cuda_graphs = {}
         self.current_microbatch = -1
         self.input_tensor = None
         self.checkpoint_core_attention = (
             self.config.recompute_granularity == "selective"
+            and "core_attn" in self.config.recompute_modules
         )
 
         self._build_layers()
@@ -813,7 +828,10 @@ class TransformerBlock(MemEstimator):
     def _build_layers(self):
         def build_layer(layer_spec, layer_number):
             return build_module(
-                layer_spec, config=self.config, layer_number=layer_number
+                layer_spec,
+                config=self.config,
+                layer_number=layer_number,
+                vp_stage=self.vp_stage,
             )
 
         # offset is implicit in TransformerLayer
@@ -894,6 +912,11 @@ class MoELayer(MemEstimator):
             get_expert_model_parallel_rank() * self.num_local_experts
         )
 
+        self.moe_layer_recompute = (
+            config.recompute_granularity == "selective"
+            and "moe" in config.recompute_modules
+        )
+
         self.router = TopKRouter(config=self.config)
         self.use_shared_expert = (
             self.config.moe_shared_expert_intermediate_size is not None
@@ -931,6 +954,14 @@ class MoELayer(MemEstimator):
         return ret
 
     def num_activation(self, input_shape: list[int]):
+        if self.moe_layer_recompute:
+            return 0
+        tp_size = get_tensor_model_parallel_world_size()
+        etp_size = get_expert_tensor_parallel_world_size()
+        new_input_shape = deepcopy(input_shape)
+        new_input_shape[1] = input_shape[1] // tp_size * etp_size
+        input_shape = new_input_shape
+
         result = self.router.num_activation(input_shape)
         result += cum_mul(input_shape) * self.router.topk  # token dispatcher
         moe_input_shape_average = deepcopy(input_shape)
@@ -1006,6 +1037,7 @@ class TransformerLayer(MemEstimator):
         submodules,
         layer_number: int = 1,
         hidden_dropout: float = None,
+        vp_stage: Optional[int] = None,
     ):
         super().__init__()
         self.config = config
@@ -1017,7 +1049,9 @@ class TransformerLayer(MemEstimator):
             self.cudagraph_manager = CudaGraphManager()
 
         self.submodules_config = submodules
-        self.layer_number = layer_number + get_transformer_layer_offset(self.config)
+        self.layer_number = layer_number + get_transformer_layer_offset(
+            self.config, vp_stage
+        )
         self.hidden_dropout = (
             config.hidden_dropout if hidden_dropout is None else hidden_dropout
         )
@@ -1073,6 +1107,20 @@ class TransformerLayer(MemEstimator):
         # [Module 9: BiasDropoutFusion]
         self.mlp_bda = build_module(submodules.mlp_bda)
 
+        self.recompute_input_layernorm = False
+        self.recompute_pre_mlp_layernorm = False
+        self.recompute_mlp = False
+        if self.config.recompute_granularity == "selective":
+            if "layernorm" in self.config.recompute_modules:
+                if not isinstance(self.input_layernorm, IdentityOp):
+                    self.recompute_input_layernorm = True
+                if not isinstance(self.pre_mlp_layernorm, IdentityOp):
+                    self.recompute_pre_mlp_layernorm = True
+            if "mlp" in self.config.recompute_modules:
+
+                if not isinstance(self.mlp, MoELayer):
+                    self.recompute_mlp = True
+
     def num_parameter(self):
         result = self.input_layernorm.num_parameter()
         result += self.self_attention.num_parameter()
@@ -1087,14 +1135,17 @@ class TransformerLayer(MemEstimator):
     def num_activation(self, input_shape: list[int]):
         result = 0
         result += self.self_attention.num_activation(input_shape)
-        result += self.mlp.num_activation(input_shape)
+        if not self.recompute_mlp:
+            result += self.mlp.num_activation(input_shape)
         # __import__('ipdb').set_trace()
         # sequence parallel
         if self.config.sequence_parallel and self.config.tensor_model_parallel_size > 1:
             input_shape = deepcopy(input_shape)
             input_shape[1] /= self.config.tensor_model_parallel_size
-        result += self.input_layernorm.num_activation(input_shape)
-        result += self.pre_mlp_layernorm.num_activation(input_shape)
+        if not self.recompute_input_layernorm:
+            result += self.input_layernorm.num_activation(input_shape)
+        if not self.recompute_pre_mlp_layernorm:
+            result += self.pre_mlp_layernorm.num_activation(input_shape)
         result += self.self_attn_bda.num_activation(input_shape)
         result += self.mlp_bda.num_activation(input_shape)
         return result
@@ -1569,7 +1620,9 @@ from megatron.core.transformer.transformer_block import (
 
 
 def _get_block_submodules(
-    config: TransformerConfig, spec: Union[TransformerBlockSubmodules, ModuleSpec]
+    config: TransformerConfig,
+    spec: Union[TransformerBlockSubmodules, ModuleSpec],
+    vp_stage: Optional[int] = None,
 ) -> TransformerBlockSubmodules:
     """
     Retrieve or construct TransformerBlockSubmodules based on the provided specification.
@@ -1595,7 +1648,7 @@ def _get_block_submodules(
         if issubclass(spec.module, TransformerBlock):
             return spec.submodules
         elif issubclass(spec.module, BaseTransformerLayer):
-            num_layers = get_num_layers_to_build(config)
+            num_layers = get_num_layers_to_build(config, vp_stage)
             return TransformerBlockSubmodules(
                 layer_specs=[spec] * num_layers, layer_norm=LayerNormImpl
             )
@@ -1605,7 +1658,10 @@ def _get_block_submodules(
         raise Exception(f"specialize for {type(spec).__name__}.")
 
 
-def get_num_layers_to_build(config: TransformerConfig) -> int:
+from megatron.core.transformer.transformer_block import get_num_layers_to_build
+
+
+def ___get_num_layers_to_build(config: TransformerConfig) -> int:
     """
     Determine the number of transformer layers to build for the current pipeline stage.
     Args:
@@ -1716,18 +1772,22 @@ def get_num_layers_to_build(config: TransformerConfig) -> int:
     return num_layers_to_build
 
 
-def get_transformer_layer_offset(config: TransformerConfig):
+from megatron.core.transformer.enums import LayerType
+
+
+def get_transformer_layer_offset(
+    config: TransformerConfig, vp_stage: Optional[int] = None
+):
     """Get the index offset of current pipeline stage, given the level of pipelining."""
     pipeline_rank = get_pipeline_model_parallel_rank()
-    # if not is_inside_encoder():
-    if True:
-        pp_decoder_start = 0
-        if pp_decoder_start is not None:
-            pipeline_rank = pipeline_rank - pp_decoder_start
 
     if config.pipeline_model_parallel_size > 1:
 
-        if (
+        if config.pipeline_model_parallel_layout:
+            offset = config.pipeline_model_parallel_layout.get_layer_offset(
+                layer_type=LayerType.decoder, vp_stage=vp_stage
+            )
+        elif (
             config.num_layers_in_first_pipeline_stage is not None
             or config.num_layers_in_last_pipeline_stage is not None
         ):
@@ -1765,25 +1825,71 @@ def get_transformer_layer_offset(config: TransformerConfig):
                 - num_layers_in_last_pipeline_stage
             )
 
-            if middle_pipeline_stages > 0:
-                num_layers_per_pipeline_rank = (
-                    middle_num_layers // middle_pipeline_stages
+            if (vp_size := config.virtual_pipeline_model_parallel_size) is not None:
+                assert (
+                    vp_stage is not None
+                ), "vp_stage must be provided if virtual pipeline model parallel size is set"
+
+                # Calculate number of layers in each virtual model chunk
+                # If the num_layers_in_first_pipeline_stage and
+                # num_layers_in_last_pipeline_stage are not set, all pipeline stages
+                # will be treated as middle pipeline stages in the calculation
+                num_layers_per_virtual_model_chunk_in_first_pipeline_stage = (
+                    0
+                    if config.num_layers_in_first_pipeline_stage is None
+                    else config.num_layers_in_first_pipeline_stage // vp_size
                 )
-            else:
-                num_layers_per_pipeline_rank = 0
 
-            middle_pipeline_rank = (
-                pipeline_rank
-                if config.num_layers_in_first_pipeline_stage is None
-                else pipeline_rank - 1
-            )
+                num_layers_per_virtual_model_chunk_in_last_pipeline_stage = (
+                    0
+                    if config.num_layers_in_last_pipeline_stage is None
+                    else config.num_layers_in_last_pipeline_stage // vp_size
+                )
 
-            if pipeline_rank == 0:
-                offset = 0
+                num_layers_per_vritual_model_chunk_in_middle_pipeline_stage = (
+                    middle_num_layers // vp_size
+                )
+
+                # First stage + middle stage + last stage
+                total_virtual_chunks = (
+                    num_layers_per_virtual_model_chunk_in_first_pipeline_stage
+                    + num_layers_per_vritual_model_chunk_in_middle_pipeline_stage
+                    + num_layers_per_virtual_model_chunk_in_last_pipeline_stage
+                )
+
+                # Calculate the layer offset with interleaved uneven pipeline parallelism
+                if pipeline_rank == 0:
+                    offset = vp_stage * total_virtual_chunks
+                else:
+                    offset = (
+                        vp_stage * total_virtual_chunks
+                        + num_layers_per_virtual_model_chunk_in_first_pipeline_stage
+                        + (pipeline_rank - 1)
+                        * (
+                            num_layers_per_vritual_model_chunk_in_middle_pipeline_stage
+                            // middle_pipeline_stages
+                        )
+                    )
             else:
-                offset = (
-                    middle_pipeline_rank * num_layers_per_pipeline_rank
-                ) + num_layers_in_first_pipeline_stage
+                if middle_pipeline_stages > 0:
+                    num_layers_per_pipeline_rank = (
+                        middle_num_layers // middle_pipeline_stages
+                    )
+                else:
+                    num_layers_per_pipeline_rank = 0
+
+                middle_pipeline_rank = (
+                    pipeline_rank
+                    if config.num_layers_in_first_pipeline_stage is None
+                    else pipeline_rank - 1
+                )
+
+                if pipeline_rank == 0:
+                    offset = 0
+                else:
+                    offset = (
+                        middle_pipeline_rank * num_layers_per_pipeline_rank
+                    ) + num_layers_in_first_pipeline_stage
         else:
             num_layers = config.num_layers
 
@@ -1799,14 +1905,36 @@ def get_transformer_layer_offset(config: TransformerConfig):
                 num_layers // config.pipeline_model_parallel_size
             )
 
-            offset = pipeline_rank * num_layers_per_pipeline_rank
+            if (vp_size := config.virtual_pipeline_model_parallel_size) is not None:
+                assert (
+                    vp_stage is not None
+                ), "vp_stage must be provided if virtual pipeline model parallel size is set"
 
-            # Reduce the offset of embedding layer from the total layer number
-            if (
-                config.account_for_embedding_in_pipeline_split
-                and not is_pipeline_first_stage()
-            ):
-                offset -= 1
+                num_layers_per_virtual_rank = num_layers_per_pipeline_rank // vp_size
+                total_virtual_chunks = num_layers // vp_size
+                offset = vp_stage * total_virtual_chunks + (
+                    pipeline_rank * num_layers_per_virtual_rank
+                )
+
+                # Reduce the offset of embedding layer from the total layer number
+                if (
+                    config.account_for_embedding_in_pipeline_split
+                    and not is_pipeline_first_stage(
+                        ignore_virtual=False, vp_stage=vp_stage
+                    )
+                ):
+                    offset -= 1
+            else:
+                offset = pipeline_rank * num_layers_per_pipeline_rank
+
+                # Reduce the offset of embedding layer from the total layer number
+                if (
+                    config.account_for_embedding_in_pipeline_split
+                    and not is_pipeline_first_stage(
+                        ignore_virtual=False, vp_stage=vp_stage
+                    )
+                ):
+                    offset -= 1
     else:
         offset = 0
     return offset
