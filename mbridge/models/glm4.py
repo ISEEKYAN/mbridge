@@ -9,7 +9,7 @@ from megatron.core.models.gpt.gpt_layer_specs import (
 from ..core import LLMBridge, register_model
 
 
-@register_model("glm4")
+@register_model("chatglm")
 class GLM4Bridge(LLMBridge):
     """
     Bridge implementation for Qwen2 models.

@@ -18,10 +18,11 @@ DISTRIBUTED_ARGS=(
 )
 
 torchrun "${DISTRIBUTED_ARGS[@]}" \
-    examples/2.load_model_and_generate_multi_gpu.py \
+    example/2.load_model_and_export_multiple_gpus.py \
     --model_path $MODEL_PATH \
-    --tp 2 \
-    --cp 2 \
-    --ep 2 \
-    --pp 2 \
+    --tp 8 \
+    --cp 1 \
+    --ep 8 \
+    --etp 1 \
+    --pp 1 \
     --save_path outputs/multi_gpus_test/$MODEL_PATH

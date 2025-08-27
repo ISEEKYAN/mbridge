@@ -27,7 +27,7 @@ def init_distributed():
 
 def load_model(hf_model_path):
     """Load model"""
-    bridge = AutoBridge.from_pretrained(hf_model_path)
+    bridge = AutoBridge.from_pretrained(hf_model_path, trust_remote_code=True)
     model = bridge.get_model()
     bridge.load_weights(model, hf_model_path)
     return model

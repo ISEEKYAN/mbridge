@@ -1,5 +1,6 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 import inspect
+from dataclasses import dataclass
 from typing import Callable, Generator, Optional
 
 import torch
@@ -14,6 +15,15 @@ from .util import (
     broadcast_str_from_megatron_pp,
     unwrap_model,
 )
+import warnings
+
+@dataclass
+class HuggingfaceKeys:
+    """
+    Possible key names in huggingface config
+    """
+    required: bool = True
+    keys: list[str] = None
 
 
 class LLMBridge(Bridge):
@@ -25,6 +35,22 @@ class LLMBridge(Bridge):
     """
 
     TransformerConfigClass = TransformerConfig
+
+    """
+    Key mappings from Megatron to HuggingFace config
+    Megatron key name: all possible huggingface key name list
+    """
+    MEGATRON_HUGGINGFACE_CONFIG_KEY_MAPPINGS = {
+        "num_layers": HuggingfaceKeys(required=True, keys=["num_hidden_layers", "num_layers"]),
+        "hidden_size": HuggingfaceKeys(required=True, keys=["hidden_size"]),
+        "num_attention_heads": HuggingfaceKeys(required=True, keys=["num_attention_heads"]),
+        "num_query_groups": HuggingfaceKeys(required=True, keys=["num_key_value_heads", "multi_query_group_num"]),
+        "ffn_hidden_size": HuggingfaceKeys(required=True, keys=["intermediate_size", "ffn_hidden_size"]),
+        "kv_channels": HuggingfaceKeys(required=True, keys=["head_dim", "kv_channels"]),
+        "attention_dropout": HuggingfaceKeys(required=False, keys=["attention_dropout"]),
+        "hidden_dropout": HuggingfaceKeys(required=False, keys=["hidden_dropout"]),
+        "layernorm_epsilon": HuggingfaceKeys(required=False, keys=["rms_norm_eps", "layernorm_epsilon"]),
+    }
 
     def _build_base_config(self, **kwargs):
         """
@@ -40,17 +66,23 @@ class LLMBridge(Bridge):
         dtype = self.dtype
         overlap_p2p_comm = self.mpu.vpp_size is not None and self.mpu.pp_size > 1
         batch_p2p_comm = False
-        base_config = {
-            # Model architecture parameters
-            "num_layers": hf_config.num_hidden_layers,
-            "hidden_size": hf_config.hidden_size,
-            "num_attention_heads": hf_config.num_attention_heads,
-            "num_query_groups": hf_config.num_key_value_heads,
-            "ffn_hidden_size": hf_config.intermediate_size,
-            "attention_dropout": hf_config.attention_dropout,
-            "hidden_dropout": getattr(hf_config, "hidden_dropout", 0.0),
-            "kv_channels": getattr(hf_config, "head_dim", None),
-            "layernorm_epsilon": hf_config.rms_norm_eps,
+
+        # Model architecture parameters
+        base_config = {}
+        for megatron_key, hf_keys in self.MEGATRON_HUGGINGFACE_CONFIG_KEY_MAPPINGS.items():
+            find_matched_huggingface_key = False
+            for hf_key in hf_keys.keys:
+                if hasattr(hf_config, hf_key):
+                    base_config[megatron_key] = getattr(hf_config, hf_key)
+                    find_matched_huggingface_key = True
+                    break
+            if not find_matched_huggingface_key:
+                if hf_keys.required:
+                    raise ValueError(f"Not found matched huggingface key for {megatron_key}, use default value")
+                else:
+                    warnings.warn(f"Not found matched huggingface key for {megatron_key}, use default value", stacklevel=1)
+        
+        megatron_only_transformer_config = {
             # Activation and normalization
             "activation_func": F.silu,
             "normalization": "RMSNorm",
@@ -76,6 +108,8 @@ class LLMBridge(Bridge):
             "overlap_p2p_comm": overlap_p2p_comm,
             "batch_p2p_comm": batch_p2p_comm,
         }
+        
+        base_config.update(megatron_only_transformer_config)
 
         # Update with any provided overrides
         base_config.update(kwargs)

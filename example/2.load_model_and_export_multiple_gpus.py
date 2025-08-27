@@ -66,7 +66,7 @@ def main():
     # Load model
     hf_model_path = args.model_path
     print(f"rank{torch.distributed.get_rank()}: start loading model")
-    bridge = AutoBridge.from_pretrained(hf_model_path)
+    bridge = AutoBridge.from_pretrained(hf_model_path, trust_remote_code=True)
     model = bridge.get_model(
         post_model_creation_callbacks=[make_value_model, freeze_moe_router]
     )
