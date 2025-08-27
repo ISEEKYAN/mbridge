@@ -1,1 +1,1 @@
-from webui.main import app 
+from webui.main import app

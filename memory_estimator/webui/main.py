@@ -195,10 +195,16 @@ async def estimate_with_mbridge(config: MBridgeEstimateConfig):
     tf_config.recompute_method = config.recompute_method
     tf_config.recompute_num_layers = config.recompute_num_layers
     # 新增：Selective 模式下的模块列表
-    tf_config.recompute_modules = config.recompute_modules if config.recompute_modules is not None else []
+    tf_config.recompute_modules = (
+        config.recompute_modules if config.recompute_modules is not None else []
+    )
     # 新增：Embedding/Loss PP Split
-    tf_config.account_for_embedding_in_pipeline_split = config.account_for_embedding_in_pipeline_split
-    tf_config.account_for_loss_in_pipeline_split = config.account_for_loss_in_pipeline_split
+    tf_config.account_for_embedding_in_pipeline_split = (
+        config.account_for_embedding_in_pipeline_split
+    )
+    tf_config.account_for_loss_in_pipeline_split = (
+        config.account_for_loss_in_pipeline_split
+    )
     tf_config.num_layers_per_virtual_pipeline_stage = (
         config.vpp if config.vpp and config.vpp > 1 else None
     )

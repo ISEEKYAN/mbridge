@@ -705,12 +705,11 @@ class Bridge(ABC):
         """
         # Convert weights to the target dtype if needed
         # This handles cases where HF weights are FP32 but model expects BF16/FP16
-        if hasattr(self, 'dtype') and self.dtype is not None:
+        if hasattr(self, "dtype") and self.dtype is not None:
             hf_weights = [
-                w.to(self.dtype) if w.dtype != self.dtype else w 
-                for w in hf_weights
+                w.to(self.dtype) if w.dtype != self.dtype else w for w in hf_weights
             ]
-        
+
         if len(hf_weights) == 1:
             return hf_weights[0]
         if (

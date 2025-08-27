@@ -84,18 +84,25 @@ class MimoBridge(Qwen2Bridge):
         if "transformer_layer" in name:
             # Create a proxy name to use with parent class methods
             # Convert mtp.layers.{idx}.transformer_layer.* to decoder.layers.{idx}.*
-            proxy_name = name.replace(f"mtp.layers.{mtp_layer_idx}.transformer_layer", f"decoder.layers.{mtp_layer_idx}")
-            
+            proxy_name = name.replace(
+                f"mtp.layers.{mtp_layer_idx}.transformer_layer",
+                f"decoder.layers.{mtp_layer_idx}",
+            )
+
             if "self_attention" in proxy_name or "input_layernorm.weight" in proxy_name:
                 convert_names = super()._weight_name_mapping_attention(proxy_name)
             elif "mlp" in proxy_name:
                 convert_names = super()._weight_name_mapping_mlp(proxy_name)
             else:
-                raise NotImplementedError(f"Unsupported transformer component in MTP: {name}")
-            
+                raise NotImplementedError(
+                    f"Unsupported transformer component in MTP: {name}"
+                )
+
             # Replace the layer index in converted names to point to mtp_layers
             convert_names = [
-                cn.replace(f"model.layers.{mtp_layer_idx}", f"model.mtp_layers.{mtp_layer_idx}")
+                cn.replace(
+                    f"model.layers.{mtp_layer_idx}", f"model.mtp_layers.{mtp_layer_idx}"
+                )
                 for cn in convert_names
             ]
             return convert_names

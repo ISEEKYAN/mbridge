@@ -5,7 +5,7 @@
 import re
 
 from ..core import register_model
-from ..models import Qwen2MoEBridge, Qwen2Bridge
+from ..models import Qwen2Bridge, Qwen2MoEBridge
 from ..utils.layer import translate_first_k_dense_replace_to_moe_layer_freq
 
 
@@ -22,38 +22,50 @@ class GLM4MoEBridge(Qwen2MoEBridge):
     _MLP_MAPPING = {
         **(Qwen2MoEBridge._MLP_MAPPING),
         **(Qwen2Bridge._MLP_MAPPING),
-        "mlp.router.expert_bias": ["model.layers.{layer_number}.mlp.gate.e_score_correction_bias"],
+        "mlp.router.expert_bias": [
+            "model.layers.{layer_number}.mlp.gate.e_score_correction_bias"
+        ],
         "shared_experts.linear_fc1.weight": [
             "model.layers.{layer_number}.mlp.shared_experts.gate_proj.weight",
             "model.layers.{layer_number}.mlp.shared_experts.up_proj.weight",
         ],
-        "shared_experts.linear_fc2.weight": ["model.layers.{layer_number}.mlp.shared_experts.down_proj.weight"],
+        "shared_experts.linear_fc2.weight": [
+            "model.layers.{layer_number}.mlp.shared_experts.down_proj.weight"
+        ],
     }
 
     _MTP_MAPPING = {
         "enorm.weight": ["model.layers.{layer_number}.enorm.weight"],
         "hnorm.weight": ["model.layers.{layer_number}.hnorm.weight"],
         "eh_proj.weight": ["model.layers.{layer_number}.eh_proj.weight"],
-        "final_layernorm.weight": ["model.layers.{layer_number}.shared_head.norm.weight"],
+        "final_layernorm.weight": [
+            "model.layers.{layer_number}.shared_head.norm.weight"
+        ],
     }
 
     def _weight_name_mapping_mtp(self, name: str, num_layers: int) -> str:
         convert_names = []
         for keyword, mapping_names in self._MTP_MAPPING.items():
             if keyword in name:
-                convert_names.extend([x.format(layer_number=num_layers) for x in mapping_names])
+                convert_names.extend(
+                    [x.format(layer_number=num_layers) for x in mapping_names]
+                )
                 break
             elif "mlp" in name:
                 mtp_layer_index = int(re.findall(r"mtp\.layers\.(\d+)\.", name)[0])
                 name_ = re.sub(
-                    r"^mtp\.layers.\d+.transformer_layer", f"model.layers.{num_layers+mtp_layer_index}", name
+                    r"^mtp\.layers.\d+.transformer_layer",
+                    f"model.layers.{num_layers+mtp_layer_index}",
+                    name,
                 )
                 convert_names = self._weight_name_mapping_mlp(name_)
                 break
             elif "self_attention" in name:
                 mtp_layer_index = int(re.findall(r"mtp\.layers.(\d+)\.", name)[0])
                 name_ = re.sub(
-                    r"^mtp\.layers.\d+.transformer_layer", f"model.layers.{num_layers+mtp_layer_index}", name
+                    r"^mtp\.layers.\d+.transformer_layer",
+                    f"model.layers.{num_layers+mtp_layer_index}",
+                    name,
                 )
                 convert_names = self._weight_name_mapping_attention(name_)
                 break
@@ -72,7 +84,9 @@ class GLM4MoEBridge(Qwen2MoEBridge):
         Returns:
             list: Corresponding Hugging Face weight names
         """
-        assert "_extra_state" not in mcore_weights_name, "extra_state should not be loaded"
+        assert (
+            "_extra_state" not in mcore_weights_name
+        ), "extra_state should not be loaded"
         direct_name_mapping = {
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
@@ -82,13 +96,17 @@ class GLM4MoEBridge(Qwen2MoEBridge):
             return [direct_name_mapping[mcore_weights_name]]
 
         if "mtp" in mcore_weights_name:  # first check mtp
-            return self._weight_name_mapping_mtp(mcore_weights_name, self.config.num_layers)
+            return self._weight_name_mapping_mtp(
+                mcore_weights_name, self.config.num_layers
+            )
         elif "self_attention" in mcore_weights_name:
             return self._weight_name_mapping_attention(mcore_weights_name)
         elif "mlp" in mcore_weights_name:
             return self._weight_name_mapping_mlp(mcore_weights_name)
         else:
-            raise NotImplementedError(f"Unsupported parameter name: {mcore_weights_name}")
+            raise NotImplementedError(
+                f"Unsupported parameter name: {mcore_weights_name}"
+            )
 
     def _build_config(self):
         """
@@ -100,7 +118,9 @@ class GLM4MoEBridge(Qwen2MoEBridge):
         Returns:
             TransformerConfig: Configuration object for Qwen2 models
         """
-        moe_layer_freq = translate_first_k_dense_replace_to_moe_layer_freq(self.hf_config.first_k_dense_replace, self.hf_config.num_hidden_layers)
+        moe_layer_freq = translate_first_k_dense_replace_to_moe_layer_freq(
+            self.hf_config.first_k_dense_replace, self.hf_config.num_hidden_layers
+        )
         return self._build_base_config(
             use_cpu_initialization=False,
             # MoE specific

@@ -2,8 +2,11 @@
 # Copyright 2025 Zhipu AI
 # Copyright 2025 Bytedance Ltd. and/or its affiliates
 
+from megatron.core.models.gpt.gpt_layer_specs import (
+    get_gpt_layer_with_transformer_engine_spec,
+)
+
 from ..core import LLMBridge, register_model
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 
 
 @register_model("glm4")
@@ -22,10 +25,18 @@ class GLM4Bridge(LLMBridge):
         "output_layer.weight": "lm_head.weight",
     }
     _ATTENTION_MAPPING = {
-        "self_attention.linear_proj.weight": ["model.layers.{layer_number}.self_attn.o_proj.weight"],
-        "self_attention.linear_qkv.layer_norm_weight": ["model.layers.{layer_number}.input_layernorm.weight"],
-        "self_attention.q_layernorm.weight": ["model.layers.{layer_number}.self_attn.q_norm.weight"],
-        "self_attention.k_layernorm.weight": ["model.layers.{layer_number}.self_attn.k_norm.weight"],
+        "self_attention.linear_proj.weight": [
+            "model.layers.{layer_number}.self_attn.o_proj.weight"
+        ],
+        "self_attention.linear_qkv.layer_norm_weight": [
+            "model.layers.{layer_number}.input_layernorm.weight"
+        ],
+        "self_attention.q_layernorm.weight": [
+            "model.layers.{layer_number}.self_attn.q_norm.weight"
+        ],
+        "self_attention.k_layernorm.weight": [
+            "model.layers.{layer_number}.self_attn.k_norm.weight"
+        ],
         "self_attention.linear_qkv.weight": [
             "model.layers.{layer_number}.self_attn.q_proj.weight",
             "model.layers.{layer_number}.self_attn.k_proj.weight",
@@ -41,7 +52,9 @@ class GLM4Bridge(LLMBridge):
         "mlp.linear_fc1.weight": [
             "model.layers.{layer_number}.mlp.gate_up_proj.weight",
         ],
-        "mlp.linear_fc1.layer_norm_weight": ["model.layers.{layer_number}.post_attention_layernorm.weight"],
+        "mlp.linear_fc1.layer_norm_weight": [
+            "model.layers.{layer_number}.post_attention_layernorm.weight"
+        ],
         "mlp.linear_fc2.weight": ["model.layers.{layer_number}.mlp.down_proj.weight"],
     }
 
@@ -93,7 +106,9 @@ class GLM4Bridge(LLMBridge):
         Returns:
             list: Corresponding Hugging Face weight names
         """
-        assert "_extra_state" not in mcore_weights_name, "extra_state should not be loaded"
+        assert (
+            "_extra_state" not in mcore_weights_name
+        ), "extra_state should not be loaded"
 
         if mcore_weights_name in self._DIRECT_MAPPING:
             return [self._DIRECT_MAPPING[mcore_weights_name]]
@@ -109,4 +124,6 @@ class GLM4Bridge(LLMBridge):
         elif "mlp" in mcore_weights_name:
             return self._weight_name_mapping_mlp(mcore_weights_name)
         else:
-            raise NotImplementedError(f"Unsupported parameter name: {mcore_weights_name}")
+            raise NotImplementedError(
+                f"Unsupported parameter name: {mcore_weights_name}"
+            )
