@@ -184,6 +184,7 @@ class Bridge(ABC):
                 if "expert_bias" in local_name:
                     model.to(torch.float32)
                     param = model.state_dict()[local_name]
+                    model.to(self.dtype)
                 # hf format to mcore format
                 if set(to_load_from_disk) & set(hf_names):
                     if not memory_efficient:
