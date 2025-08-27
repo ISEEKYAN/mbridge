@@ -181,6 +181,9 @@ class Bridge(ABC):
             # import mcore weights
             for local_name, hf_names in local_to_hf_map.items():
                 param = model.state_dict()[local_name]
+                if "expert_bias" in local_name:
+                    model.to(torch.float32)
+                    param = model.state_dict()[local_name]
                 # hf format to mcore format
                 if set(to_load_from_disk) & set(hf_names):
                     if not memory_efficient:
@@ -293,6 +296,7 @@ class Bridge(ABC):
                 # there is a bug in megatron GPTModel
                 # decoder.layers[n].mlp.router.expert_bias" in GPTModel is not registered in named_parameter, but in state_dict().
                 # for now we patch it by adding those keys to extra_keys.
+                model.to(torch.float32)
                 extra_keys = [
                     x
                     for x in model.state_dict().keys()
@@ -301,7 +305,10 @@ class Bridge(ABC):
                     and x not in existing_keys
                 ]
                 for name in extra_keys:
-                    yield name, model.state_dict()[name].to(torch.cuda.current_device())
+                    param = model.state_dict()[name].to(torch.cuda.current_device())
+                    assert param.dtype == torch.float32, "shall use 32 bit expert_bias"
+                    yield name, param
+                model.to(self.dtype)
 
         weights_names = []
         for vpp_rank, model in enumerate(models):
@@ -705,7 +712,7 @@ class Bridge(ABC):
         """
         # Convert weights to the target dtype if needed
         # This handles cases where HF weights are FP32 but model expects BF16/FP16
-        if hasattr(self, "dtype") and self.dtype is not None:
+        if hasattr(self, "dtype") and self.dtype is not None and ("expert_bias" not in mcore_weights_name):
             hf_weights = [
                 w.to(self.dtype) if w.dtype != self.dtype else w for w in hf_weights
             ]
