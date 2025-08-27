@@ -13,6 +13,7 @@ from megatron.core.transformer import MLATransformerConfig
 from megatron.core.transformer.enums import AttnBackend
 
 from ..core import LLMBridge, register_model
+from ..utils.layer import translate_first_k_dense_replace_to_moe_layer_freq
 
 
 @register_model("deepseek_v3")
@@ -103,11 +104,9 @@ class DeepseekV3Bridge(LLMBridge):
         }
         if "rope_scaling" in hf_config and hf_config.rope_scaling is not None:
             mla_rope_config.update(hf_config.rope_scaling)
-        moe_layer_freq = [1] * hf_config.num_hidden_layers
-        for i in range(
-            min(hf_config.first_k_dense_replace, hf_config.num_hidden_layers)
-        ):
-            moe_layer_freq[i] = 0
+        moe_layer_freq = translate_first_k_dense_replace_to_moe_layer_freq(
+            hf_config.first_k_dense_replace, hf_config.num_hidden_layers
+        )
 
         mtp_args = {}
         if "num_nextn_predict_layers" in hf_config:
