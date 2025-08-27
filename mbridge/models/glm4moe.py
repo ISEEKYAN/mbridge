@@ -6,6 +6,7 @@ import re
 
 from ..core import register_model
 from ..models import Qwen2MoEBridge, Qwen2Bridge
+from ..utils.layer import translate_first_k_dense_replace_to_moe_layer_freq
 
 
 @register_model("glm4_moe")
@@ -99,12 +100,14 @@ class GLM4MoEBridge(Qwen2MoEBridge):
         Returns:
             TransformerConfig: Configuration object for Qwen2 models
         """
+        moe_layer_freq = translate_first_k_dense_replace_to_moe_layer_freq(self.hf_config.first_k_dense_replace, self.hf_config.num_hidden_layers)
         return self._build_base_config(
             use_cpu_initialization=False,
             # MoE specific
             moe_ffn_hidden_size=self.hf_config.moe_intermediate_size,
             moe_router_bias_update_rate=0.001,
             moe_router_topk=self.hf_config.num_experts_per_tok,
+            moe_layer_freq=moe_layer_freq,
             num_moe_experts=self.hf_config.n_routed_experts,
             # moe_router_load_balancing_type="aux_loss",
             moe_router_load_balancing_type="none",  # default None for RL
@@ -112,6 +115,7 @@ class GLM4MoEBridge(Qwen2MoEBridge):
             moe_router_score_function="sigmoid",
             moe_router_enable_expert_bias=True,
             moe_router_pre_softmax=True,
+            moe_router_dtype="fp32",
             # Other optimizations
             persist_layer_norm=True,
             bias_activation_fusion=True,

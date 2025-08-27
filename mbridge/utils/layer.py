@@ -63,3 +63,17 @@ class LinearForLastLayer(torch.nn.Linear):
                 logits, tensor_parallel_output_grad=False
             )
         return logits, None
+
+
+def translate_first_k_dense_replace_to_moe_layer_freq(first_k_dense_replace: int, total_layers: int):
+    """
+    Translate huggingface config: first_k_dense_replace,
+    to Megatron config: moe_layer_freq
+
+    Args:
+        first_k_dense_replace (int): in huggingface config
+    """
+    
+    assert first_k_dense_replace >= 0 and total_layers >= first_k_dense_replace, f"first_k_dense_replace must >= 0 and <= total_layers, get {first_k_dense_replace} and {total_layers}"
+    return f"[0]*{first_k_dense_replace}+[1]*{total_layers - first_k_dense_replace}"
+    
