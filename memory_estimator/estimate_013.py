@@ -57,6 +57,7 @@ from moe_mem_estimator.layers import MLASelfAttention, MoELayer
 torch.distributed.get_rank = lambda: 0
 torch.cuda.get_device_capability = lambda: [8]
 
+
 def estimate_from_config(config, args):
     """
     Estimate memory usage from a given config and args, instead of global state.
