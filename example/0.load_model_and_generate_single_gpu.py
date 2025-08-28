@@ -25,17 +25,23 @@ def init_distributed():
     model_parallel_cuda_manual_seed(0)
 
 
-def load_model(hf_model_path):
+def load_model(hf_model_path, trust_remote_code=False):
     """Load model"""
-    bridge = AutoBridge.from_pretrained(hf_model_path)
+    bridge = AutoBridge.from_pretrained(
+        hf_model_path, trust_remote_code=trust_remote_code
+    )
     model = bridge.get_model()
     bridge.load_weights(model, hf_model_path)
     return model
 
 
-def generate_sequence(prompt, model, hf_model_path, max_new_tokens=100):
+def generate_sequence(
+    prompt, model, hf_model_path, max_new_tokens=100, trust_remote_code=False
+):
     """Generate text sequence"""
-    tokenizer = AutoTokenizer.from_pretrained(hf_model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        hf_model_path, trust_remote_code=trust_remote_code
+    )
 
     input_ids = tokenizer.encode(prompt, return_tensors="pt")
     input_ids = input_ids.cuda()
@@ -93,8 +99,11 @@ def main():
     parser.add_argument(
         "--max_tokens",
         type=int,
-        default=100,
+        default=10,
         help="Maximum number of tokens to generate",
+    )
+    parser.add_argument(
+        "--trust_remote_code", action="store_true", help="Trust remote code"
     )
     args = parser.parse_args()
 
@@ -102,12 +111,14 @@ def main():
     init_distributed()
 
     # Load model
-    model = load_model(args.model_path)
+    model = load_model(args.model_path, args.trust_remote_code)
     print(f"Model loaded: {args.model_path}")
 
     # Generate text
     prompt = "A quick sort in python for me is \n```python\n"
-    generate_sequence(prompt, model, args.model_path, args.max_tokens)
+    generate_sequence(
+        prompt, model, args.model_path, args.max_tokens, args.trust_remote_code
+    )
 
 
 if __name__ == "__main__":

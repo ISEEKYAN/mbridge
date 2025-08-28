@@ -25,6 +25,17 @@ class LLMBridge(Bridge):
     """
 
     TransformerConfigClass = TransformerConfig
+    _CONFIG_MAPPING = {
+        "num_layers": "num_hidden_layers",
+        "hidden_size": "hidden_size",
+        "num_attention_heads": "num_attention_heads",
+        "num_query_groups": "num_key_value_heads",
+        "ffn_hidden_size": "intermediate_size",
+        "attention_dropout": "attention_dropout",
+        "layernorm_epsilon": "rms_norm_eps",
+        "hidden_dropout": ("hidden_dropout", 0.0),
+        "kv_channels": ("head_dim", None),
+    }
 
     def _build_base_config(self, **kwargs):
         """
@@ -40,17 +51,8 @@ class LLMBridge(Bridge):
         dtype = self.dtype
         overlap_p2p_comm = self.mpu.vpp_size is not None and self.mpu.pp_size > 1
         batch_p2p_comm = False
+
         base_config = {
-            # Model architecture parameters
-            "num_layers": hf_config.num_hidden_layers,
-            "hidden_size": hf_config.hidden_size,
-            "num_attention_heads": hf_config.num_attention_heads,
-            "num_query_groups": hf_config.num_key_value_heads,
-            "ffn_hidden_size": hf_config.intermediate_size,
-            "attention_dropout": hf_config.attention_dropout,
-            "hidden_dropout": getattr(hf_config, "hidden_dropout", 0.0),
-            "kv_channels": getattr(hf_config, "head_dim", None),
-            "layernorm_epsilon": hf_config.rms_norm_eps,
             # Activation and normalization
             "activation_func": F.silu,
             "normalization": "RMSNorm",
@@ -76,6 +78,15 @@ class LLMBridge(Bridge):
             "overlap_p2p_comm": overlap_p2p_comm,
             "batch_p2p_comm": batch_p2p_comm,
         }
+        # Model architecture parameters
+        config_mapped = {}
+        for mcore_key, hf_key in self._CONFIG_MAPPING.items():
+            if isinstance(hf_key, tuple):
+                hf_key, default_val = hf_key
+                config_mapped[mcore_key] = getattr(hf_config, hf_key, default_val)
+            else:
+                config_mapped[mcore_key] = getattr(hf_config, hf_key)
+        base_config.update(config_mapped)
 
         # Update with any provided overrides
         base_config.update(kwargs)

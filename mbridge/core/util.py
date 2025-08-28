@@ -240,19 +240,31 @@ def get_model(
         if data_parallel_random_init:
             for model_module in model:
                 model_module.broadcast_params()
+    # maintain router bias dtype
+    for m in model:
+        from mbridge.core.util import unwrap_model
 
+        m = unwrap_model(m)
+        if hasattr(m, "decoder"):
+            for l in m.decoder.layers:
+                if (
+                    hasattr(l, "mlp")
+                    and hasattr(l.mlp, "router")
+                    and hasattr(l.mlp.router, "_maintain_float32_expert_bias")
+                ):
+                    # print(f"maintain router bias dtype for {l.mlp.router}")
+                    l.mlp.router._maintain_float32_expert_bias()
     return model
 
 
 from megatron.core import DistributedDataParallel as DDP
+
 try:
     from megatron.core.distributed.custom_fsdp import (
         FullyShardedDataParallel as custom_FSDP,
     )
 except ImportError:
-    from megatron.core.distributed.fsdp import (
-        FullyShardedDataParallel as custom_FSDP,
-    )
+    from megatron.core.distributed.fsdp import FullyShardedDataParallel as custom_FSDP
 
 try:
     from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
