@@ -182,9 +182,7 @@ class Bridge(ABC):
             for local_name, hf_names in local_to_hf_map.items():
                 param = model.state_dict()[local_name]
                 if "expert_bias" in local_name:
-                    model.to(torch.float32)
-                    param = model.state_dict()[local_name]
-                    model.to(self.dtype)
+                    assert param.dtype == torch.float32
                 # hf format to mcore format
                 if set(to_load_from_disk) & set(hf_names):
                     if not memory_efficient:
@@ -292,12 +290,10 @@ class Bridge(ABC):
                 for name, param in model.named_parameters():
                     existing_keys.add(name)
                     yield name, param
-
                 # note
                 # there is a bug in megatron GPTModel
                 # decoder.layers[n].mlp.router.expert_bias" in GPTModel is not registered in named_parameter, but in state_dict().
                 # for now we patch it by adding those keys to extra_keys.
-                model.to(torch.float32)
                 extra_keys = [
                     x
                     for x in model.state_dict().keys()
@@ -309,7 +305,7 @@ class Bridge(ABC):
                     param = model.state_dict()[name].to(torch.cuda.current_device())
                     assert param.dtype == torch.float32, "shall use 32 bit expert_bias"
                     yield name, param
-                model.to(self.dtype)
+
 
         weights_names = []
         for vpp_rank, model in enumerate(models):

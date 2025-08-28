@@ -120,21 +120,6 @@ def worker_fn(
     # bridge.config.mtp_num_layers = 0
     model = bridge.get_model(post_model_creation_callbacks=[], wrap_with_ddp=False)
 
-    # maintain router bias dtype
-    for m in model:
-        from mbridge.core.util import unwrap_model
-
-        m = unwrap_model(m)
-        if hasattr(m, "decoder"):
-            for l in m.decoder.layers:
-                if (
-                    hasattr(l, "mlp")
-                    and hasattr(l.mlp, "router")
-                    and hasattr(l.mlp.router, "_maintain_float32_expert_bias")
-                ):
-                    print(f"maintain router bias dtype for {l.mlp.router}")
-                    l.mlp.router._maintain_float32_expert_bias()
-
     # bridge.load_weights(model, hf_model_path, memory_efficient=True)
 
     print(f"[rank {rank}] Model loaded, proceeding with post-processing ...")

@@ -241,6 +241,20 @@ def get_model(
             for model_module in model:
                 model_module.broadcast_params()
 
+    # maintain router bias dtype
+    for m in model:
+        from mbridge.core.util import unwrap_model
+
+        m = unwrap_model(m)
+        if hasattr(m, "decoder"):
+            for l in m.decoder.layers:
+                if (
+                    hasattr(l, "mlp")
+                    and hasattr(l.mlp, "router")
+                    and hasattr(l.mlp.router, "_maintain_float32_expert_bias")
+                ):
+                    print(f"maintain router bias dtype for {l.mlp.router}")
+                    l.mlp.router._maintain_float32_expert_bias()
     return model
 
 
