@@ -33,3 +33,12 @@ test = [
 where = ["."]
 include = ["mbridge*"]
 exclude = ["tests*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+extend_skip = ['mbridge/models/__init__.py']

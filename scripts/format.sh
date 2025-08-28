@@ -1,1 +1,1 @@
-isort . && black .
+isort . && black . --config 'pyproject.toml' --extend-exclude 'mbridge/models/__init__.py'
