@@ -80,7 +80,9 @@ def main():
         gt = bridge.safetensor_io.load_one_hf_weight(k).to(v.device)
         if k != "lm_head.weight":
             assert v.shape == gt.shape, f"mismatch of {k} {v.shape=} {gt.shape=}"
-            assert v.sum().item() == gt.sum().item(), f"mismatch of {k}, v: {v}, gt: {gt}"
+            assert (
+                v.sum().item() == gt.sum().item()
+            ), f"mismatch of {k}, v: {v}, gt: {gt}"
         else:
             if v.shape[0] == 1:
                 print(f"this is a value model, {k} {v.shape=} {gt.shape=}")

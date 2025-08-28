@@ -306,7 +306,6 @@ class Bridge(ABC):
                     assert param.dtype == torch.float32, "shall use 32 bit expert_bias"
                     yield name, param
 
-
         weights_names = []
         for vpp_rank, model in enumerate(models):
             existing_keys = set()
@@ -709,7 +708,11 @@ class Bridge(ABC):
         """
         # Convert weights to the target dtype if needed
         # This handles cases where HF weights are FP32 but model expects BF16/FP16
-        if hasattr(self, "dtype") and self.dtype is not None and ("expert_bias" not in mcore_weights_name):
+        if (
+            hasattr(self, "dtype")
+            and self.dtype is not None
+            and ("expert_bias" not in mcore_weights_name)
+        ):
             hf_weights = [
                 w.to(self.dtype) if w.dtype != self.dtype else w for w in hf_weights
             ]
