@@ -3,6 +3,7 @@ from copy import deepcopy
 from typing import Callable, Generator, Optional
 
 import torch
+from transformers import AutoConfig
 
 from ...core import VLMBridge, register_model
 from ...core.util import unwrap_model
@@ -104,6 +105,13 @@ class Qwen2_5VLBridge(VLMBridge):
             "visual.blocks.{layer_number}.norm2.weight"
         ],
     }
+
+    def _change_mapping_from_config(self, hf_config: AutoConfig):
+        if getattr(hf_config, "tie_word_embeddings", False):
+            self._DIRECT_MAPPING["language_model.output_layer.weight"] = "model.embed_tokens.weight"
+
+    def _get_hf_shared_weight_keys(self):
+        return ["model.embed_tokens.weight"]
 
     def _weight_name_mapping_attention(self, name: str) -> list[str]:
         split_name = name.split(".")

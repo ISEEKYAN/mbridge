@@ -178,6 +178,9 @@ def main():
     if torch.distributed.get_rank() == 0:
         print(f"missing keys: {missing_keys}")
         print(f"not_matched_keys: {not_matched_keys}")
+
+    # wait for save finish
+    torch.distributed.barrier()
     torch.distributed.destroy_process_group()
 
 
