@@ -26,3 +26,5 @@ from .qwen2moe import Qwen2MoEBridge
 from .qwen3 import Qwen3Bridge
 from .qwen3moe import Qwen3MoEBridge
 from .glm4moe import GLM4MoEBridge
+from .glm4_vl import Glm4VLBridgeMoe, Glm4VLBridgeDense
+
