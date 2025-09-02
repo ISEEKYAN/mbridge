@@ -1,5 +1,7 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
+from transformers import AutoConfig
+
 from ..core import LLMBridge, register_model
 
 
@@ -52,6 +54,15 @@ class Qwen2Bridge(LLMBridge):
         ],
         "mlp.linear_fc2.weight": ["model.layers.{layer_number}.mlp.down_proj.weight"],
     }
+
+    def _adjust_mapping_for_shared_weights(self, hf_config: AutoConfig):
+        if getattr(hf_config, "tie_word_embeddings", False):
+            self._DIRECT_MAPPING["output_layer.weight"] = "model.embed_tokens.weight"
+    
+    def _get_hf_shared_weight_keys(self):
+        if getattr(hf_config, "tie_word_embeddings", False):
+            return ["model.embed_tokens.weight"]
+        return []
 
     def _build_config(self):
         """

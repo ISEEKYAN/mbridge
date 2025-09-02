@@ -49,6 +49,8 @@ class Bridge(ABC):
         self.config = self._build_config()
         self.safetensor_io = None
 
+        self._adjust_mapping_for_shared_weights(self.hf_config)
+
     def get_model(
         self,
         weight_path: str = None,
@@ -250,7 +252,7 @@ class Bridge(ABC):
         )
         rank = torch.distributed.get_rank() if is_distributed else 0
         if not os.path.exists(weights_path):
-            os.makedirs(weights_path)
+            os.makedirs(weights_path, exist_ok=True)
         per_tensor_generator = self.export_weights(models)
         if rank != 0:
             for _, _ in per_tensor_generator:
@@ -262,7 +264,11 @@ class Bridge(ABC):
                     per_tensor_generator, weights_path
                 )
             else:
-                self.safetensor_io.save_hf_weight(per_tensor_generator, weights_path)
+                self.safetensor_io.save_hf_weight(
+                    per_tensor_generator,
+                    weights_path,
+                    self._get_hf_shared_weight_keys(),
+                )
             self.safetensor_io.save_index(weights_path)
             self.hf_config.save_pretrained(weights_path)
         return
@@ -570,6 +576,12 @@ class Bridge(ABC):
         "decoder.final_layernorm.weight": "model.norm.weight",
         "output_layer.weight": "lm_head.weight",
     }
+
+    def _adjust_mapping_for_shared_weights(self, hf_config: AutoConfig):
+        pass
+
+    def _get_hf_shared_weight_keys(self) -> list[str]:
+        return []
 
     def _weight_name_mapping_mlp(self, name: str) -> list[str]:
         """
