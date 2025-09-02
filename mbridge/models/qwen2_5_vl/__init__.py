@@ -106,12 +106,14 @@ class Qwen2_5VLBridge(VLMBridge):
         ],
     }
 
-    def _change_mapping_from_config(self, hf_config: AutoConfig):
+    def _adjust_mapping_for_shared_weights(self, hf_config: AutoConfig):
         if getattr(hf_config, "tie_word_embeddings", False):
             self._DIRECT_MAPPING["language_model.output_layer.weight"] = "model.embed_tokens.weight"
 
     def _get_hf_shared_weight_keys(self):
-        return ["model.embed_tokens.weight"]
+        if getattr(hf_config, "tie_word_embeddings", False):
+            return ["model.embed_tokens.weight"]
+        return []
 
     def _weight_name_mapping_attention(self, name: str) -> list[str]:
         split_name = name.split(".")

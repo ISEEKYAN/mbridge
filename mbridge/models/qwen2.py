@@ -55,12 +55,14 @@ class Qwen2Bridge(LLMBridge):
         "mlp.linear_fc2.weight": ["model.layers.{layer_number}.mlp.down_proj.weight"],
     }
 
-    def _change_mapping_from_config(self, hf_config: AutoConfig):
+    def _adjust_mapping_for_shared_weights(self, hf_config: AutoConfig):
         if getattr(hf_config, "tie_word_embeddings", False):
             self._DIRECT_MAPPING["output_layer.weight"] = "model.embed_tokens.weight"
     
     def _get_hf_shared_weight_keys(self):
-        return ["model.embed_tokens.weight"]
+        if getattr(hf_config, "tie_word_embeddings", False):
+            return ["model.embed_tokens.weight"]
+        return []
 
     def _build_config(self):
         """
