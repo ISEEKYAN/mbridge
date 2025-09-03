@@ -272,13 +272,13 @@ class DeepseekV3Bridge(LLMBridge):
         if mcore_weights_name in self._DIRECT_MAPPING:
             return [self._DIRECT_MAPPING[mcore_weights_name]]
 
-        if (
+        if "mtp" in mcore_weights_name:
+            return self._convert_mtp_param(mcore_weights_name)
+        elif (
             "self_attention" in mcore_weights_name
             or "input_layernorm.weight" in mcore_weights_name
         ):
             return self._weight_name_mapping_attention(mcore_weights_name)
-        elif "mtp" in mcore_weights_name:
-            return self._convert_mtp_param(mcore_weights_name)
         elif "mlp" in mcore_weights_name:
             return self._weight_name_mapping_mlp(mcore_weights_name)
         else:
