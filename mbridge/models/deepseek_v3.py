@@ -88,6 +88,11 @@ class DeepseekV3Bridge(LLMBridge):
         ],
     }
 
+    _SHARED_STATE_DICT_MAPPING = {
+        "embedding.word_embeddings.weight": ["model.embed_tokens.weight", "model.layers.61.embed_tokens.weight"],
+        "output_layer.weight": ["lm_head.weight", "model.layers.61.shared_head.head.weight"],
+    }
+
     TransformerConfigClass = MLATransformerConfig
 
     def _build_config(self):
@@ -272,19 +277,29 @@ class DeepseekV3Bridge(LLMBridge):
         if mcore_weights_name in self._DIRECT_MAPPING:
             return [self._DIRECT_MAPPING[mcore_weights_name]]
 
-        if (
+        if "mtp" in mcore_weights_name:
+            return self._convert_mtp_param(mcore_weights_name)
+        elif (
             "self_attention" in mcore_weights_name
             or "input_layernorm.weight" in mcore_weights_name
         ):
             return self._weight_name_mapping_attention(mcore_weights_name)
-        elif "mtp" in mcore_weights_name:
-            return self._convert_mtp_param(mcore_weights_name)
         elif "mlp" in mcore_weights_name:
             return self._weight_name_mapping_mlp(mcore_weights_name)
         else:
             raise NotImplementedError(
                 f"Unsupported parameter name: {mcore_weights_name}"
             )
+
+    def _weight_to_hf_format(
+        self, mcore_weights_name: str, mcore_weights: torch.Tensor
+    ) -> tuple[list[str], list[torch.Tensor]]:
+
+        # note: only support one mtp layer for now
+        if self.config.mtp_num_layers == 1 and self.config.num_layers == 61 and mcore_weights_name in self._SHARED_STATE_DICT_MAPPING:
+            hf_names = self._SHARED_STATE_DICT_MAPPING[mcore_weights_name]
+            return hf_names, [mcore_weights] * len(hf_names)
+        return super()._weight_to_hf_format(mcore_weights_name, mcore_weights)
 
     def _get_safetensor_io(self, weights_path: str):
         if self.dtype == torch.bfloat16:
