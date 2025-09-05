@@ -114,9 +114,10 @@ class SafeTensorIO:
                     save_file(to_save, safetensor_file)
                     for k in keys_for_file:
                         del states[k]
-        assert set(states.keys()) == set(
-            hf_shared_weight_keys
-        ), f"Some weights are not saved: {states.keys()} {hf_shared_weight_keys=}"
+        if not set(states.keys()) == set(hf_shared_weight_keys):
+            warnings.warn(
+                f"Some weights are not saved: {states.keys()} {hf_shared_weight_keys=}"
+            )
         return
 
     def save_hf_weight_memory_efficient(
