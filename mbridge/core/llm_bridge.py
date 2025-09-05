@@ -37,7 +37,7 @@ class LLMBridge(Bridge):
         "kv_channels": ("head_dim", None),
     }
 
-    def _build_base_config(self, **kwargs):
+    def _build_base_config(self, text_config_key=None, **kwargs):
         """
         Build the base configuration for the model.
 
@@ -47,7 +47,11 @@ class LLMBridge(Bridge):
         Returns:
             TransformerConfig: The constructed transformer configuration
         """
-        hf_config = self.hf_config
+        if text_config_key is None:
+            hf_config = self.hf_config
+        else:
+            assert hasattr(self.hf_config, text_config_key)
+            hf_config = getattr(self.hf_config, text_config_key)
         dtype = self.dtype
         overlap_p2p_comm = self.mpu.vpp_size is not None and self.mpu.pp_size > 1
         batch_p2p_comm = False

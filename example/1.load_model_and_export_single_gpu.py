@@ -49,7 +49,7 @@ def main():
     for k, v in bridge.export_weights(model):
         gt = bridge.safetensor_io.load_one_hf_weight(k).cuda()
         assert v.shape == gt.shape, f"mismatch of {k}"
-        assert v.sum().item() == gt.sum().item(), f"mismatch of {k}"
+        assert torch.equal(v, gt), f"mismatch of {k}"
         loaded_keys.add(k)
         print(k, "export ok")
 
