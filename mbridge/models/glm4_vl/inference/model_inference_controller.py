@@ -1,10 +1,13 @@
 from collections import OrderedDict
 
-from megatron.core.inference.inference_request import InferenceRequest
-from megatron.core.inference.text_generation_controllers.text_generation_controller import \
-    TextGenerationController
-from .inference_request import Glm4vInferenceRequest
 import torch
+from megatron.core.inference.inference_request import InferenceRequest
+from megatron.core.inference.text_generation_controllers.text_generation_controller import (
+    TextGenerationController,
+)
+
+from .inference_request import Glm4vInferenceRequest
+
 
 class Glm4vGenerationController(TextGenerationController):
 

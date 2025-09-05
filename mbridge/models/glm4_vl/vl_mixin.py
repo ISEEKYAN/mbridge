@@ -3,8 +3,9 @@ adapted from
 https://github.com/huggingface/transformers/blob/main/src/transformers/models/glm4v_moe/modeling_glm4v_moe.py
 """
 
-from typing import Optional
 import itertools
+from typing import Optional
+
 import torch
 
 
@@ -358,7 +359,7 @@ class VLMixin:
             raise ValueError(
                 f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {image_features.shape[0]}"
             )
-        
+
         # [b, s] => [s, b]
         n_video_tokens = special_video_mask.sum()
         special_video_mask = (

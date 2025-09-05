@@ -11,22 +11,18 @@ import requests
 import torch
 from megatron.core import parallel_state
 from megatron.core import parallel_state as mpu
+from megatron.core.models.common.embeddings import MultimodalRotaryEmbedding
+from megatron.core.models.common.embeddings.rope_utils import apply_rotary_pos_emb
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from transformers import AutoProcessor
-from mbridge import AutoBridge
-from mbridge.models.glm4_vl.vl_mixin import VLMixin
-from transformers.models.glm4v.modeling_glm4v import apply_multimodal_rotary_pos_emb, Glm4vTextRotaryEmbedding
-
-from megatron.core.models.common.embeddings import (
-    MultimodalRotaryEmbedding
-)
-
-from megatron.core.models.common.embeddings.rope_utils import (
-    apply_rotary_pos_emb
-)
-
 from PIL import Image
 from transformers import AutoProcessor
+from transformers.models.glm4v.modeling_glm4v import (
+    Glm4vTextRotaryEmbedding,
+    apply_multimodal_rotary_pos_emb,
+)
+
+from mbridge import AutoBridge
+from mbridge.models.glm4_vl.vl_mixin import VLMixin
 
 messages = [
     {
@@ -70,19 +66,15 @@ def apply_rope_hf(q, k, bridge, position_ids):
 
 def apply_rope_megatron(q, k, bridge, position_ids):
     rotary_emb = MultimodalRotaryEmbedding(
-       kv_channels = bridge.config.kv_channels,
-       rotary_interleaved = bridge.config.rotary_interleaved,
-       rotary_base=bridge.hf_config.rope_theta,
-       rotary_percent=bridge.hf_config.partial_rotary_factor
+        kv_channels=bridge.config.kv_channels,
+        rotary_interleaved=bridge.config.rotary_interleaved,
+        rotary_base=bridge.hf_config.rope_theta,
+        rotary_percent=bridge.hf_config.partial_rotary_factor,
     ).cuda()
     rotary_pos_emb = rotary_emb(position_ids, bridge.config.mrope_section)
     q_pos_emb, k_pos_emb = rotary_pos_emb, rotary_pos_emb
-    q = apply_rotary_pos_emb(
-        q, q_pos_emb, config=bridge.config, cu_seqlens=None
-    )
-    k = apply_rotary_pos_emb(
-        k, k_pos_emb, config=bridge.config, cu_seqlens=None
-    )
+    q = apply_rotary_pos_emb(q, q_pos_emb, config=bridge.config, cu_seqlens=None)
+    k = apply_rotary_pos_emb(k, k_pos_emb, config=bridge.config, cu_seqlens=None)
     return q, k
 
 
@@ -100,7 +92,9 @@ def test_diff(a, b, a_text="", b_text=""):
     diff = a - b
     print(f"{a_text} {a}")
     print(f"{b_text} {b}")
-    print(f"{a_text} vs {b_text}: diff max {diff.max()}; min {diff.min()}; mean {diff.abs().mean()}")
+    print(
+        f"{a_text} vs {b_text}: diff max {diff.max()}; min {diff.min()}; mean {diff.abs().mean()}"
+    )
 
 
 def init_distributed(tp=2, pp=1, cp=1, vpp=1, ep=1, etp=None):
@@ -153,7 +147,6 @@ def main():
         etp=args.etp,
     )
 
-
     # Load megatron model
     hf_model_path = args.model_path
     image_url = "https://www.ilankelman.org/stopsigns/australia.jpg"
@@ -162,13 +155,17 @@ def main():
     bridge = AutoBridge.from_pretrained(hf_model_path)
     vl_mixin = VLMixin()
     vl_mixin.config = bridge.config
-    position_ids, _ = vl_mixin.get_rope_index(sampls["prompt_tokens"], sampls["image_grid_thw"])
+    position_ids, _ = vl_mixin.get_rope_index(
+        sampls["prompt_tokens"], sampls["image_grid_thw"]
+    )
     # set sequence_parallel = False for forward
     bridge.config.sequence_parallel = False
     # q_len, bsz, -1, dim
     q, k = init_q_k(bridge, sampls["prompt_tokens"])
     # bsz, -1, q_len, dim
-    q_emb_hf, k_emb_hf = apply_rope_hf(q.permute(1, 2, 0, 3), k.permute(1, 2, 0, 3), bridge, position_ids)
+    q_emb_hf, k_emb_hf = apply_rope_hf(
+        q.permute(1, 2, 0, 3), k.permute(1, 2, 0, 3), bridge, position_ids
+    )
     q_emb_hf = q_emb_hf.permute(2, 0, 1, 3)
     k_emb_hf = k_emb_hf.permute(2, 0, 1, 3)
     # q_len, bsz, -1, dim

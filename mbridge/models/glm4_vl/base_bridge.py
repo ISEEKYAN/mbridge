@@ -257,7 +257,9 @@ class Glm4VLBridgeBase(VLMBridge):
             gptmodel_args = self._get_gptmodel_args()
             if vp_stage is not None and self.has_vp_stage:
                 gptmodel_args["vp_stage"] = vp_stage
-            assert self.HfVisionClass is not None, "transformers version is too low, glm4.5v is not supported yet"
+            assert (
+                self.HfVisionClass is not None
+            ), "transformers version is too low, glm4.5v is not supported yet"
             model = Glm4VLModel(
                 config=self.config,
                 language_transformer_layer_spec=transformer_layer_spec,

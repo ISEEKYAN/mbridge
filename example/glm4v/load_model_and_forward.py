@@ -12,8 +12,7 @@ import torch
 from megatron.core import parallel_state
 from megatron.core import parallel_state as mpu
 from megatron.core.inference.inference_request import InferenceRequest
-from megatron.core.tensor_parallel.random import \
-    model_parallel_cuda_manual_seed
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from PIL import Image
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
@@ -54,7 +53,7 @@ def get_sample_for_forward(image, hf_model_path):
 def cos_similarity(a, b):
     print(f"a {a.shape} b {b.shape}")
     a = a.float()
-    #a = a / a.norm(dim=-1, keepdim=True)
+    # a = a / a.norm(dim=-1, keepdim=True)
     a = torch.exp(a)
     a = a / a.norm(dim=-1, keepdim=True)
     """
@@ -62,7 +61,7 @@ def cos_similarity(a, b):
     a = a / a.norm(dim=-1, keepdim=True)
     """
     b = b.float()
-    #b =  b / b.norm(dim=-1, keepdim=True)
+    # b =  b / b.norm(dim=-1, keepdim=True)
     b = torch.exp(b)
     b = b / b.norm(dim=-1, keepdim=True)
     """
@@ -70,8 +69,9 @@ def cos_similarity(a, b):
     b =  b / b.norm(dim=-1, keepdim=True)
     """
     sim = (a * b).sum(dim=-1)
-    print(f"hf vs megatron cos_similarity min: {sim.min()}; max: {sim.max()}; mean: {sim.mean()}")
-
+    print(
+        f"hf vs megatron cos_similarity min: {sim.min()}; max: {sim.max()}; mean: {sim.mean()}"
+    )
 
 
 def is_first_rank():
@@ -143,11 +143,17 @@ def main():
     print(f"rank{torch.distributed.get_rank()}: end load weight, start forward ...")
 
     # load hf model
-    hf_model = AutoModelForImageTextToText.from_pretrained(hf_model_path).to("cuda").bfloat16()
+    hf_model = (
+        AutoModelForImageTextToText.from_pretrained(hf_model_path).to("cuda").bfloat16()
+    )
 
-    print(f"rank{torch.distributed.get_rank()} {hf_model.dtype}: end hf load weight, start forward ...")
+    print(
+        f"rank{torch.distributed.get_rank()} {hf_model.dtype}: end hf load weight, start forward ..."
+    )
 
-    sample = get_sample_for_forward(Image.open("./example/glm4v/australia.jpg"), hf_model_path)
+    sample = get_sample_for_forward(
+        Image.open("./example/glm4v/australia.jpg"), hf_model_path
+    )
 
     with torch.no_grad():
         hf_output = hf_model(

@@ -12,17 +12,14 @@ import torch
 from megatron.core import parallel_state
 from megatron.core import parallel_state as mpu
 from megatron.core.inference.inference_request import InferenceRequest
-from megatron.core.tensor_parallel.random import \
-    model_parallel_cuda_manual_seed
+from megatron.core.inference.sampling_params import SamplingParams
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from PIL import Image
 from transformers import AutoProcessor
 
 from mbridge import AutoBridge
-from mbridge.models.glm4_vl.inference import (Glm4vInferenceRequest,
-                                              get_inference_engine)
-from mbridge.utils.post_creation_callbacks import (freeze_moe_router,
-                                                   make_value_model)
-from megatron.core.inference.sampling_params import SamplingParams
+from mbridge.models.glm4_vl.inference import Glm4vInferenceRequest, get_inference_engine
+from mbridge.utils.post_creation_callbacks import freeze_moe_router, make_value_model
 
 
 def is_first_rank():
@@ -48,12 +45,14 @@ class GenerateHelper:
     def __init__(self, model_path, model, vocab_size, sampling_params=None):
         self.processor = AutoProcessor.from_pretrained(model_path)
         # tokenizer no eos token id
-        self.processor.tokenizer.eod =  self.processor.tokenizer.pad_token_id
+        self.processor.tokenizer.eod = self.processor.tokenizer.pad_token_id
         # hack detokenize => _decode
         self.processor.tokenizer.detokenize = self.processor.tokenizer._decode
         self.engine = get_inference_engine(model, self.processor.tokenizer, vocab_size)
         if sampling_params is None:
-            sampling_params = SamplingParams(temperature=0.2, top_k=100, top_p=0.2, num_tokens_to_generate=512)
+            sampling_params = SamplingParams(
+                temperature=0.2, top_k=100, top_p=0.2, num_tokens_to_generate=512
+            )
         self.sampling_params = sampling_params
 
     def generate(self, image):
@@ -67,8 +66,12 @@ class GenerateHelper:
             prompt=text,
             prompt_tokens=inputs.input_ids[0],
             sampling_params=self.sampling_params,
-            pixel_values=torch.from_numpy(inputs.pixel_values).to(torch.cuda.current_device()),
-            image_grid_thw=torch.from_numpy(inputs.image_grid_thw).to(torch.cuda.current_device()),
+            pixel_values=torch.from_numpy(inputs.pixel_values).to(
+                torch.cuda.current_device()
+            ),
+            image_grid_thw=torch.from_numpy(inputs.image_grid_thw).to(
+                torch.cuda.current_device()
+            ),
         )
         results: List[InferenceRequest] = self.engine.generate(
             inference_requests=[inference_request]
@@ -136,7 +139,6 @@ def main():
     model = bridge.get_model(post_model_creation_callbacks=[freeze_moe_router])
     bridge.load_weights(model, hf_model_path, memory_efficient=True)
     print(f"rank{torch.distributed.get_rank()}: end load weight, start generate ...")
-
 
     image_url = "https://www.ilankelman.org/stopsigns/australia.jpg"
     image = Image.open(requests.get(image_url, stream=True).raw)

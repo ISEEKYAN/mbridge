@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+
 import torch
 from megatron.core.inference.inference_request import InferenceRequest
 

@@ -15,9 +15,14 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import (
-    TransformerLayer, TransformerLayerSubmodules)
-from megatron.core.utils import (deprecate_inference_params, is_te_min_version,
-                                 make_viewless_tensor)
+    TransformerLayer,
+    TransformerLayerSubmodules,
+)
+from megatron.core.utils import (
+    deprecate_inference_params,
+    is_te_min_version,
+    make_viewless_tensor,
+)
 from torch import Tensor
 
 
@@ -48,7 +53,6 @@ class Glm4TransformerLayer(TransformerLayer):
             eps=self.config.layernorm_epsilon,
         )
 
-    
     def _forward_attention(
         self,
         hidden_states: Tensor,
@@ -90,7 +94,9 @@ class Glm4TransformerLayer(TransformerLayer):
                 otherwise None.
         """
 
-        inference_context = deprecate_inference_params(inference_context, inference_params)
+        inference_context = deprecate_inference_params(
+            inference_context, inference_params
+        )
 
         # Residual connection.
         residual = hidden_states
@@ -103,7 +109,7 @@ class Glm4TransformerLayer(TransformerLayer):
             )
         else:
             input_layernorm_output = self.input_layernorm(hidden_states)
-        
+
         # Self attention.
         attention_output_with_bias = self.self_attention(
             input_layernorm_output,
@@ -130,9 +136,9 @@ class Glm4TransformerLayer(TransformerLayer):
         # TODO: could we move `bias_dropout_add_exec_handler` itself
         # inside the module provided in the `bias_dropout_add_spec` module?
         with self.bias_dropout_add_exec_handler():
-            hidden_states = self.self_attn_bda(self.training, self.config.bias_dropout_fusion)(
-                attention_output_with_bias, residual, self.hidden_dropout
-            )
+            hidden_states = self.self_attn_bda(
+                self.training, self.config.bias_dropout_fusion
+            )(attention_output_with_bias, residual, self.hidden_dropout)
 
         # Residual connection.
         residual = hidden_states
@@ -148,15 +154,18 @@ class Glm4TransformerLayer(TransformerLayer):
             inference_context=inference_context,
         )
 
-        if isinstance(attention_output_with_bias, dict) and "context" in attention_output_with_bias:
+        if (
+            isinstance(attention_output_with_bias, dict)
+            and "context" in attention_output_with_bias
+        ):
             context = attention_output_with_bias["context"]
 
         # TODO: could we move `bias_dropout_add_exec_handler` itself
         # inside the module provided in the `bias_dropout_add_spec` module?
         with self.bias_dropout_add_exec_handler():
-            hidden_states = self.cross_attn_bda(self.training, self.config.bias_dropout_fusion)(
-                attention_output_with_bias, residual, self.hidden_dropout
-            )
+            hidden_states = self.cross_attn_bda(
+                self.training, self.config.bias_dropout_fusion
+            )(attention_output_with_bias, residual, self.hidden_dropout)
 
         # Residual connection.
         residual = hidden_states

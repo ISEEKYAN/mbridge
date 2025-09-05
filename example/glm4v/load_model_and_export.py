@@ -8,12 +8,10 @@ import os
 
 import torch
 from megatron.core import parallel_state as mpu
-from megatron.core.tensor_parallel.random import \
-    model_parallel_cuda_manual_seed
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
 from mbridge import AutoBridge
-from mbridge.utils.post_creation_callbacks import (freeze_moe_router,
-                                                   make_value_model)
+from mbridge.utils.post_creation_callbacks import freeze_moe_router, make_value_model
 
 
 def init_distributed(tp=2, pp=1, cp=1, vpp=1, ep=1, etp=None):

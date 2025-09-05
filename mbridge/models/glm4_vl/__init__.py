@@ -104,8 +104,9 @@ class Glm4VLBridgeDense(Glm4VLBridgeBase):
 
     # norm layer of glm4.1v is a little weird
     def _get_transformer_layer_spec(self, vp_stage: Optional[int] = None):
-        from megatron.core.transformer.transformer_block import \
-            TransformerBlockSubmodules
+        from megatron.core.transformer.transformer_block import (
+            TransformerBlockSubmodules,
+        )
 
         block_spec = super()._get_transformer_layer_spec(vp_stage=vp_stage)
         assert isinstance(block_spec, TransformerBlockSubmodules)
@@ -143,9 +144,10 @@ def attr_getter(self, attr):
         raise AttributeError()
     return getattr(self.text_config, attr)
 
+
 try:
-    from transformers.models.glm4v_moe.configuration_glm4v_moe import \
-        Glm4vMoeConfig
+    from transformers.models.glm4v_moe.configuration_glm4v_moe import Glm4vMoeConfig
+
     Glm4vMoeConfig.__getattr__ = attr_getter
 except:
     pass
@@ -159,8 +161,7 @@ actually this only apply to glm-4.5v
 @register_model("glm4v_moe")
 class Glm4VLBridgeMoe(Glm4VLBridgeBase):
     try:
-        from transformers.models.glm4v_moe.modeling_glm4v_moe import \
-            Glm4vMoeVisionModel
+        from transformers.models.glm4v_moe.modeling_glm4v_moe import Glm4vMoeVisionModel
     except:
         Glm4vMoeVisionModel = None
 

@@ -1,8 +1,9 @@
 from typing import Any, Dict
 
 import torch
-from megatron.core.inference.model_inference_wrappers.gpt.gpt_inference_wrapper import \
-    GPTInferenceWrapper
+from megatron.core.inference.model_inference_wrappers.gpt.gpt_inference_wrapper import (
+    GPTInferenceWrapper,
+)
 
 from mbridge.core.util import unwrap_model
 
@@ -52,14 +53,14 @@ class Glm4vInferenceWrapper(GPTInferenceWrapper):
         context_start_position: int,
         context_end_position: int,
     ) -> Dict[str, Any]:
-       
+
         batch = {}
         tokens = inference_input["tokens"]
         position_ids = inference_input["position_ids"]
         attention_mask = inference_input["attention_mask"]
         tokens2use = tokens[:, context_start_position:context_end_position]
         # flash_decode is false, full position_ids is required
-        positions2use = position_ids #position_ids[..., context_start_position:context_end_position]
+        positions2use = position_ids  # position_ids[..., context_start_position:context_end_position]
         if attention_mask is not None:
             attention_mask2use = attention_mask[
                 ..., context_start_position:context_end_position, :context_end_position
@@ -67,7 +68,6 @@ class Glm4vInferenceWrapper(GPTInferenceWrapper):
         else:
             attention_mask2use = None
 
-       
         batch["tokens"] = tokens2use
         batch["position_ids"] = positions2use
         batch["attention_mask"] = attention_mask

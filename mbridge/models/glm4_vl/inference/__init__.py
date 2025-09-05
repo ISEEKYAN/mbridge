@@ -1,6 +1,7 @@
 from megatron.core.inference.engines import StaticInferenceEngine
-from megatron.core.inference.model_inference_wrappers.inference_wrapper_config import \
-    InferenceWrapperConfig
+from megatron.core.inference.model_inference_wrappers.inference_wrapper_config import (
+    InferenceWrapperConfig,
+)
 
 from mbridge.core.util import get_model_config
 

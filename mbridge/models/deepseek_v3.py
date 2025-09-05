@@ -89,8 +89,14 @@ class DeepseekV3Bridge(LLMBridge):
     }
 
     _SHARED_STATE_DICT_MAPPING = {
-        "embedding.word_embeddings.weight": ["model.embed_tokens.weight", "model.layers.61.embed_tokens.weight"],
-        "output_layer.weight": ["lm_head.weight", "model.layers.61.shared_head.head.weight"],
+        "embedding.word_embeddings.weight": [
+            "model.embed_tokens.weight",
+            "model.layers.61.embed_tokens.weight",
+        ],
+        "output_layer.weight": [
+            "lm_head.weight",
+            "model.layers.61.shared_head.head.weight",
+        ],
     }
 
     TransformerConfigClass = MLATransformerConfig
@@ -296,7 +302,11 @@ class DeepseekV3Bridge(LLMBridge):
     ) -> tuple[list[str], list[torch.Tensor]]:
 
         # note: only support one mtp layer for now
-        if self.config.mtp_num_layers == 1 and self.config.num_layers == 61 and mcore_weights_name in self._SHARED_STATE_DICT_MAPPING:
+        if (
+            self.config.mtp_num_layers == 1
+            and self.config.num_layers == 61
+            and mcore_weights_name in self._SHARED_STATE_DICT_MAPPING
+        ):
             hf_names = self._SHARED_STATE_DICT_MAPPING[mcore_weights_name]
             return hf_names, [mcore_weights] * len(hf_names)
         return super()._weight_to_hf_format(mcore_weights_name, mcore_weights)
