@@ -194,8 +194,8 @@ class Bridge(ABC):
                     mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
                 else:
                     mcore_weight = None
-                if hf_names[0] == "lm_head.weight":
-                    if param.shape[0] == 1 and mcore_weight.shape[0] != 1:
+                if hf_names[0] in {"lm_head.weight", "model.embed_tokens.weight"}:
+                    if param.shape[0] == 1 and (mcore_weight is None or mcore_weight.shape[0] != 1):
                         # skip lm_head.weight when the model is a value model
                         continue
 
@@ -267,7 +267,7 @@ class Bridge(ABC):
                 self.safetensor_io.save_hf_weight(
                     per_tensor_generator,
                     weights_path,
-                    self._get_hf_shared_weight_keys(),
+                    self._get_hf_shared_weight_keys(self.hf_config),
                 )
             self.safetensor_io.save_index(weights_path)
             self.hf_config.save_pretrained(weights_path)
@@ -580,7 +580,7 @@ class Bridge(ABC):
     def _adjust_mapping_for_shared_weights(self, hf_config: AutoConfig):
         pass
 
-    def _get_hf_shared_weight_keys(self) -> list[str]:
+    def _get_hf_shared_weight_keys(self, hf_config: AutoConfig) -> list[str]:
         return []
 
     def _weight_name_mapping_mlp(self, name: str) -> list[str]:
