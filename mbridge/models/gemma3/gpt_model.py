@@ -8,6 +8,7 @@ from typing import Literal, Optional, Tuple
 import torch
 from torch import Tensor
 
+from megatron.core import tensor_parallel
 from megatron.core import InferenceParams
 from megatron.core.config_logger import has_config_logger_enabled, log_config_to_disk
 from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEmbedding
@@ -16,6 +17,72 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from mbridge.models.gemma3.transformer_config import Gemma3TransformerConfig
+from megatron.core.models.common.embeddings.language_model_embedding import LanguageModelEmbedding
+
+
+class LanguageModelEmbeddingScale(LanguageModelEmbedding):
+
+    def forward(self, input_ids: Tensor, position_ids: Tensor, tokentype_ids: int = None) -> Tensor:
+        """Forward pass of the embedding module.
+
+        Args:
+            input_ids (Tensor): The input tokens
+            position_ids (Tensor): The position id's used to calculate position embeddings
+            tokentype_ids (int): The token type ids. Used when args.bert_binary_head is
+                set to True. Defaults to None
+
+        Returns:
+            Tensor: The output embeddings
+        """
+        word_embeddings = self.word_embeddings(input_ids)
+        # MPATCH BEGINS
+        if hasattr(self.config, 'embed_scale'):
+            word_embeddings = word_embeddings * self.config.embed_scale
+        # MPATCH ENDS
+        if self.add_position_embedding:
+            position_embeddings = self.position_embeddings(position_ids)
+            embeddings = word_embeddings + position_embeddings
+        else:
+            embeddings = word_embeddings
+
+        if not self.reduce_scatter_embeddings:
+            # Data format change to avoid explicit tranposes : [b s h] --> [s b h].
+            embeddings = embeddings.transpose(0, 1).contiguous()
+
+        if tokentype_ids is not None:
+            assert self.tokentype_embeddings is not None
+            # [b s h] -> [s b h] (So that it can be added with embeddings)
+            tokentype_embedding = self.tokentype_embeddings(tokentype_ids).permute(1, 0, 2)
+            embeddings = embeddings + tokentype_embedding
+        else:
+            assert self.tokentype_embeddings is None
+
+        # If the input flag for fp32 residual connection is set, convert for float.
+        if self.config.fp32_residual_connection:
+            embeddings = embeddings.float()
+
+        # Dropout.
+        if self.config.sequence_parallel:
+            if not self.reduce_scatter_embeddings and self.scatter_to_sequence_parallel:
+                # MPATCH BEGINS
+                extra_args = {}
+                if version.parse(__version__) >= version.parse('0.13.0'):
+                    extra_args["group"] = self.tp_group
+                embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
+                    embeddings, **extra_args
+                )
+                # MPATCH ENDS
+            # `scatter_to_sequence_parallel_region` returns a view, which prevents
+            # the original tensor from being garbage collected. Clone to facilitate GC.
+            # Has a small runtime cost (~0.5%).
+            if self.config.clone_scatter_output_in_embedding and self.scatter_to_sequence_parallel:
+                embeddings = embeddings.clone()
+            with tensor_parallel.get_cuda_rng_tracker().fork():
+                embeddings = self.embedding_dropout(embeddings)
+        else:
+            embeddings = self.embedding_dropout(embeddings)
+
+        return embeddings
 
 
 class Gemma3GPTModel(GPTModel):
@@ -58,6 +125,16 @@ class Gemma3GPTModel(GPTModel):
             scatter_embedding_sequence_parallel=scatter_embedding_sequence_parallel,
             seq_len_interpolation_factor=seq_len_interpolation_factor,
         )
+
+        if self.pre_process or self.mtp_process:
+            self.embedding = LanguageModelEmbeddingScale(
+                config=self.config,
+                vocab_size=self.vocab_size,
+                max_sequence_length=self.max_sequence_length,
+                position_embedding_type=position_embedding_type,
+                scatter_to_sequence_parallel=scatter_embedding_sequence_parallel,
+            )
+
         if self.position_embedding_type == 'rope' and not self.config.multi_latent_attention:
             self.rotary_pos_emb.inv_freq /= rope_scaling_factor
             self.rotary_pos_emb_local = RotaryEmbedding(

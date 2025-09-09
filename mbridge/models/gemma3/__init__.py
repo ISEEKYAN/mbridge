@@ -34,6 +34,7 @@ class Gemma3Bridge(VLMBridge):
     _DIRECT_MAPPING = {
         "language_model.embedding.word_embeddings.weight": "language_model.model.embed_tokens.weight",
         "language_model.decoder.final_layernorm.weight": "language_model.model.norm.weight",
+        "language_model.output_layer.weight": "lm_head.weight",
         "vision_model.position_embeddings.weight": "vision_tower.vision_model.embeddings.position_embedding.weight",
         "vision_model.conv1.weight": "vision_tower.vision_model.embeddings.patch_embedding.weight",
         "vision_model.conv1.bias": "vision_tower.vision_model.embeddings.patch_embedding.bias",
@@ -128,6 +129,15 @@ class Gemma3Bridge(VLMBridge):
             "language_model.model.layers.{layer_number}.post_feedforward_layernorm.weight"
         ],
     }
+
+    def _adjust_mapping_for_shared_weights(self, hf_config: AutoConfig):
+        if getattr(hf_config, "tie_word_embeddings", False):
+            self._DIRECT_MAPPING["language_model.output_layer.weight"] = "language_model.model.embed_tokens.weight"
+
+    def _get_hf_shared_weight_keys(self):
+        if getattr(self.hf_config, "tie_word_embeddings", False):
+            return ["language_model.model.embed_tokens.weight"]
+        return []
 
     def _weight_name_mapping_attention(self, name: str) -> list[str]:
         split_name = name.split(".")

@@ -8,12 +8,12 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.models.vision.clip_vit_model import CLIPViTModel
 from megatron.core.utils import deprecate_inference_params
 
 from mbridge.core.util import split_data_cp_rank
 from mbridge.utils.mappings import all_gather_to_context_parallel_region
 from mbridge.models.gemma3.gpt_model import Gemma3GPTModel
-from mbridge.models.gemma3.clip_vit_model import CLIPViTModel
 from mbridge.models.gemma3.projector import Gemma3MultiModalProjector
 
 
@@ -46,6 +46,8 @@ class Gemma3Model(MegatronModule):
         language_rope_scaling_factor: float = 8.0,
     ) -> None:
         super().__init__(config=language_transformer_config)
+        assert language_transformer_config.context_parallel_size, "not support context parallel now"
+        assert language_transformer_config.tensor_model_parallel_size, "CLIPViTModel not support tensor parallel now"
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -170,18 +172,14 @@ class Gemma3Model(MegatronModule):
         image_embeddings,
         language_embeddings,
         input_ids,
-        loss_mask,
-        labels,
         use_inference_kv_cache,
-        inference_params,
         image_token_index,
-        num_image_tiles,
     ):
         assert self.add_decoder, "input text preprocessing is only needed for the language model"
         assert input_ids is not None
 
         if image_embeddings is None:
-            return language_embeddings, labels, loss_mask
+            return language_embeddings
 
         # No pre- or postprocessing needed.
         # With pipeline parallel > 2, this means a chunk in the middle of the model.
@@ -190,13 +188,7 @@ class Gemma3Model(MegatronModule):
 
         # If using the inference KV cache, the image tokens are already computed.
         if use_inference_kv_cache:
-            return language_embeddings, loss_mask, labels
-
-        has_labels = labels is not None
-        if has_labels:
-            assert (
-                labels.shape == loss_mask.shape
-            ), f"mismatching labels shape {labels.shape} and loss mask shape {loss_mask.shape}"
+            return language_embeddings
 
         special_image_mask = (input_ids == image_token_index).unsqueeze(-1)
         special_image_mask = special_image_mask.expand_as(language_embeddings)
@@ -207,14 +199,13 @@ class Gemma3Model(MegatronModule):
                                                                  image_embeddings)
         # seq_len x batch x hidden
         language_embeddings = rearrange(language_embeddings, "b s h -> s b h")
-        return language_embeddings, labels, loss_mask
+        return language_embeddings
 
-    def _process_embedding_token_parallel(self, combined_embeddings, new_labels, new_loss_mask,
-                                          packed_seq_params):
+    def _process_embedding_token_parallel(self, combined_embeddings):
         # combined_embeddings: seq-len x batch-size x hidden-dim
         # No pre or post processing needed with PP middle chunks.
         if not self.pre_process and not self.post_process:
-            return combined_embeddings, new_labels, new_loss_mask, packed_seq_params
+            return combined_embeddings
 
         shard_factor = seq_dim = None
         if self.pre_process:
@@ -241,7 +232,7 @@ class Gemma3Model(MegatronModule):
             combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
                 combined_embeddings)  # [S/(CP*TP),B,H]
 
-        return combined_embeddings, new_labels, new_loss_mask, packed_seq_params
+        return combined_embeddings
 
     def forward(
         self,
@@ -250,9 +241,7 @@ class Gemma3Model(MegatronModule):
         position_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
-        loss_mask: Optional[torch.Tensor] = None,
         inference_context: Optional[BaseInferenceContext] = None,
-        num_image_tiles: Optional[List[int]] = None,
         image_token_index: Optional[int] = None,
         runtime_gather_output: Optional[bool] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
@@ -271,9 +260,7 @@ class Gemma3Model(MegatronModule):
                 [batch, 1, 1, combined_seq_len]. NOTE: attention_mask is typically None and
                 attn_mask_type in layer specs determines the attention mask used.
             labels (torch.Tensor): Optional target text labels [batch, combined_seq_len].
-            loss_mask (torch.Tensor): Text loss mask [batch, text_seq_len].
             inference_context (BaseInferenceContext): Inference-time parameters including KV cache.
-            num_image_tiles (list of int): Number of tiles per image. Default 1 tile per image.
             image_token_index (int): ID for input images. Default None means `image_token_index`
                 arg in the constructor will be used.
             runtime_gather_output (bool): Gather output at runtime. Default None means
@@ -285,7 +272,6 @@ class Gemma3Model(MegatronModule):
         Returns:
             output (torch.Tensor): Loss of shape [b, s] if labels are provided,
                 otherwise logits of shape [b, s, vocab_size].
-            loss_mask (torch.Tensor): Loss mask expanded to combined sequence length. Shape [b, s].
         """
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
@@ -329,7 +315,7 @@ class Gemma3Model(MegatronModule):
             image_embeddings = self.encoder_hidden_state
 
         if not self.add_decoder:
-            return image_embeddings, loss_mask
+            return image_embeddings
 
         language_embeddings = None
         if self.pre_process:
@@ -346,27 +332,17 @@ class Gemma3Model(MegatronModule):
                 1, 0
             ).contiguous()  # [b, text_seq_len, h_language]
 
-        # Assume 1 tile per image if the number of tiles is not provided.
-        if num_image_tiles is None and images is not None:
-            num_image_tiles = torch.ones(images.shape[0], dtype=torch.int, device=input_ids.device)
-
-        combined_embeddings, new_labels, new_loss_mask = self._preprocess_data(
+        combined_embeddings = self._preprocess_data(
             image_embeddings,
             language_embeddings,
             input_ids,
-            loss_mask,
-            labels,
             use_inference_kv_cache,
-            inference_context,
             image_token_index,
-            num_image_tiles,
-        )  # [combined_seq_len, b, h_language], [b, combined_seq_len], [b, combined_seq_len]
+        )  # [combined_seq_len, b, h_language]
 
         if self.context_parallel_lm > 1 or self.sequence_parallel_lm:
-            combined_embeddings, new_labels, new_loss_mask, packed_seq_params = (
-                self._process_embedding_token_parallel(
-                    combined_embeddings, new_labels, new_loss_mask, packed_seq_params
-                )
+            combined_embeddings = (
+                self._process_embedding_token_parallel(combined_embeddings)
             )
 
         output = self.language_model(
@@ -374,10 +350,10 @@ class Gemma3Model(MegatronModule):
             position_ids=None,
             attention_mask=attention_mask,
             decoder_input=combined_embeddings,
-            labels=new_labels,
+            labels=labels,
             inference_context=inference_context,
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=packed_seq_params,
         )
 
-        return output, new_loss_mask
+        return output
