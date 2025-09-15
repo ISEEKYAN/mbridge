@@ -1,7 +1,15 @@
 from dataclasses import dataclass
 
+import torch
+
 from megatron.core.transformer import TransformerConfig
-from megatron.training.activations import fast_gelu
+from megatron.core.jit import jit_fuser
+
+
+@jit_fuser
+def fast_gelu(x: torch.Tensor) -> torch.Tensor:
+    return 0.5 * x * (1.0 + torch.tanh(x * 0.7978845608 * (1.0 + 0.044715 * x * x)))
+
 
 @dataclass
 class Gemma3TransformerConfig(TransformerConfig):
