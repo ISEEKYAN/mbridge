@@ -49,7 +49,7 @@ class Bridge(ABC):
         self.config = self._build_config()
         self.safetensor_io = None
 
-        self._adjust_mapping_for_shared_weights(self.hf_config)
+        self._adjust_mapping_for_shared_weights()
 
     def get_model(
         self,
@@ -577,7 +577,7 @@ class Bridge(ABC):
         "output_layer.weight": "lm_head.weight",
     }
 
-    def _adjust_mapping_for_shared_weights(self, hf_config: AutoConfig):
+    def _adjust_mapping_for_shared_weights(self):
         pass
 
     def _get_hf_shared_weight_keys(self) -> list[str]:
