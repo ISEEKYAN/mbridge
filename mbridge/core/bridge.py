@@ -655,9 +655,9 @@ class Bridge(ABC):
         if mcore_weights_name in self._DIRECT_MAPPING:
             return [self._DIRECT_MAPPING[mcore_weights_name]]
 
-        if "self_attention" in mcore_weights_name:
+        if ".self_attention." in mcore_weights_name:
             return self._weight_name_mapping_attention(mcore_weights_name)
-        elif "mlp" in mcore_weights_name:
+        elif ".mlp." in mcore_weights_name:
             return self._weight_name_mapping_mlp(mcore_weights_name)
         else:
             return self._weight_name_mapping_other(mcore_weights_name)
