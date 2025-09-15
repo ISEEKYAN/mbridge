@@ -579,7 +579,7 @@ class Bridge(ABC):
 
     _OTHER_MAPPING = {}
 
-    def _adjust_mapping_for_shared_weights(self, hf_config: AutoConfig):
+    def _adjust_mapping_for_shared_weights(self):
         pass
 
     def _get_hf_shared_weight_keys(self) -> list[str]:

@@ -2,6 +2,7 @@
 # torchrun --nproc_per_node=8 example/gemma3/load_model_and_forward.py --model_path /path/to/model
 
 import argparse
+import requests
 
 import torch
 from megatron.core import parallel_state as mpu
@@ -214,8 +215,10 @@ def main():
 
     print(f"rank{torch.distributed.get_rank()} {hf_model.dtype}: end hf load weight, start forward ...")
 
-    sample = get_sample_for_forward(Image.open("./example/glm4v/australia.jpg"), hf_model_path,
-                                    bridge.hf_config, args.tp)
+    image_url = "https://www.ilankelman.org/stopsigns/australia.jpg"
+    image = Image.open(requests.get(image_url, stream=True).raw)
+    # image = Image.open("../australia.jpg")
+    sample = get_sample_for_forward(image, hf_model_path, bridge.hf_config, args.tp)
 
 
     with torch.no_grad():

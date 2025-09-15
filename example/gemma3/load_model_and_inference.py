@@ -1,6 +1,7 @@
 # torchrun --nproc_per_node=8 example/gemma3/load_model_and_forward.py --model_path /path/to/model
 
 import argparse
+import requests
 
 import torch
 from megatron.core import parallel_state as mpu
@@ -171,7 +172,9 @@ def main():
     print(f"rank{torch.distributed.get_rank()}: end load weight, start forward ...")
 
     # generate
-    image = Image.open("./example/glm4v/australia.jpg")
+    image_url = "https://www.ilankelman.org/stopsigns/australia.jpg"
+    image = Image.open(requests.get(image_url, stream=True).raw)
+    # image = Image.open("../australia.jpg")
     processor = AutoProcessor.from_pretrained(hf_model_path)
     text = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
