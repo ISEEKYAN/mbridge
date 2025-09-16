@@ -49,7 +49,7 @@ class Bridge(ABC):
         self.config = self._build_config()
         self.safetensor_io = None
 
-        self._adjust_mapping_for_shared_weights(self.hf_config)
+        self._adjust_mapping_for_shared_weights()
 
     def get_model(
         self,
@@ -577,7 +577,9 @@ class Bridge(ABC):
         "output_layer.weight": "lm_head.weight",
     }
 
-    def _adjust_mapping_for_shared_weights(self, hf_config: AutoConfig):
+    _OTHER_MAPPING = {}
+
+    def _adjust_mapping_for_shared_weights(self):
         pass
 
     def _get_hf_shared_weight_keys(self, hf_config: AutoConfig) -> list[str]:
@@ -599,6 +601,31 @@ class Bridge(ABC):
         layer_number = name.split(".")[2]
         convert_names = []
         for keyword, mapping_names in self._MLP_MAPPING.items():
+            if keyword in name:
+                convert_names.extend(
+                    [x.format(layer_number=layer_number) for x in mapping_names]
+                )
+                break
+        if len(convert_names) == 0:
+            raise NotImplementedError(f"Unsupported parameter name: {name}")
+        return convert_names
+
+    def _weight_name_mapping_other(self, name: str) -> list[str]:
+        """
+        Map OTHER(In addition to attention/mlp/direct) weight names from MCore to Hugging Face.
+
+        Args:
+            name: MCore weight name
+
+        Returns:
+            list: Corresponding Hugging Face weight names
+
+        Raises:
+            NotImplementedError: If the parameter name is unsupported
+        """
+        layer_number = name.split(".")[2]
+        convert_names = []
+        for keyword, mapping_names in self._OTHER_MAPPING.items():
             if keyword in name:
                 convert_names.extend(
                     [x.format(layer_number=layer_number) for x in mapping_names]
@@ -630,9 +657,7 @@ class Bridge(ABC):
         elif "mlp" in mcore_weights_name:
             return self._weight_name_mapping_mlp(mcore_weights_name)
         else:
-            raise NotImplementedError(
-                f"Unsupported parameter name: {mcore_weights_name}"
-            )
+            return self._weight_name_mapping_other(mcore_weights_name)
 
     def _weight_to_hf_format(
         self, mcore_weights_name: str, mcore_weights: torch.Tensor
