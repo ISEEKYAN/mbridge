@@ -267,7 +267,7 @@ class Bridge(ABC):
                 self.safetensor_io.save_hf_weight(
                     per_tensor_generator,
                     weights_path,
-                    self._get_hf_shared_weight_keys(self.hf_config),
+                    self._get_hf_shared_weight_keys(),
                 )
             self.safetensor_io.save_index(weights_path)
             self.hf_config.save_pretrained(weights_path)
@@ -582,7 +582,7 @@ class Bridge(ABC):
     def _adjust_mapping_for_shared_weights(self):
         pass
 
-    def _get_hf_shared_weight_keys(self, hf_config: AutoConfig) -> list[str]:
+    def _get_hf_shared_weight_keys(self) -> list[str]:
         return []
 
     def _weight_name_mapping_mlp(self, name: str) -> list[str]:
