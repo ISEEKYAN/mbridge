@@ -31,6 +31,9 @@ def main():
     parser.add_argument(
         "--model_path", type=str, required=True, help="HuggingFace model path"
     )
+    parser.add_argument(
+        "--trust_remote_code", action="store_true", help="Trust remote code"
+    )
     args = parser.parse_args()
 
     # Initialize distributed environment
@@ -38,7 +41,7 @@ def main():
 
     # Load model
     hf_model_path = args.model_path
-    bridge = AutoBridge.from_pretrained(hf_model_path)
+    bridge = AutoBridge.from_pretrained(hf_model_path, trust_remote_code=args.trust_remote_code)
     model = bridge.get_model()
     bridge.load_weights(model, hf_model_path)
     print(f"Model loaded: {args.model_path}")

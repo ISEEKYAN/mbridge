@@ -134,6 +134,9 @@ class Bridge(ABC):
 
     def _get_safetensor_io(self, weights_path: str):
         return SafeTensorIO(self._get_actual_hf_path(weights_path))
+    
+    def _get_mcore_config_by_name(self, mcore_weights_name: str):
+        return self.config
 
     def load_weights(
         self,
@@ -652,9 +655,9 @@ class Bridge(ABC):
         if mcore_weights_name in self._DIRECT_MAPPING:
             return [self._DIRECT_MAPPING[mcore_weights_name]]
 
-        if "self_attention" in mcore_weights_name:
+        if ".self_attention." in mcore_weights_name:
             return self._weight_name_mapping_attention(mcore_weights_name)
-        elif "mlp" in mcore_weights_name:
+        elif ".mlp." in mcore_weights_name:
             return self._weight_name_mapping_mlp(mcore_weights_name)
         else:
             return self._weight_name_mapping_other(mcore_weights_name)
@@ -826,6 +829,10 @@ class Bridge(ABC):
             "linear_fc1.weight" in mcore_weights_name
             or "linear_fc1.bias" in mcore_weights_name
         ):
+            mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
+            if not mcore_config.gated_linear_unit:
+                return torch.cat(mcore_weights, dim=0)
+
             # if the tensor is gate and proj
             gate_lst = []
             up_lst = []
@@ -877,6 +884,10 @@ class Bridge(ABC):
             "linear_fc1.weight" in mcore_weights_name
             or "linear_fc1.bias" in mcore_weights_name
         ):
+            mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
+            if not mcore_config.gated_linear_unit:
+                return mcore_weights.chunk(tp_split_size)
+
             gate, up = mcore_weights.chunk(2)
             gates = gate.chunk(tp_split_size)
             ups = up.chunk(tp_split_size)
