@@ -1,3 +1,6 @@
+# Important
+[Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge) is the official NVIDIA maintained version, we will migrate to Megatron-Bridge soon.
+
 # MBridge: Bridge Megatron-Core to Hugging Face/Reinforcement Learning
 
 MBridge provides a seamless bridge between Hugging Face models and Megatron-Core's optimized implementation for efficient distributed training and inference. It also offers necessary tools and processes for integrating Reinforcement Learning (RL) with Megatron.
