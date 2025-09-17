@@ -194,8 +194,8 @@ class Bridge(ABC):
                     mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
                 else:
                     mcore_weight = None
-                if hf_names[0] == "lm_head.weight":
-                    if param.shape[0] == 1 and mcore_weight.shape[0] != 1:
+                if hf_names[0] in {"lm_head.weight", "model.embed_tokens.weight"}:
+                    if param.shape[0] == 1 and (mcore_weight is None or mcore_weight.shape[0] != 1):
                         # skip lm_head.weight when the model is a value model
                         continue
 
