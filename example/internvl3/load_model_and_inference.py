@@ -6,6 +6,9 @@ import torch
 from megatron.core import parallel_state as mpu
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from transformers import AutoModel
+from megatron.core.tensor_parallel.mappings import (
+    gather_from_tensor_model_parallel_region,
+)
 
 from mbridge import AutoBridge
 
@@ -87,7 +90,7 @@ def main():
     generated_tokens = []
     max_new_tokens = 1000
     from tqdm import trange
-    for _ in trange(max_new_tokens):
+    for _ in trange(max_new_tokens, disable=(mpu.get_tensor_model_parallel_rank() == 0)):
         with torch.no_grad():
             megatron_output = model[0](
                 images=sample["pixel_values"],
@@ -96,6 +99,8 @@ def main():
                 attention_mask=None,
                 image_token_index=sample["img_context_token_id"],
             )
+            if mpu.get_tensor_model_parallel_world_size() > 1:
+                megatron_output = gather_from_tensor_model_parallel_region(megatron_output)
         # Get the next token
         next_token = megatron_output[:, -1, :].argmax(dim=-1)[0].item()
         generated_tokens.append(next_token)
@@ -115,12 +120,14 @@ def main():
     )
     hf_text = sample["tokenizer"].decode(hf_output[0], skip_special_tokens=True)
 
-    print('*' * 10 + " megatron-lm generate text" + '*' * 10)
-    print(f"{mlm_text}")
-    print(f"\n ------ vs ------ \n")
-    print('*' * 10 + " transformers generate text" + '*' * 10)
-    print(f"{hf_text}")
-    print('*' * 100)
+    torch.distributed.barrier()
+    if torch.distributed.get_rank() == 0:
+        print('*' * 10 + " megatron-lm generate text" + '*' * 10)
+        print(f"{mlm_text}")
+        print(f"\n ------ vs ------ \n")
+        print('*' * 10 + " transformers generate text" + '*' * 10)
+        print(f"{hf_text}")
+        print('*' * 100)
 
     torch.distributed.barrier()
     # torch.distributed.destroy_process_group()

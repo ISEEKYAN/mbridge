@@ -1,10 +1,11 @@
 import os
+import requests
 
 import torch
 import torchvision.transforms as T
 from PIL import Image
 from torchvision.transforms.functional import InterpolationMode
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoTokenizer
 
 from conversation import get_conv_template
 
@@ -87,10 +88,18 @@ def load_image(image, input_size=448, max_num=12):
 def get_infer_data(hf_model, hf_path):
     tokenizer = AutoTokenizer.from_pretrained(hf_path, trust_remote_code=True, use_fast=False)
 
+    try:
+        image_url = "https://www.ilankelman.org/stopsigns/australia.jpg"
+        image = Image.open(requests.get(image_url, stream=True, timeout=5).raw)
+    except:
+        if os.path.exists("../australia.jpg"):
+            image = Image.open("../australia.jpg")
+        else:
+            print("Your machine needs to be able to download images" +
+                  "or download the images to your machine first")
+            raise FileNotFoundError
+
     # set the max number of tiles in `max_num`
-    # image_url = "https://www.ilankelman.org/stopsigns/australia.jpg"
-    # image = Image.open(requests.get(image_url, stream=True).raw)
-    image = Image.open("../australia.jpg")
     pixel_values = load_image(image, max_num=12).to(torch.bfloat16).cuda()
 
     # single-image single-round conversation

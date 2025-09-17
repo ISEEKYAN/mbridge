@@ -13,16 +13,15 @@ export HF_DATASETS_OFFLINE=1
 export GLOO_SOCKET_IFNAME=bond1
 export NCCL_SOCKET_IFNAME=bond1
 
-export CUDA_VISIBLE_DEVICES=1
-readonly GPUS_PER_NODE=1
+readonly GPUS_PER_NODE=2
 readonly NODE_RANK="${OMPI_COMM_WORLD_RANK:-0}"
 readonly NNODES="${OMPI_COMM_WORLD_SIZE:-1}"
 readonly WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
 readonly MASTER_PORT=65535
 export MASTER_ADDR="${_MASTER_ADDR:-localhost}"
 
-# only support tp=1/pp=1/cp=1 for demo
-readonly TP_SIZE=1
+# only support tp for demo
+readonly TP_SIZE=2
 readonly PP_SIZE=1
 readonly CP_SIZE=1
 

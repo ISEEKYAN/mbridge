@@ -4,9 +4,13 @@
 import argparse
 
 import torch
+from transformers import AutoModel
+
 from megatron.core import parallel_state as mpu
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from transformers import AutoModel
+from megatron.core.tensor_parallel.mappings import (
+    gather_from_tensor_model_parallel_region,
+)
 
 from mbridge import AutoBridge
 
@@ -96,6 +100,21 @@ def main():
     bridge.load_weights(model, hf_model_path, memory_efficient=True)
     print(f"rank{torch.distributed.get_rank()}: end load weight, start forward ...")
 
+    # check the export
+    keys = bridge.safetensor_io.load_hf_weight_names()
+    loaded_keys = set()
+    # export weights
+    for k, v in bridge.export_weights(model):
+        gt = bridge.safetensor_io.load_one_hf_weight(k).cuda()
+        assert v.shape == gt.shape, f"mismatch of {k}"
+        assert torch.equal(v, gt), f"mismatch of {k}"
+        loaded_keys.add(k)
+
+    missing_keys = set(keys) - loaded_keys
+    missing_keys = sorted(list(missing_keys))
+    assert len(missing_keys) == 0
+    print(f"missing keys: {missing_keys}")
+
     # load hf model
     hf_model = AutoModel.from_pretrained(
         hf_model_path,
@@ -127,6 +146,8 @@ def main():
             attention_mask=None,
             image_token_index=sample["img_context_token_id"],
         )
+        if mpu.get_tensor_model_parallel_world_size() > 1:
+            megatron_output = gather_from_tensor_model_parallel_region(megatron_output)
 
         cos_similarity(hf_output.logits, megatron_output)
 

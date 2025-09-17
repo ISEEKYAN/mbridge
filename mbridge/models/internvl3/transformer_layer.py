@@ -21,6 +21,7 @@ from megatron.core.extensions.transformer_engine import (
 from megatron.core.tensor_parallel.layers import ColumnParallelLinear, RowParallelLinear
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
 from megatron.core.transformer.dot_product_attention import DotProductAttention
+from megatron.core.transformer.identity_op import IdentityOp
 
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
@@ -182,46 +183,35 @@ class Internvl2bVitTransformerLayer(TransformerLayer):
         return output, context
 
 
-def get_mlp_module_spec(use_te: bool = True) -> ModuleSpec:
+def get_mlp_module_spec() -> ModuleSpec:
     # Dense MLP w/ or w/o TE modules.
     return ModuleSpec(
         module=MLP,
         submodules=MLPSubmodules(
-            linear_fc1=TEColumnParallelLinear if use_te else ColumnParallelLinear,
-            linear_fc2=TERowParallelLinear if use_te else RowParallelLinear,
+            linear_fc1=TELayerNormColumnParallelLinear,
+            linear_fc2=TERowParallelLinear,
         ),
     )
 
 
-def get_internvl2b_vit_layer_specs(use_te) -> ModuleSpec:
-    mlp = get_mlp_module_spec(use_te)
+def get_internvl2b_vit_layer_specs() -> ModuleSpec:
+    mlp = get_mlp_module_spec()
 
     return ModuleSpec(
         module=Internvl2bVitTransformerLayer,
         submodules=TransformerLayerSubmodules(
-            input_layernorm=LNImpl,
             self_attention=ModuleSpec(
                 module=SelfAttention,
                 params={"attn_mask_type": AttnMaskType.no_mask},
                 submodules=SelfAttentionSubmodules(
-                    linear_qkv=TEColumnParallelLinear if use_te else ColumnParallelLinear,
-                    core_attention=TEDotProductAttention if use_te else DotProductAttention,
-                    linear_proj=TERowParallelLinear if use_te else RowParallelLinear,
-                    q_layernorm=None,
-                    k_layernorm=None,
+                    linear_qkv=TELayerNormColumnParallelLinear,
+                    core_attention=TEDotProductAttention,
+                    linear_proj=TERowParallelLinear,
                 ),
             ),
             self_attn_bda=get_bias_dropout_add,
-            pre_mlp_layernorm=LNImpl,
+            pre_mlp_layernorm=IdentityOp,
             mlp=mlp,
             mlp_bda=get_bias_dropout_add,
         ),
-    )
-
-
-def get_norm_mlp_module_spec_te() -> ModuleSpec:
-    return ModuleSpec(
-        module=MLP,
-        submodules=MLPSubmodules(linear_fc1=TELayerNormColumnParallelLinear,
-                                 linear_fc2=TERowParallelLinear),
     )

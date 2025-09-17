@@ -138,6 +138,15 @@ class Gemma3Bridge(VLMBridge):
         if getattr(self.hf_config, "tie_word_embeddings", False):
             return ["language_model.model.embed_tokens.weight"]
         return []
+    
+    def _get_mcore_config_by_name(self, mcore_weights_name: str):
+        if "vision_projection." in mcore_weights_name:
+            assert hasattr(self, "vision_projection_config")
+            return self.vision_projection_config
+        if "vision_model." in mcore_weights_name:
+            assert hasattr(self, "vision_config")
+            return self.vision_config
+        return self.config
 
     def _weight_name_mapping_attention(self, name: str) -> list[str]:
         split_name = name.split(".")
@@ -398,6 +407,9 @@ class Gemma3Bridge(VLMBridge):
             vision_projection_config.recompute_granularity = None
             vision_projection_config.recompute_method = None
             vision_projection_config.recompute_num_layers = None
+
+            setattr(self, "vision_config", vision_config)
+            setattr(self, "vision_projection_config", vision_projection_config)
 
             model = Gemma3Model(
                 language_transformer_config=self.config,

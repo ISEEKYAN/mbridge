@@ -1,15 +1,21 @@
 # torchrun --nproc_per_node=8 example/gemma3/load_model_and_forward.py --model_path /path/to/model
 
+import os
 import argparse
 import requests
 
 import torch
+from PIL import Image
+from transformers import AutoProcessor
+
 from megatron.core import parallel_state as mpu
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from PIL import Image
-from transformers import AutoModelForImageTextToText, AutoProcessor
+from megatron.core.tensor_parallel.mappings import (
+    gather_from_tensor_model_parallel_region,
+)
 
 from mbridge import AutoBridge
+
 
 messages = [
     {
@@ -172,9 +178,16 @@ def main():
     print(f"rank{torch.distributed.get_rank()}: end load weight, start forward ...")
 
     # generate
-    image_url = "https://www.ilankelman.org/stopsigns/australia.jpg"
-    image = Image.open(requests.get(image_url, stream=True).raw)
-    # image = Image.open("../australia.jpg")
+    try:
+        image_url = "https://www.ilankelman.org/stopsigns/australia.jpg"
+        image = Image.open(requests.get(image_url, stream=True, timeout=5).raw)
+    except:
+        if os.path.exists("../australia.jpg"):
+            image = Image.open("../australia.jpg")
+        else:
+            print("Your machine needs to be able to download images" +
+                  "or download the images to your machine first")
+            raise FileNotFoundError
     processor = AutoProcessor.from_pretrained(hf_model_path)
     text = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
@@ -203,6 +216,8 @@ def main():
                 attention_mask=(sample["attn_mask"], sample["sliding_window_attention_mask"]),
                 image_token_index=image_token_id,
             )
+            if mpu.get_tensor_model_parallel_world_size() > 1:
+                megatron_output = gather_from_tensor_model_parallel_region(megatron_output)
         # Get the next token
         next_token = megatron_output[:, len(input_ids) - 1, :].argmax(dim=-1)[0].item()
         generated_tokens.append(next_token)
@@ -211,8 +226,10 @@ def main():
         if next_token == eos_token_id:
             break
 
-    generated_text = processor.decode(generated_tokens, skip_special_tokens=False)
-    print(f"Generated text:\n{generated_text}")
+    torch.distributed.barrier()
+    if torch.distributed.get_rank() == 0:
+        generated_text = processor.decode(generated_tokens, skip_special_tokens=False)
+        print(f"Generated text:\n{generated_text}")
     torch.distributed.barrier()
     # torch.distributed.destroy_process_group()
 

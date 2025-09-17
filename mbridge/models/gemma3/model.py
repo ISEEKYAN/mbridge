@@ -46,8 +46,7 @@ class Gemma3Model(MegatronModule):
         language_rope_scaling_factor: float = 8.0,
     ) -> None:
         super().__init__(config=language_transformer_config)
-        assert language_transformer_config.context_parallel_size, "not support context parallel now"
-        assert language_transformer_config.tensor_model_parallel_size, "CLIPViTModel not support tensor parallel now"
+        assert language_transformer_config.context_parallel_size == 1, "not support context parallel now"
 
         self.pre_process = pre_process
         self.post_process = post_process

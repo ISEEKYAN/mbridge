@@ -15,7 +15,7 @@ from mbridge.models.internvl3.transformer_config import (
 )
 from mbridge.models.internvl3.transformer_layer import (
     get_internvl2b_vit_layer_specs,
-    get_norm_mlp_module_spec_te,
+    get_mlp_module_spec,
 )
 
 
@@ -81,6 +81,12 @@ class InternVL3Bridge(VLMBridge):
         "vision_model.decoder.layers.{layer_number}.self_attention.linear_proj.bias": [
             "vision_model.encoder.layers.{layer_number}.attn.proj.bias",
         ],
+        "vision_model.decoder.layers.{layer_number}.self_attention.linear_qkv.layer_norm_weight": [
+            "vision_model.encoder.layers.{layer_number}.norm1.weight",
+        ],
+        "vision_model.decoder.layers.{layer_number}.self_attention.linear_qkv.layer_norm_bias": [
+            "vision_model.encoder.layers.{layer_number}.norm1.bias",
+        ],
     }
 
     _MLP_MAPPING = {
@@ -108,6 +114,12 @@ class InternVL3Bridge(VLMBridge):
         "vision_model.decoder.layers.{layer_number}.mlp.linear_fc1.bias": [
             "vision_model.encoder.layers.{layer_number}.mlp.fc1.bias",
         ],
+        "vision_model.decoder.layers.{layer_number}.mlp.linear_fc1.layer_norm_weight": [
+            "vision_model.encoder.layers.{layer_number}.norm2.weight"
+        ],
+        "vision_model.decoder.layers.{layer_number}.mlp.linear_fc1.layer_norm_bias": [
+            "vision_model.encoder.layers.{layer_number}.norm2.bias",
+        ],
     }
 
     _OTHER_MAPPING = {
@@ -115,15 +127,6 @@ class InternVL3Bridge(VLMBridge):
         ["vision_model.encoder.layers.{layer_number}.ls1"],
         "vision_model.decoder.layers.{layer_number}.ls2":
         ["vision_model.encoder.layers.{layer_number}.ls2"],
-        # TODO: merge to the linear
-        "vision_model.decoder.layers.{layer_number}.input_layernorm.weight":
-        ["vision_model.encoder.layers.{layer_number}.norm1.weight"],
-        "vision_model.decoder.layers.{layer_number}.input_layernorm.bias":
-        ["vision_model.encoder.layers.{layer_number}.norm1.bias"],
-        "vision_model.decoder.layers.{layer_number}.pre_mlp_layernorm.weight":
-        ["vision_model.encoder.layers.{layer_number}.norm2.weight"],
-        "vision_model.decoder.layers.{layer_number}.pre_mlp_layernorm.bias":
-        ["vision_model.encoder.layers.{layer_number}.norm2.bias"],
     }
 
     def _adjust_mapping_for_shared_weights(self):
@@ -134,6 +137,15 @@ class InternVL3Bridge(VLMBridge):
         if getattr(self.hf_config, "tie_word_embeddings", False):
             return ["language_model.model.embed_tokens.weight"]
         return []
+
+    def _get_mcore_config_by_name(self, mcore_weights_name: str):
+        if "vision_projection." in mcore_weights_name:
+            assert hasattr(self, "vision_projection_config")
+            return self.vision_projection_config
+        if "vision_model." in mcore_weights_name:
+            assert hasattr(self, "vision_config")
+            return self.vision_config
+        return self.config
 
     def _weight_name_mapping_attention(self, name: str) -> list[str]:
         split_name = name.split(".")
@@ -412,17 +424,20 @@ class InternVL3Bridge(VLMBridge):
             transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
             self.config.activation_func = torch.nn.functional.silu
 
-            vision_transformer_layer_spec = get_internvl2b_vit_layer_specs(use_te=True)
+            vision_transformer_layer_spec = get_internvl2b_vit_layer_specs()
             vision_config = deepcopy(self.config)
             vision_config = get_vision_model_config(vision_config)
             vision_config.pipeline_model_parallel_size = 1
             vision_config.num_layers_in_first_pipeline_stage = None
             vision_config.num_layers_in_last_pipeline_stage = None
 
-            vision_projection_layer_spec = get_norm_mlp_module_spec_te().submodules
+            vision_projection_layer_spec = get_mlp_module_spec().submodules
             vision_projection_config = deepcopy(self.config)
             vision_projection_config = get_vision_projection_config(vision_projection_config)
             vision_projection_config.pipeline_model_parallel_size = 1
+
+            setattr(self, "vision_config", vision_config)
+            setattr(self, "vision_projection_config", vision_projection_config)
 
             model = InternVLModel(
                 language_transformer_config=self.config,
