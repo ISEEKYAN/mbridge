@@ -188,7 +188,7 @@ class InternVLModel(MegatronModule):
                 input_ids=input_ids,
                 position_ids=None  # NOTE: disable
             ).clone()  # [text_seq_len, b, h_language]
-            
+
             if vision_embeds is not None:
                 language_embeddings = language_embeddings.transpose(0, 1).contiguous()
                 B, N, C = language_embeddings.shape
@@ -203,6 +203,10 @@ class InternVLModel(MegatronModule):
                 language_embeddings = language_embeddings.transpose(0, 1).contiguous()
         else:
             language_embeddings = None
+
+        if self.config.sequence_parallel and self.pre_process:
+            language_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
+                language_embeddings)  # [S/TP,B,H]
 
         output = self.language_model(
             input_ids=None,

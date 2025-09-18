@@ -1,9 +1,8 @@
-import re
+import math
 from copy import deepcopy
-from typing import Callable, Generator, Optional
+from typing import Callable, Optional
 
 import torch
-from transformers import AutoConfig
 
 from mbridge.core import VLMBridge, register_model
 from mbridge.core.util import unwrap_model
@@ -223,12 +222,23 @@ class InternVL3Bridge(VLMBridge):
                     vision_head_dim,
                     vision_hidden_size,
                 ).transpose(0, 1).reshape(-1, vision_hidden_size).contiguous()
+
             if '.attn.qkv.bias' in hf_names[0]:
                 mcore_weights = mcore_weights.view(
                     vision_num_query_groups,
                     3,
                     -1,
                 ).transpose(0, 1).reshape(-1).contiguous()
+
+            # pad embeding and output layer
+            if self.make_vocab_size_divisible_by is not None and \
+                ("embedding.word_embeddings.weight" in mcore_weights_name or \
+                 "output_layer.weight" in mcore_weights_name):
+                assert mcore_weights.shape[0] == self.padded_vocab_size
+                assert self.vocab_size is not None
+
+                return [hf_names[0]], [mcore_weights[:self.vocab_size]]
+
             return [hf_names[0]], [mcore_weights]
 
         if (
@@ -309,12 +319,27 @@ class InternVL3Bridge(VLMBridge):
                     vision_head_dim,
                     vision_hidden_size,
                 ).transpose(0, 1).flatten(1, 2).reshape(-1, vision_hidden_size).contiguous()
+
             if '.attn.qkv.bias' in hf_names[0]:
                 return hf_weights[0].view(
                     3,
                     vision_num_query_groups,
                     -1,
                 ).transpose(0, 1).flatten(1, 2).view(-1).contiguous()
+            # pad embeding and output layer
+            if self.make_vocab_size_divisible_by is not None and \
+                ("embedding.word_embeddings.weight" in mcore_weights_name or \
+                 "output_layer.weight" in mcore_weights_name):
+                assert hf_weights[0].shape[0] == self.vocab_size
+                assert self.padded_vocab_size is not None
+
+                embed_dim = hf_weights[0].shape[1]
+                extra_zeros = torch.zeros(
+                    (self.padded_vocab_size - self.vocab_size, embed_dim),
+                    device=hf_weights[0].device,
+                    dtype=hf_weights[0].dtype,
+                )
+                return torch.cat((hf_weights[0], extra_zeros), dim=0)
 
             return hf_weights[0]
 
@@ -418,6 +443,10 @@ class InternVL3Bridge(VLMBridge):
         share_embeddings_and_output_weights = getattr(
             self.hf_config.llm_config, "tie_word_embeddings", False
         )
+        assert self.hf_config.llm_config.model_type == "qwen2", \
+            f"only support the qwen2 llm, now is {self.hf_config.llm_config.model_type}"
+        assert self.hf_config.vision_config.num_hidden_layers == 24, \
+            f"only support InternViT-300M-448px-V2_5"
 
         def provider(pre_process, post_process, vp_stage: Optional[int] = None):
             assert vp_stage is None, "not support vpp now"
@@ -438,11 +467,17 @@ class InternVL3Bridge(VLMBridge):
 
             setattr(self, "vision_config", vision_config)
             setattr(self, "vision_projection_config", vision_projection_config)
+            self.vocab_size = self.hf_config.llm_config.vocab_size
+            self.padded_vocab_size = self.vocab_size
+            if self.make_vocab_size_divisible_by is not None:
+                self.padded_vocab_size = int(
+                    math.ceil(self.vocab_size / self.make_vocab_size_divisible_by) *
+                    self.make_vocab_size_divisible_by)
 
             model = InternVLModel(
                 language_transformer_config=self.config,
                 language_transformer_layer_spec=transformer_layer_spec,
-                language_vocab_size=self.hf_config.llm_config.vocab_size,
+                language_vocab_size=self.padded_vocab_size,
                 language_max_sequence_length=self.hf_config.llm_config.max_position_embeddings,
                 vision_transformer_config=vision_config,
                 vision_transformer_layer_spec=vision_transformer_layer_spec,

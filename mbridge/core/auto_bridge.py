@@ -11,7 +11,7 @@ class AutoBridge:
     """
 
     @classmethod
-    def from_pretrained(cls, hf_model_path, trust_remote_code=False) -> Bridge:
+    def from_pretrained(cls, hf_model_path, trust_remote_code=False, **kwargs) -> Bridge:
         """
         Loads the appropriate bridge class from a pretrained model path.
 
@@ -25,10 +25,10 @@ class AutoBridge:
             hf_model_path, trust_remote_code=trust_remote_code
         )
 
-        return cls.from_config(config)
+        return cls.from_config(config, **kwargs)
 
     @classmethod
-    def from_config(cls, hf_config: AutoConfig) -> Bridge:
+    def from_config(cls, hf_config: AutoConfig, **kwargs) -> Bridge:
         """
         Loads the appropriate bridge class from a Hugging Face configuration.
 
@@ -43,7 +43,7 @@ class AutoBridge:
         """
         model_type = hf_config.model_type
         if model_type in _MODEL_REGISTRY:
-            return _MODEL_REGISTRY[model_type](hf_config)
+            return _MODEL_REGISTRY[model_type](hf_config, **kwargs)
         else:
             raise ValueError(
                 f"Unregistered model type: {model_type}, now only support {_MODEL_REGISTRY.keys()}"
