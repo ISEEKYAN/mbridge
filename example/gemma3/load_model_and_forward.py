@@ -210,7 +210,8 @@ def main():
     hf_model_path = args.model_path
     print(f"rank{torch.distributed.get_rank()}: start loading model ...")
     bridge = AutoBridge.from_pretrained(hf_model_path)
-    # set sequence_parallel = False for forward
+    # if sample["input_ids"].shape[-1] % 2 == 0, 
+    # bridge.config.sequence_parallel can be Trueu
     bridge.config.sequence_parallel = False
     model = bridge.get_model()
     bridge.load_weights(model, hf_model_path, memory_efficient=True)
