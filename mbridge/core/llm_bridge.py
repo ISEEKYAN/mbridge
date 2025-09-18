@@ -1,6 +1,7 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 import inspect
 from typing import Callable, Generator, Optional
+import math
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
@@ -167,6 +168,15 @@ class LLMBridge(Bridge):
             gptmodel_args = self._get_gptmodel_args()
             if vp_stage is not None and self.has_vp_stage:
                 gptmodel_args["vp_stage"] = vp_stage
+            # add pad vocab_size
+            self.vocab_size = gptmodel_args["vocab_size"]
+            self.padded_vocab_size = self.vocab_size
+            if self.make_vocab_size_divisible_by is not None:
+                self.padded_vocab_size = int(
+                    math.ceil(self.vocab_size / self.make_vocab_size_divisible_by) *
+                    self.make_vocab_size_divisible_by)
+            gptmodel_args["vocab_size"] = self.padded_vocab_size
+
             model = GPTModel(
                 config=self.config,
                 transformer_layer_spec=transformer_layer_spec,

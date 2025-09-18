@@ -121,9 +121,5 @@ def main():
     )
 
 
-# PYTHONPATH=../Megatron-LM/:$PYTHONPATH python \
-#     example/0.load_model_and_generate_single_gpu.py \
-#     --model_path ../hf-hub/google/gemma-3-4b-it \
-#     --max_tokens 4096
 if __name__ == "__main__":
     main()

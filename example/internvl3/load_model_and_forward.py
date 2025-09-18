@@ -93,7 +93,9 @@ def main():
     # Load megatron model
     hf_model_path = args.model_path
     print(f"rank{torch.distributed.get_rank()}: start loading model ...")
-    bridge = AutoBridge.from_pretrained(hf_model_path, trust_remote_code=True)
+    bridge = AutoBridge.from_pretrained(hf_model_path,
+                                        trust_remote_code=True,
+                                        make_vocab_size_divisible_by=256)
     # set sequence_parallel = False for forward
     bridge.config.sequence_parallel = False
     model = bridge.get_model()
@@ -149,7 +151,7 @@ def main():
         if mpu.get_tensor_model_parallel_world_size() > 1:
             megatron_output = gather_from_tensor_model_parallel_region(megatron_output)
 
-        cos_similarity(hf_output.logits, megatron_output)
+        cos_similarity(hf_output.logits, megatron_output[:, :, :bridge.vocab_size])
 
     torch.distributed.barrier()
     torch.distributed.destroy_process_group()

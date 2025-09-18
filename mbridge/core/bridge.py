@@ -31,6 +31,7 @@ class Bridge(ABC):
         hf_config: AutoConfig,
         dtype: torch.dtype = torch.bfloat16,
         parallel_states: ParallelStates = None,
+        make_vocab_size_divisible_by: int = None
     ):
         """
         Initialize a bridge instance.
@@ -50,6 +51,11 @@ class Bridge(ABC):
         self.safetensor_io = None
 
         self._adjust_mapping_for_shared_weights()
+        # Pad the vocab size to be divisible by this value.
+        # This is added for computational efficieny reasons.
+        self.make_vocab_size_divisible_by = make_vocab_size_divisible_by
+        self.vocab_size = None
+        self.padded_vocab_size = None
 
     def get_model(
         self,
@@ -134,7 +140,7 @@ class Bridge(ABC):
 
     def _get_safetensor_io(self, weights_path: str):
         return SafeTensorIO(self._get_actual_hf_path(weights_path))
-    
+
     def _get_mcore_config_by_name(self, mcore_weights_name: str):
         return self.config
 
@@ -683,7 +689,17 @@ class Bridge(ABC):
         """
         hf_names = self._weight_name_mapping_mcore_to_hf(mcore_weights_name)
         if len(hf_names) == 1:
+            # pad embeding and output layer
+            if self.make_vocab_size_divisible_by is not None and \
+                ("embedding.word_embeddings.weight" in mcore_weights_name or \
+                 "output_layer.weight" in mcore_weights_name):
+                assert mcore_weights.shape[0] == self.padded_vocab_size
+                assert self.vocab_size is not None
+
+                return [hf_names[0]], [mcore_weights[:self.vocab_size]]
+
             return [hf_names[0]], [mcore_weights]
+
         if (
             "self_attention.linear_qkv." in mcore_weights_name
             and "layer_norm" not in mcore_weights_name
@@ -755,7 +771,23 @@ class Bridge(ABC):
             ]
 
         if len(hf_weights) == 1:
+            # pad embeding and output layer
+            if self.make_vocab_size_divisible_by is not None and \
+                ("embedding.word_embeddings.weight" in mcore_weights_name or \
+                 "output_layer.weight" in mcore_weights_name):
+                assert hf_weights[0].shape[0] == self.vocab_size
+                assert self.padded_vocab_size is not None
+
+                embed_dim = hf_weights[0].shape[1]
+                extra_zeros = torch.zeros(
+                    (self.padded_vocab_size - self.vocab_size, embed_dim),
+                    device=hf_weights[0].device,
+                    dtype=hf_weights[0].dtype,
+                )
+                return torch.cat((hf_weights[0], extra_zeros), dim=0)
+
             return hf_weights[0]
+
         if (
             "self_attention.linear_qkv." in mcore_weights_name
             and "layer_norm" not in mcore_weights_name

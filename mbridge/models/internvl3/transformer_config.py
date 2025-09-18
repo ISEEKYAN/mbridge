@@ -44,4 +44,5 @@ def get_vision_projection_config(config: InternvlTransformerConfig):
     config.add_bias_linear = True
     config.normalization = 'LayerNorm'
     config.layernorm_epsilon = 1e-5
+    config.sequence_parallel = False
     return config
