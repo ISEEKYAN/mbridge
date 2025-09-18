@@ -7,84 +7,85 @@ from transformers import AutoConfig
 
 from mbridge.core import VLMBridge, register_model
 from mbridge.core.util import unwrap_model
-from mbridge.models.gemma3.model import Gemma3Model
-from mbridge.models.gemma3.transformer_config import (
-    Gemma3TransformerConfig,
+from mbridge.models.internvl3.model import InternVLModel
+from mbridge.models.internvl3.transformer_config import (
+    InternvlTransformerConfig,
     get_vision_model_config,
     get_vision_projection_config,
 )
-from mbridge.models.gemma3.transformer_layer import (
-    get_gemma3_layer_spec_te,
-    get_layer_spec_te
+from mbridge.models.internvl3.transformer_layer import (
+    get_internvl2b_vit_layer_specs,
+    get_mlp_module_spec,
 )
-from mbridge.models.gemma3.projector import get_projector_module_spec_te
 
 
-@register_model("gemma3")
-class Gemma3Bridge(VLMBridge):
+
+@register_model("internvl_chat")
+class InternVL3Bridge(VLMBridge):
     """
-    Bridge implementation for Gemma3 models.
+    Bridge implementation for InternVL3 models.
 
     This class extends LLMBridge to provide specific configurations and
-    optimizations for Gemma3 models, handling the conversion between
-    Hugging Face Gemma3 format and Megatron-Core.
+    optimizations for InternVL3 models, handling the conversion between
+    Hugging Face InternVL3 format and Megatron-Core.
     """
-    TransformerConfigClass = Gemma3TransformerConfig
+    TransformerConfigClass = InternvlTransformerConfig
 
     _DIRECT_MAPPING = {
+        # vision embedding
+        "vision_model.position_embedding": "vision_model.embeddings.position_embedding",
+        "vision_model.class_token": "vision_model.embeddings.class_embedding",
+        "vision_model.conv1.weight": "vision_model.embeddings.patch_embedding.weight",
+        "vision_model.conv1.bias": "vision_model.embeddings.patch_embedding.bias",
+        # projector
+        "vision_projection.encoder.linear_fc1.layer_norm_weight": "mlp1.0.weight",
+        "vision_projection.encoder.linear_fc1.layer_norm_bias": "mlp1.0.bias",
+        "vision_projection.encoder.linear_fc1.weight": "mlp1.1.weight",
+        "vision_projection.encoder.linear_fc1.bias": "mlp1.1.bias",
+        "vision_projection.encoder.linear_fc2.weight": "mlp1.3.weight",
+        "vision_projection.encoder.linear_fc2.bias": "mlp1.3.bias",
+        # llm
         "language_model.embedding.word_embeddings.weight": "language_model.model.embed_tokens.weight",
         "language_model.decoder.final_layernorm.weight": "language_model.model.norm.weight",
-        "language_model.output_layer.weight": "lm_head.weight",
-        "vision_model.position_embeddings.weight": "vision_tower.vision_model.embeddings.position_embedding.weight",
-        "vision_model.conv1.weight": "vision_tower.vision_model.embeddings.patch_embedding.weight",
-        "vision_model.conv1.bias": "vision_tower.vision_model.embeddings.patch_embedding.bias",
-        "vision_model.ln_post.weight": "vision_tower.vision_model.post_layernorm.weight",
-        "vision_model.ln_post.bias": "vision_tower.vision_model.post_layernorm.bias",
-        "vision_projection.mm_input_projection.layer_norm_weight": "multi_modal_projector.mm_soft_emb_norm.weight",
-        "vision_projection.mm_input_projection.weight": "multi_modal_projector.mm_input_projection_weight",
+        "language_model.output_layer.weight": "language_model.lm_head.weight",
     }
 
     _ATTENTION_MAPPING = {
         # language
-        "language_model.decoder.layers.{layer_number}.self_attention.linear_qkv.weight": [
-            "language_model.model.layers.{layer_number}.self_attn.q_proj.weight",
-            "language_model.model.layers.{layer_number}.self_attn.k_proj.weight",
-            "language_model.model.layers.{layer_number}.self_attn.v_proj.weight",
-        ],
         "language_model.decoder.layers.{layer_number}.self_attention.linear_proj.weight": [
             "language_model.model.layers.{layer_number}.self_attn.o_proj.weight"
         ],
         "language_model.decoder.layers.{layer_number}.self_attention.linear_qkv.layer_norm_weight": [
             "language_model.model.layers.{layer_number}.input_layernorm.weight"
         ],
-        "language_model.decoder.layers.{layer_number}.self_attention.q_layernorm.weight": [
-            "language_model.model.layers.{layer_number}.self_attn.q_norm.weight"
+        "language_model.decoder.layers.{layer_number}.self_attention.linear_qkv.weight": [
+            "language_model.model.layers.{layer_number}.self_attn.q_proj.weight",
+            "language_model.model.layers.{layer_number}.self_attn.k_proj.weight",
+            "language_model.model.layers.{layer_number}.self_attn.v_proj.weight",
         ],
-        "language_model.decoder.layers.{layer_number}.self_attention.k_layernorm.weight": [
-            "language_model.model.layers.{layer_number}.self_attn.k_norm.weight"
+        "language_model.decoder.layers.{layer_number}.self_attention.linear_qkv.bias": [
+            "language_model.model.layers.{layer_number}.self_attn.q_proj.bias",
+            "language_model.model.layers.{layer_number}.self_attn.k_proj.bias",
+            "language_model.model.layers.{layer_number}.self_attn.v_proj.bias",
         ],
         # vision
         "vision_model.decoder.layers.{layer_number}.self_attention.linear_qkv.weight": [
-            "vision_tower.vision_model.encoder.layers.{layer_number}.self_attn.q_proj.weight",
-            "vision_tower.vision_model.encoder.layers.{layer_number}.self_attn.k_proj.weight",
-            "vision_tower.vision_model.encoder.layers.{layer_number}.self_attn.v_proj.weight",
+            "vision_model.encoder.layers.{layer_number}.attn.qkv.weight",
         ],
         "vision_model.decoder.layers.{layer_number}.self_attention.linear_qkv.bias": [
-            "vision_tower.vision_model.encoder.layers.{layer_number}.self_attn.q_proj.bias",
-            "vision_tower.vision_model.encoder.layers.{layer_number}.self_attn.k_proj.bias",
-            "vision_tower.vision_model.encoder.layers.{layer_number}.self_attn.v_proj.bias",
+            "vision_model.encoder.layers.{layer_number}.attn.qkv.bias",
         ],
         "vision_model.decoder.layers.{layer_number}.self_attention.linear_proj.weight": [
-            "vision_tower.vision_model.encoder.layers.{layer_number}.self_attn.out_proj.weight",
+            "vision_model.encoder.layers.{layer_number}.attn.proj.weight",
         ],
         "vision_model.decoder.layers.{layer_number}.self_attention.linear_proj.bias": [
-            "vision_tower.vision_model.encoder.layers.{layer_number}.self_attn.out_proj.bias",
+            "vision_model.encoder.layers.{layer_number}.attn.proj.bias",
         ],
         "vision_model.decoder.layers.{layer_number}.self_attention.linear_qkv.layer_norm_weight": [
-            "vision_tower.vision_model.encoder.layers.{layer_number}.layer_norm1.weight",
+            "vision_model.encoder.layers.{layer_number}.norm1.weight",
         ],
         "vision_model.decoder.layers.{layer_number}.self_attention.linear_qkv.layer_norm_bias": [
-            "vision_tower.vision_model.encoder.layers.{layer_number}.layer_norm1.bias",
+            "vision_model.encoder.layers.{layer_number}.norm1.bias",
         ],
     }
 
@@ -98,36 +99,34 @@ class Gemma3Bridge(VLMBridge):
             "language_model.model.layers.{layer_number}.mlp.down_proj.weight"
         ],
         "language_model.decoder.layers.{layer_number}.mlp.linear_fc1.layer_norm_weight": [
-            "language_model.model.layers.{layer_number}.pre_feedforward_layernorm.weight"
+            "language_model.model.layers.{layer_number}.post_attention_layernorm.weight"
         ],
         # vision
         "vision_model.decoder.layers.{layer_number}.mlp.linear_fc2.weight": [
-            "vision_tower.vision_model.encoder.layers.{layer_number}.mlp.fc2.weight",
+            "vision_model.encoder.layers.{layer_number}.mlp.fc2.weight",
         ],
         "vision_model.decoder.layers.{layer_number}.mlp.linear_fc2.bias": [
-            "vision_tower.vision_model.encoder.layers.{layer_number}.mlp.fc2.bias",
+            "vision_model.encoder.layers.{layer_number}.mlp.fc2.bias",
         ],
         "vision_model.decoder.layers.{layer_number}.mlp.linear_fc1.weight": [
-            "vision_tower.vision_model.encoder.layers.{layer_number}.mlp.fc1.weight",
+            "vision_model.encoder.layers.{layer_number}.mlp.fc1.weight",
         ],
         "vision_model.decoder.layers.{layer_number}.mlp.linear_fc1.bias": [
-            "vision_tower.vision_model.encoder.layers.{layer_number}.mlp.fc1.bias",
+            "vision_model.encoder.layers.{layer_number}.mlp.fc1.bias",
         ],
         "vision_model.decoder.layers.{layer_number}.mlp.linear_fc1.layer_norm_weight": [
-            "vision_tower.vision_model.encoder.layers.{layer_number}.layer_norm2.weight",
+            "vision_model.encoder.layers.{layer_number}.norm2.weight"
         ],
         "vision_model.decoder.layers.{layer_number}.mlp.linear_fc1.layer_norm_bias": [
-            "vision_tower.vision_model.encoder.layers.{layer_number}.layer_norm2.bias",
+            "vision_model.encoder.layers.{layer_number}.norm2.bias",
         ],
     }
 
     _OTHER_MAPPING = {
-        "language_model.decoder.layers.{layer_number}.post_attention_layernorm.weight": [
-            "language_model.model.layers.{layer_number}.post_attention_layernorm.weight"
-        ],
-        "language_model.decoder.layers.{layer_number}.post_feedforward_layernorm.weight": [
-            "language_model.model.layers.{layer_number}.post_feedforward_layernorm.weight"
-        ],
+        "vision_model.decoder.layers.{layer_number}.ls1":
+        ["vision_model.encoder.layers.{layer_number}.ls1"],
+        "vision_model.decoder.layers.{layer_number}.ls2":
+        ["vision_model.encoder.layers.{layer_number}.ls2"],
     }
 
     def _adjust_mapping_for_shared_weights(self):
@@ -138,7 +137,7 @@ class Gemma3Bridge(VLMBridge):
         if getattr(self.hf_config, "tie_word_embeddings", False):
             return ["language_model.model.embed_tokens.weight"]
         return []
-    
+
     def _get_mcore_config_by_name(self, mcore_weights_name: str):
         if "vision_projection." in mcore_weights_name:
             assert hasattr(self, "vision_projection_config")
@@ -175,7 +174,7 @@ class Gemma3Bridge(VLMBridge):
         if len(convert_names) == 0:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names
-    
+
     def _weight_name_mapping_other(self, name: str) -> list[str]:
         split_name = name.split(".")
         layer_number = split_name[3]
@@ -211,9 +210,27 @@ class Gemma3Bridge(VLMBridge):
         """
         hf_names = self._weight_name_mapping_mcore_to_hf(mcore_weights_name)
         if len(hf_names) == 1:
-            if "vision_projection.mm_input_projection.weight" == mcore_weights_name:
-                return [hf_names[0]], [mcore_weights.T.contiguous()]
+            # vision model
+            tmp_config = self.hf_config.vision_config
+            vision_hidden_size = tmp_config.hidden_size
+            vision_num_query_groups = tmp_config.num_attention_heads
+            vision_head_dim = vision_hidden_size // tmp_config.num_attention_heads
+            if '.attn.qkv.weight' in hf_names[0]:
+                mcore_weights = mcore_weights.view(
+                    vision_num_query_groups,
+                    3,
+                    -1,
+                    vision_head_dim,
+                    vision_hidden_size,
+                ).transpose(0, 1).reshape(-1, vision_hidden_size).contiguous()
+            if '.attn.qkv.bias' in hf_names[0]:
+                mcore_weights = mcore_weights.view(
+                    vision_num_query_groups,
+                    3,
+                    -1,
+                ).transpose(0, 1).reshape(-1).contiguous()
             return [hf_names[0]], [mcore_weights]
+
         if (
             "self_attention.linear_qkv." in mcore_weights_name
             and "layer_norm" not in mcore_weights_name
@@ -221,7 +238,7 @@ class Gemma3Bridge(VLMBridge):
             # split qkv
             assert len(hf_names) == 3
             if "language_model." in mcore_weights_name:
-                tmp_config = self.hf_config.text_config
+                tmp_config = self.hf_config.llm_config
             else:
                 assert "vision_model." in mcore_weights_name
                 tmp_config = self.hf_config.vision_config
@@ -278,8 +295,27 @@ class Gemma3Bridge(VLMBridge):
             NotImplementedError: If the parameter name is unsupported
         """
         if len(hf_weights) == 1:
-            if "vision_projection.mm_input_projection.weight" == mcore_weights_name:
-                return hf_weights[0].T.contiguous()
+            # vision model
+            hf_names = self._weight_name_mapping_mcore_to_hf(mcore_weights_name)
+            tmp_config = self.hf_config.vision_config
+            vision_hidden_size = tmp_config.hidden_size
+            vision_num_query_groups = tmp_config.num_attention_heads
+            vision_head_dim = vision_hidden_size // tmp_config.num_attention_heads
+            if '.attn.qkv.weight' in hf_names[0]:
+                return hf_weights[0].view(
+                    3,
+                    vision_num_query_groups,
+                    -1,
+                    vision_head_dim,
+                    vision_hidden_size,
+                ).transpose(0, 1).flatten(1, 2).reshape(-1, vision_hidden_size).contiguous()
+            if '.attn.qkv.bias' in hf_names[0]:
+                return hf_weights[0].view(
+                    3,
+                    vision_num_query_groups,
+                    -1,
+                ).transpose(0, 1).flatten(1, 2).view(-1).contiguous()
+
             return hf_weights[0]
 
         if (
@@ -289,7 +325,7 @@ class Gemma3Bridge(VLMBridge):
             # merge qkv
             assert len(hf_weights) == 3
             if "language_model." in mcore_weights_name:
-                tmp_config = self.hf_config.text_config
+                tmp_config = self.hf_config.llm_config
             else:
                 assert "vision_model." in mcore_weights_name
                 tmp_config = self.hf_config.vision_config
@@ -380,42 +416,34 @@ class Gemma3Bridge(VLMBridge):
         """
 
         share_embeddings_and_output_weights = getattr(
-            self.hf_config, "tie_word_embeddings", False
+            self.hf_config.llm_config, "tie_word_embeddings", False
         )
 
         def provider(pre_process, post_process, vp_stage: Optional[int] = None):
             assert vp_stage is None, "not support vpp now"
-            transformer_layer_spec = get_gemma3_layer_spec_te(is_vit=False)
-            self.config.activation_func = torch.nn.functional.gelu
-            self.config.embed_scale = self.config.hidden_size**0.5
-            self.config.sliding_window = self.hf_config.text_config.sliding_window
+            transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
+            self.config.activation_func = torch.nn.functional.silu
 
-            vision_transformer_layer_spec = get_layer_spec_te(is_vit=True)
+            vision_transformer_layer_spec = get_internvl2b_vit_layer_specs()
             vision_config = deepcopy(self.config)
             vision_config = get_vision_model_config(vision_config)
-            vision_config.recompute_granularity = None
-            vision_config.recompute_method = None
-            vision_config.recompute_num_layers = None
             vision_config.pipeline_model_parallel_size = 1
             vision_config.num_layers_in_first_pipeline_stage = None
             vision_config.num_layers_in_last_pipeline_stage = None
 
-            vision_projection_layer_spec = get_projector_module_spec_te()
+            vision_projection_layer_spec = get_mlp_module_spec().submodules
             vision_projection_config = deepcopy(self.config)
             vision_projection_config = get_vision_projection_config(vision_projection_config)
             vision_projection_config.pipeline_model_parallel_size = 1
-            vision_projection_config.recompute_granularity = None
-            vision_projection_config.recompute_method = None
-            vision_projection_config.recompute_num_layers = None
 
             setattr(self, "vision_config", vision_config)
             setattr(self, "vision_projection_config", vision_projection_config)
 
-            model = Gemma3Model(
+            model = InternVLModel(
                 language_transformer_config=self.config,
                 language_transformer_layer_spec=transformer_layer_spec,
-                language_vocab_size=self.hf_config.text_config.vocab_size,
-                language_max_sequence_length=self.hf_config.text_config.max_position_embeddings,
+                language_vocab_size=self.hf_config.llm_config.vocab_size,
+                language_max_sequence_length=self.hf_config.llm_config.max_position_embeddings,
                 vision_transformer_config=vision_config,
                 vision_transformer_layer_spec=vision_transformer_layer_spec,
                 vision_projection_config=vision_projection_config,
@@ -428,10 +456,7 @@ class Gemma3Bridge(VLMBridge):
                 post_process=post_process,
                 add_encoder=pre_process,
                 add_decoder=True,
-                img_h=self.config.image_size,
-                img_w=self.config.image_size,
-                patch_dim=self.config.patch_size,
-                language_rotary_base=self.hf_config.text_config.rope_theta,
+                language_rotary_base=self.hf_config.llm_config.rope_theta,
                 language_rope_scaling=False,
             )
 
@@ -458,13 +483,7 @@ class Gemma3Bridge(VLMBridge):
             TransformerConfig: Configuration object for LLaMA2 models
         """
         return self._build_base_config(
-            text_config_key="text_config",
-            add_qkv_bias=False,
-            qk_layernorm=True,
-            image_size=896,
-            patch_size=14,
-            mm_tokens_per_image=256,
-            layernorm_zero_centered_gamma=True,
-            normalization='RMSNorm',
-            rope_local_base_freq=10000.0,
+            text_config_key="llm_config",
+            add_qkv_bias=True,
+            qk_layernorm=False,
         )

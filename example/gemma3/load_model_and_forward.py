@@ -1,16 +1,22 @@
 # Example to use tp/pp/cp/vpp to test dense model
 # torchrun --nproc_per_node=8 example/gemma3/load_model_and_forward.py --model_path /path/to/model
 
+import os
 import argparse
 import requests
 
-import torch
-from megatron.core import parallel_state as mpu
-from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from PIL import Image
 from transformers import AutoModelForImageTextToText, AutoProcessor
+import torch
+
+from megatron.core import parallel_state as mpu
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.tensor_parallel.mappings import (
+    gather_from_tensor_model_parallel_region,
+)
 
 from mbridge import AutoBridge
+
 
 messages = [
     {
@@ -215,9 +221,16 @@ def main():
 
     print(f"rank{torch.distributed.get_rank()} {hf_model.dtype}: end hf load weight, start forward ...")
 
-    image_url = "https://www.ilankelman.org/stopsigns/australia.jpg"
-    image = Image.open(requests.get(image_url, stream=True).raw)
-    # image = Image.open("../australia.jpg")
+    try:
+        image_url = "https://www.ilankelman.org/stopsigns/australia.jpg"
+        image = Image.open(requests.get(image_url, stream=True, timeout=5).raw)
+    except:
+        if os.path.exists("../australia.jpg"):
+            image = Image.open("../australia.jpg")
+        else:
+            print("Your machine needs to be able to download images" +
+                  "or download the images to your machine first")
+            raise FileNotFoundError
     sample = get_sample_for_forward(image, hf_model_path, bridge.hf_config, args.tp)
 
 
@@ -238,6 +251,8 @@ def main():
             attention_mask=(sample["attn_mask"], sample["sliding_window_attention_mask"]),
             image_token_index=image_token_id,
         )
+        if mpu.get_tensor_model_parallel_world_size() > 1:
+            megatron_output = gather_from_tensor_model_parallel_region(megatron_output)
         cos_similarity(hf_output.logits, megatron_output)
 
     torch.distributed.barrier()

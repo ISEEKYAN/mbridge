@@ -44,13 +44,14 @@ DISTRIBUTED_ARGS="
 "
 
 torchrun $DISTRIBUTED_ARGS \
-    example/gemma3/load_model_and_forward.py \
+    example/internvl3/load_model_and_forward.py \
     --tp $TP_SIZE \
     --ep $PP_SIZE \
-    --model_path ../hf-hub/google/gemma-3-4b-it
+    --model_path ../hf-hub/OpenGVLab/InternVL3-2B
+
 
 torchrun $DISTRIBUTED_ARGS \
-    example/gemma3/load_model_and_inference.py \
+    example/internvl3/load_model_and_inference.py \
     --tp $TP_SIZE \
     --ep $PP_SIZE \
-    --model_path ../hf-hub/google/gemma-3-4b-it
+    --model_path ../hf-hub/OpenGVLab/InternVL3-2B
