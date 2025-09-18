@@ -128,7 +128,7 @@ class Glm4VLBridgeDense(Glm4VLBridgeBase):
         kwargs["spatial_merge_size"] = self.hf_config.vision_config.spatial_merge_size
         kwargs["mrope_section"] = self.hf_config.rope_scaling.get("mrope_section", None)
         kwargs["attention_backend"] = AttnBackend.fused
-        kwargs["moe_router_dtype"] = ("fp32",)
+        kwargs["moe_router_dtype"] = "fp32"
         kwargs["disable_bf16_reduced_precision_matmul"] = True
         kwargs["persist_layer_norm"] = True
         kwargs["bias_activation_fusion"] = True
@@ -288,7 +288,7 @@ class Glm4VLBridgeMoe(Glm4VLBridgeBase):
         kwargs["moe_router_bias_update_rate"] = 0.001
         kwargs["moe_router_enable_expert_bias"] = True
         kwargs["moe_aux_loss_coeff"] = getattr(self.hf_config, "aux_loss_alpha", 0.001)
-        kwargs["moe_router_dtype"] = ("fp32",)
+        kwargs["moe_router_dtype"] = "fp32"
         # kwargs["moe_router_load_balancing_type"] = "seq_aux_loss"
         kwargs["moe_router_load_balancing_type"] = "none"  # default None for RL
         kwargs["moe_shared_expert_overlap"] = True
