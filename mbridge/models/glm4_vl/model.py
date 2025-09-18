@@ -105,17 +105,19 @@ class Glm4VLModel(MegatronModule, VLMixin):
             freeze_vision_model (bool): Freeze the vision model module.
             freeze_vision_projection (bool): Freeze the vision projection module.
         """
-        modules = []
         if freeze_language_model and self.language_model is not None:
-            modules.append(self.language_model)
-        if freeze_vision_model and self.vision_model is not None:
-            modules.append(self.vision_model)
-        if freeze_vision_projection and self.vision_projection is not None:
-            modules.append(self.vision_projection)
-
-        for module in modules:
-            for param in module.parameters():
+            for param in self.language_model.parameters():
                 param.requires_grad = False
+
+        if (freeze_vision_model or freeze_vision_projection) and self.vision_model is not None:
+            for (name, param) in self.vision_model.named_parameters():
+                # vision projection
+                if any(e in name for e in ["downsample", "merger"]):
+                    if freeze_vision_projection:
+                        param.requires_grad = False
+                else:
+                    if freeze_vision_model:
+                        param.requires_grad = False
 
     def forward(
         self,
@@ -173,6 +175,10 @@ class Glm4VLModel(MegatronModule, VLMixin):
                     image_grid_thw=image_grid_thw,
                     video_grid_thw=video_grid_thw,
                 )
+
+            if self.config.sequence_parallel:
+                # naive sequence_parallel support
+                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
 
         if position_ids is None:
             # if position_ids is not prepared in dataloader
