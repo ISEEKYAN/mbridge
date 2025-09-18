@@ -443,6 +443,10 @@ class InternVL3Bridge(VLMBridge):
         share_embeddings_and_output_weights = getattr(
             self.hf_config.llm_config, "tie_word_embeddings", False
         )
+        assert self.hf_config.llm_config.model_type == "qwen2", \
+            f"only support the qwen2 llm, now is {self.hf_config.llm_config.model_type}"
+        assert self.hf_config.vision_config.num_hidden_layers == 24, \
+            f"only support InternViT-300M-448px-V2_5"
 
         def provider(pre_process, post_process, vp_stage: Optional[int] = None):
             assert vp_stage is None, "not support vpp now"
