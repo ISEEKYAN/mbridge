@@ -111,6 +111,7 @@ See [Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge) for more a
 - [veRL](https://github.com/volcengine/verl) has adopted MBridge as a connector to Megatron-Core.
 - [slime](https://github.com/THUDM/slime) has adopted MBridge as Megatron-Core checkpoint converter.
 - [Nemo-RL](https://github.com/NVIDIA-NeMo/RL) has adopted Megatron-Bridge as Megatron-Core connector.
+- Community contributions: Special Thanks to @Thaurun @liuzhenhai93 @jeffhong1997 from wechat team for contributing lots of VLM models support.
 
 ## License
 

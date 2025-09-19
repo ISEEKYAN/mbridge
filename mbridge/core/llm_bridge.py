@@ -99,8 +99,11 @@ class LLMBridge(Bridge):
 
         if "attention_backend" in base_config:
             from megatron.core.transformer.enums import AttnBackend
+
             if isinstance(base_config["attention_backend"], str):
-                base_config["attention_backend"] = AttnBackend[base_config["attention_backend"]]
+                base_config["attention_backend"] = AttnBackend[
+                    base_config["attention_backend"]
+                ]
 
         return self.TransformerConfigClass(**base_config)
 
