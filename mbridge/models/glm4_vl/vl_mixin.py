@@ -282,10 +282,14 @@ class VLMixin:
         flattened_video_grid_thw = torch.cat(temp_frames_hw, dim=0)
 
         def custom_forward(pixel_values_videos):
-            return self.vision_model(pixel_values_videos, grid_thw=flattened_video_grid_thw)
+            return self.vision_model(
+                pixel_values_videos, grid_thw=flattened_video_grid_thw
+            )
 
         if getattr(self.config, "recompute_ve", False):
-            video_embeds = torch.utils.checkpoint.checkpoint(custom_forward, pixel_values_videos)
+            video_embeds = torch.utils.checkpoint.checkpoint(
+                custom_forward, pixel_values_videos
+            )
         else:
             video_embeds = custom_forward(pixel_values_videos)
 
@@ -310,11 +314,14 @@ class VLMixin:
                 The temporal, height and width of feature shape of each image in LLM.
         """
         pixel_values = pixel_values.type(self.vision_model.dtype)
+
         def custom_forward(pixel_values):
             return self.vision_model(pixel_values, grid_thw=image_grid_thw)
 
         if getattr(self.config, "recompute_ve", False):
-            image_embeds = torch.utils.checkpoint.checkpoint(custom_forward, pixel_values)
+            image_embeds = torch.utils.checkpoint.checkpoint(
+                custom_forward, pixel_values
+            )
         else:
             image_embeds = custom_forward(pixel_values)
 

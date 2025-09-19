@@ -41,7 +41,9 @@ def main():
 
     # Load model
     hf_model_path = args.model_path
-    bridge = AutoBridge.from_pretrained(hf_model_path, trust_remote_code=args.trust_remote_code)
+    bridge = AutoBridge.from_pretrained(
+        hf_model_path, trust_remote_code=args.trust_remote_code
+    )
     model = bridge.get_model()
     bridge.load_weights(model, hf_model_path)
     print(f"Model loaded: {args.model_path}")

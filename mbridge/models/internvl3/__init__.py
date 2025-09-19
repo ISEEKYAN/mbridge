@@ -18,7 +18,6 @@ from mbridge.models.internvl3.transformer_layer import (
 )
 
 
-
 @register_model("internvl_chat")
 class InternVL3Bridge(VLMBridge):
     """
@@ -28,6 +27,7 @@ class InternVL3Bridge(VLMBridge):
     optimizations for InternVL3 models, handling the conversion between
     Hugging Face InternVL3 format and Megatron-Core.
     """
+
     TransformerConfigClass = InternvlTransformerConfig
 
     _DIRECT_MAPPING = {
@@ -122,15 +122,19 @@ class InternVL3Bridge(VLMBridge):
     }
 
     _OTHER_MAPPING = {
-        "vision_model.decoder.layers.{layer_number}.ls1":
-        ["vision_model.encoder.layers.{layer_number}.ls1"],
-        "vision_model.decoder.layers.{layer_number}.ls2":
-        ["vision_model.encoder.layers.{layer_number}.ls2"],
+        "vision_model.decoder.layers.{layer_number}.ls1": [
+            "vision_model.encoder.layers.{layer_number}.ls1"
+        ],
+        "vision_model.decoder.layers.{layer_number}.ls2": [
+            "vision_model.encoder.layers.{layer_number}.ls2"
+        ],
     }
 
     def _adjust_mapping_for_shared_weights(self):
         if getattr(self.hf_config, "tie_word_embeddings", False):
-            self._DIRECT_MAPPING["language_model.output_layer.weight"] = "language_model.model.embed_tokens.weight"
+            self._DIRECT_MAPPING["language_model.output_layer.weight"] = (
+                "language_model.model.embed_tokens.weight"
+            )
 
     def _get_hf_shared_weight_keys(self):
         if getattr(self.hf_config, "tie_word_embeddings", False):
@@ -214,30 +218,41 @@ class InternVL3Bridge(VLMBridge):
             vision_hidden_size = tmp_config.hidden_size
             vision_num_query_groups = tmp_config.num_attention_heads
             vision_head_dim = vision_hidden_size // tmp_config.num_attention_heads
-            if '.attn.qkv.weight' in hf_names[0]:
-                mcore_weights = mcore_weights.view(
-                    vision_num_query_groups,
-                    3,
-                    -1,
-                    vision_head_dim,
-                    vision_hidden_size,
-                ).transpose(0, 1).reshape(-1, vision_hidden_size).contiguous()
+            if ".attn.qkv.weight" in hf_names[0]:
+                mcore_weights = (
+                    mcore_weights.view(
+                        vision_num_query_groups,
+                        3,
+                        -1,
+                        vision_head_dim,
+                        vision_hidden_size,
+                    )
+                    .transpose(0, 1)
+                    .reshape(-1, vision_hidden_size)
+                    .contiguous()
+                )
 
-            if '.attn.qkv.bias' in hf_names[0]:
-                mcore_weights = mcore_weights.view(
-                    vision_num_query_groups,
-                    3,
-                    -1,
-                ).transpose(0, 1).reshape(-1).contiguous()
+            if ".attn.qkv.bias" in hf_names[0]:
+                mcore_weights = (
+                    mcore_weights.view(
+                        vision_num_query_groups,
+                        3,
+                        -1,
+                    )
+                    .transpose(0, 1)
+                    .reshape(-1)
+                    .contiguous()
+                )
 
             # pad embeding and output layer
-            if self.make_vocab_size_divisible_by is not None and \
-                ("embedding.word_embeddings.weight" in mcore_weights_name or \
-                 "output_layer.weight" in mcore_weights_name):
+            if self.make_vocab_size_divisible_by is not None and (
+                "embedding.word_embeddings.weight" in mcore_weights_name
+                or "output_layer.weight" in mcore_weights_name
+            ):
                 assert mcore_weights.shape[0] == self.padded_vocab_size
                 assert self.vocab_size is not None
 
-                return [hf_names[0]], [mcore_weights[:self.vocab_size]]
+                return [hf_names[0]], [mcore_weights[: self.vocab_size]]
 
             return [hf_names[0]], [mcore_weights]
 
@@ -254,9 +269,13 @@ class InternVL3Bridge(VLMBridge):
                 tmp_config = self.hf_config.vision_config
 
             num_attention_heads = tmp_config.num_attention_heads
-            num_key_value_heads = getattr(tmp_config, "num_key_value_heads", num_attention_heads)
+            num_key_value_heads = getattr(
+                tmp_config, "num_key_value_heads", num_attention_heads
+            )
             hidden_dim = tmp_config.hidden_size
-            head_dim = getattr(tmp_config, "head_dim", hidden_dim // num_attention_heads)
+            head_dim = getattr(
+                tmp_config, "head_dim", hidden_dim // num_attention_heads
+            )
 
             out_shape = (
                 [num_key_value_heads, -1, hidden_dim]
@@ -311,25 +330,40 @@ class InternVL3Bridge(VLMBridge):
             vision_hidden_size = tmp_config.hidden_size
             vision_num_query_groups = tmp_config.num_attention_heads
             vision_head_dim = vision_hidden_size // tmp_config.num_attention_heads
-            if '.attn.qkv.weight' in hf_names[0]:
-                return hf_weights[0].view(
-                    3,
-                    vision_num_query_groups,
-                    -1,
-                    vision_head_dim,
-                    vision_hidden_size,
-                ).transpose(0, 1).flatten(1, 2).reshape(-1, vision_hidden_size).contiguous()
+            if ".attn.qkv.weight" in hf_names[0]:
+                return (
+                    hf_weights[0]
+                    .view(
+                        3,
+                        vision_num_query_groups,
+                        -1,
+                        vision_head_dim,
+                        vision_hidden_size,
+                    )
+                    .transpose(0, 1)
+                    .flatten(1, 2)
+                    .reshape(-1, vision_hidden_size)
+                    .contiguous()
+                )
 
-            if '.attn.qkv.bias' in hf_names[0]:
-                return hf_weights[0].view(
-                    3,
-                    vision_num_query_groups,
-                    -1,
-                ).transpose(0, 1).flatten(1, 2).view(-1).contiguous()
+            if ".attn.qkv.bias" in hf_names[0]:
+                return (
+                    hf_weights[0]
+                    .view(
+                        3,
+                        vision_num_query_groups,
+                        -1,
+                    )
+                    .transpose(0, 1)
+                    .flatten(1, 2)
+                    .view(-1)
+                    .contiguous()
+                )
             # pad embeding and output layer
-            if self.make_vocab_size_divisible_by is not None and \
-                ("embedding.word_embeddings.weight" in mcore_weights_name or \
-                 "output_layer.weight" in mcore_weights_name):
+            if self.make_vocab_size_divisible_by is not None and (
+                "embedding.word_embeddings.weight" in mcore_weights_name
+                or "output_layer.weight" in mcore_weights_name
+            ):
                 assert hf_weights[0].shape[0] == self.vocab_size
                 assert self.padded_vocab_size is not None
 
@@ -356,9 +390,13 @@ class InternVL3Bridge(VLMBridge):
                 tmp_config = self.hf_config.vision_config
 
             num_attention_heads = tmp_config.num_attention_heads
-            num_key_value_heads = getattr(tmp_config, "num_key_value_heads", num_attention_heads)
+            num_key_value_heads = getattr(
+                tmp_config, "num_key_value_heads", num_attention_heads
+            )
             hidden_dim = tmp_config.hidden_size
-            head_dim = getattr(tmp_config, "head_dim", hidden_dim // num_attention_heads)
+            head_dim = getattr(
+                tmp_config, "head_dim", hidden_dim // num_attention_heads
+            )
             group_dim = head_dim * num_attention_heads // num_key_value_heads
             q, k, v = hf_weights
             # q k v might be tp split
@@ -443,10 +481,12 @@ class InternVL3Bridge(VLMBridge):
         share_embeddings_and_output_weights = getattr(
             self.hf_config.llm_config, "tie_word_embeddings", False
         )
-        assert self.hf_config.llm_config.model_type == "qwen2", \
-            f"only support the qwen2 llm, now is {self.hf_config.llm_config.model_type}"
-        assert self.hf_config.vision_config.num_hidden_layers == 24, \
-            f"only support InternViT-300M-448px-V2_5"
+        assert (
+            self.hf_config.llm_config.model_type == "qwen2"
+        ), f"only support the qwen2 llm, now is {self.hf_config.llm_config.model_type}"
+        assert (
+            self.hf_config.vision_config.num_hidden_layers == 24
+        ), f"only support InternViT-300M-448px-V2_5"
 
         def provider(pre_process, post_process, vp_stage: Optional[int] = None):
             assert vp_stage is None, "not support vpp now"
@@ -462,7 +502,9 @@ class InternVL3Bridge(VLMBridge):
 
             vision_projection_layer_spec = get_mlp_module_spec().submodules
             vision_projection_config = deepcopy(self.config)
-            vision_projection_config = get_vision_projection_config(vision_projection_config)
+            vision_projection_config = get_vision_projection_config(
+                vision_projection_config
+            )
             vision_projection_config.pipeline_model_parallel_size = 1
 
             setattr(self, "vision_config", vision_config)
@@ -471,8 +513,9 @@ class InternVL3Bridge(VLMBridge):
             self.padded_vocab_size = self.vocab_size
             if self.make_vocab_size_divisible_by is not None:
                 self.padded_vocab_size = int(
-                    math.ceil(self.vocab_size / self.make_vocab_size_divisible_by) *
-                    self.make_vocab_size_divisible_by)
+                    math.ceil(self.vocab_size / self.make_vocab_size_divisible_by)
+                    * self.make_vocab_size_divisible_by
+                )
 
             model = InternVLModel(
                 language_transformer_config=self.config,

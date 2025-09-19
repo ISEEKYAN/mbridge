@@ -1,22 +1,20 @@
 # Example to use tp/pp/cp/vpp to test dense model
 # torchrun --nproc_per_node=8 example/gemma3/load_model_and_forward.py --model_path /path/to/model
 
-import os
 import argparse
+import os
+
 import requests
-
-from PIL import Image
-from transformers import AutoModelForImageTextToText, AutoProcessor
 import torch
-
 from megatron.core import parallel_state as mpu
-from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.tensor_parallel.mappings import (
     gather_from_tensor_model_parallel_region,
 )
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from PIL import Image
+from transformers import AutoModelForImageTextToText, AutoProcessor
 
 from mbridge import AutoBridge
-
 
 messages = [
     {
@@ -41,9 +39,11 @@ def gen_attn_mask(token_type_ids, sliding_window, attn_head_size_per_tp):
                 mask_pair[-1][-1] = i
             last_val = token_type_ids[i]
 
-    token_type_mask = torch.zeros((seq_length, seq_length), dtype=torch.long, device="cpu")
+    token_type_mask = torch.zeros(
+        (seq_length, seq_length), dtype=torch.long, device="cpu"
+    )
     for pair in mask_pair:
-        token_type_mask[pair[0]:pair[1], pair[0]:pair[1]] = 1
+        token_type_mask[pair[0] : pair[1], pair[0] : pair[1]] = 1
 
     attn_mask_src = torch.tril(
         torch.ones(
@@ -66,13 +66,17 @@ def gen_attn_mask(token_type_ids, sliding_window, attn_head_size_per_tp):
     sliding_window_attention_mask = ((attn_mask_src - slice_mask) | token_type_mask).to(
         torch.bool
     )
-    attn_mask = torch.zeros(attn_mask.shape, dtype=torch.bfloat16).masked_fill_(
-        attn_mask.logical_not(), float("-inf")
-    ).unsqueeze(0)
+    attn_mask = (
+        torch.zeros(attn_mask.shape, dtype=torch.bfloat16)
+        .masked_fill_(attn_mask.logical_not(), float("-inf"))
+        .unsqueeze(0)
+    )
     attn_mask = attn_mask.expand(attn_head_size_per_tp, *attn_mask.shape[1:])
-    sliding_window_attention_mask = torch.zeros(
-        sliding_window_attention_mask.shape, dtype=torch.bfloat16
-    ).masked_fill_(sliding_window_attention_mask.logical_not(), float("-inf")).unsqueeze(0)
+    sliding_window_attention_mask = (
+        torch.zeros(sliding_window_attention_mask.shape, dtype=torch.bfloat16)
+        .masked_fill_(sliding_window_attention_mask.logical_not(), float("-inf"))
+        .unsqueeze(0)
+    )
     sliding_window_attention_mask = sliding_window_attention_mask.expand(
         attn_head_size_per_tp,
         *sliding_window_attention_mask.shape[1:],
@@ -98,7 +102,9 @@ def get_sample_for_forward(image, hf_model_path, hf_config, tp):
     pad_token_id = processor.tokenizer.pad_token_id
     prompt_len = len(inputs.input_ids[0])
     pad_multi_of = 8
-    pad_len = (prompt_len + pad_multi_of - 1) // pad_multi_of * pad_multi_of - prompt_len
+    pad_len = (
+        prompt_len + pad_multi_of - 1
+    ) // pad_multi_of * pad_multi_of - prompt_len
     inputs.input_ids[0] += [pad_token_id] * pad_len
     inputs.token_type_ids[0] += [0] * pad_len
     inputs.attention_mask[0] += [1] * pad_len
@@ -113,22 +119,26 @@ def get_sample_for_forward(image, hf_model_path, hf_config, tp):
     ret["token_type_ids"] = torch.LongTensor(inputs.token_type_ids).to(
         torch.cuda.current_device()
     )
-    ret["pixel_values"] = torch.from_numpy(inputs.pixel_values[0]).unsqueeze(0).to(
-        torch.cuda.current_device()
+    ret["pixel_values"] = (
+        torch.from_numpy(inputs.pixel_values[0])
+        .unsqueeze(0)
+        .to(torch.cuda.current_device())
     )
 
-    position_ids = torch.arange(ret["input_ids"].size()[1],
-                                dtype=torch.long,
-                                device=torch.cuda.current_device())
+    position_ids = torch.arange(
+        ret["input_ids"].size()[1], dtype=torch.long, device=torch.cuda.current_device()
+    )
     ret["position_ids"] = position_ids.unsqueeze(0).expand_as(ret["input_ids"])
 
     attn_mask, sliding_window_attention_mask = gen_attn_mask(
-        inputs.token_type_ids[0], # only one image
+        inputs.token_type_ids[0],  # only one image
         hf_config.text_config.sliding_window,
         hf_config.text_config.num_attention_heads // tp,
     )
     ret["attn_mask"] = attn_mask.to(torch.cuda.current_device())
-    ret["sliding_window_attention_mask"] = sliding_window_attention_mask.to(torch.cuda.current_device())
+    ret["sliding_window_attention_mask"] = sliding_window_attention_mask.to(
+        torch.cuda.current_device()
+    )
 
     return ret
 
@@ -137,7 +147,7 @@ def get_sample_for_forward(image, hf_model_path, hf_config, tp):
 def cos_similarity(a, b):
     print(f"a {a.shape} b {b.shape}")
     a = a.float()
-    #a = a / a.norm(dim=-1, keepdim=True)
+    # a = a / a.norm(dim=-1, keepdim=True)
     a = torch.exp(a - a.max(dim=-1, keepdim=True)[0])
     a = a / a.norm(dim=-1, keepdim=True)
     """
@@ -145,7 +155,7 @@ def cos_similarity(a, b):
     a = a / a.norm(dim=-1, keepdim=True)
     """
     b = b.float()
-    #b =  b / b.norm(dim=-1, keepdim=True)
+    # b =  b / b.norm(dim=-1, keepdim=True)
     b = torch.exp(b - b.max(dim=-1, keepdim=True)[0])
     b = b / b.norm(dim=-1, keepdim=True)
     """
@@ -153,7 +163,9 @@ def cos_similarity(a, b):
     b =  b / b.norm(dim=-1, keepdim=True)
     """
     sim = (a * b).sum(dim=-1)
-    print(f"hf vs megatron cos_similarity min: {sim.min()}; max: {sim.max()}; mean: {sim.mean()}")
+    print(
+        f"hf vs megatron cos_similarity min: {sim.min()}; max: {sim.max()}; mean: {sim.mean()}"
+    )
 
 
 def init_distributed(tp=2, pp=1, cp=1, vpp=1, ep=1, etp=None):
@@ -210,7 +222,7 @@ def main():
     hf_model_path = args.model_path
     print(f"rank{torch.distributed.get_rank()}: start loading model ...")
     bridge = AutoBridge.from_pretrained(hf_model_path)
-    # if sample["input_ids"].shape[-1] % 2 == 0, 
+    # if sample["input_ids"].shape[-1] % 2 == 0,
     # bridge.config.sequence_parallel can be Trueu
     bridge.config.sequence_parallel = False
     model = bridge.get_model()
@@ -218,9 +230,13 @@ def main():
     print(f"rank{torch.distributed.get_rank()}: end load weight, start forward ...")
 
     # load hf model
-    hf_model = AutoModelForImageTextToText.from_pretrained(hf_model_path).to("cuda").bfloat16()
+    hf_model = (
+        AutoModelForImageTextToText.from_pretrained(hf_model_path).to("cuda").bfloat16()
+    )
 
-    print(f"rank{torch.distributed.get_rank()} {hf_model.dtype}: end hf load weight, start forward ...")
+    print(
+        f"rank{torch.distributed.get_rank()} {hf_model.dtype}: end hf load weight, start forward ..."
+    )
 
     try:
         image_url = "https://www.ilankelman.org/stopsigns/australia.jpg"
@@ -229,11 +245,12 @@ def main():
         if os.path.exists("../australia.jpg"):
             image = Image.open("../australia.jpg")
         else:
-            print("Your machine needs to be able to download images" +
-                  "or download the images to your machine first")
+            print(
+                "Your machine needs to be able to download images"
+                + "or download the images to your machine first"
+            )
             raise FileNotFoundError
     sample = get_sample_for_forward(image, hf_model_path, bridge.hf_config, args.tp)
-
 
     with torch.no_grad():
         hf_output = hf_model(
@@ -249,7 +266,10 @@ def main():
             images=sample["pixel_values"].to(torch.bfloat16),
             input_ids=sample["input_ids"],
             position_ids=sample["position_ids"],
-            attention_mask=(sample["attn_mask"], sample["sliding_window_attention_mask"]),
+            attention_mask=(
+                sample["attn_mask"],
+                sample["sliding_window_attention_mask"],
+            ),
             image_token_index=image_token_id,
         )
         if mpu.get_tensor_model_parallel_world_size() > 1:

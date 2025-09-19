@@ -1,9 +1,8 @@
 from dataclasses import dataclass
 
 import torch
-
-from megatron.core.transformer import TransformerConfig
 from megatron.core.jit import jit_fuser
+from megatron.core.transformer import TransformerConfig
 
 
 @jit_fuser
@@ -42,7 +41,7 @@ def get_vision_model_config(config: TransformerConfig):
     config.bias_activation_fusion = False
     config.bias_dropout_fusion = False
     config.attention_softmax_in_fp32 = True
-    config.normalization = 'LayerNorm'
+    config.normalization = "LayerNorm"
     config.apply_rope_fusion = False
     config.qk_layernorm = False
     config.layernorm_epsilon = 1e-6

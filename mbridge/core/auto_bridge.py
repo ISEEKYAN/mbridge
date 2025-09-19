@@ -11,7 +11,9 @@ class AutoBridge:
     """
 
     @classmethod
-    def from_pretrained(cls, hf_model_path, trust_remote_code=False, **kwargs) -> Bridge:
+    def from_pretrained(
+        cls, hf_model_path, trust_remote_code=False, **kwargs
+    ) -> Bridge:
         """
         Loads the appropriate bridge class from a pretrained model path.
 

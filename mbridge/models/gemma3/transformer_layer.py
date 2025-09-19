@@ -1,17 +1,17 @@
 from dataclasses import dataclass
-from typing import Union, Optional
-from packaging import version
+from typing import Optional, Union
 
 import torch
-
 from megatron.core import __version__
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.core.utils import make_viewless_tensor
 from megatron.core.transformer.transformer_layer import (
-    TransformerLayerSubmodules,
     TransformerLayer,
+    TransformerLayerSubmodules,
 )
+from megatron.core.utils import make_viewless_tensor
+from packaging import version
+
 try:
     from megatron.core.process_groups_config import ModelCommProcessGroups
 except:
@@ -22,7 +22,10 @@ from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules
+from megatron.core.transformer.transformer_layer import (
+    TransformerLayer,
+    TransformerLayerSubmodules,
+)
 
 try:
     from megatron.core.extensions.transformer_engine import (
@@ -36,8 +39,10 @@ try:
 except ImportError:
     HAVE_TE = False
 
+from mbridge.models.ext.llama3_cp.llama3_cp_memory_efficient_attention import (
+    MemoryEfficientAttention,
+)
 from mbridge.models.gemma3.transformer_config import Gemma3TransformerConfig
-from mbridge.models.ext.llama3_cp.llama3_cp_memory_efficient_attention import MemoryEfficientAttention
 
 
 @dataclass
@@ -71,7 +76,7 @@ class Gemma3TransformerLayer(TransformerLayer):
                 layer_number=layer_number,
                 hidden_dropout=hidden_dropout,
                 model_comm_pgs=model_comm_pgs,
-                vp_stage=vp_stage
+                vp_stage=vp_stage,
             )
 
         self.post_attention_layernorm = build_module(
@@ -116,7 +121,7 @@ class Gemma3TransformerLayer(TransformerLayer):
         residual = hidden_states
 
         extra_kwargs = {}
-        if version.parse(__version__) >= version.parse('0.12.0'):
+        if version.parse(__version__) >= version.parse("0.12.0"):
             extra_kwargs["inference_context"] = inference_context
         else:
             extra_kwargs["inference_params"] = inference_params
@@ -158,14 +163,18 @@ class Gemma3TransformerLayer(TransformerLayer):
             **extra_kwargs,
         )
 
-        if isinstance(attention_output_with_bias, dict) and "context" in attention_output_with_bias:
+        if (
+            isinstance(attention_output_with_bias, dict)
+            and "context" in attention_output_with_bias
+        ):
             context = attention_output_with_bias["context"]
 
         # TODO: could we move `bias_dropout_add_exec_handler` itself
         # inside the module provided in the `bias_dropout_add_spec` module?
         with self.bias_dropout_add_exec_handler():
-            hidden_states = self.cross_attn_bda(self.training, self.config.bias_dropout_fusion)(
-                attention_output_with_bias, residual, self.hidden_dropout)
+            hidden_states = self.cross_attn_bda(
+                self.training, self.config.bias_dropout_fusion
+            )(attention_output_with_bias, residual, self.hidden_dropout)
 
         # Residual connection.
         residual = hidden_states
@@ -188,9 +197,11 @@ class Gemma3TransformerLayer(TransformerLayer):
         # won't result in memory savings (like the data loader, or
         # p2p_communication), it serves to document the origin of this
         # 'view' tensor.
-        output = make_viewless_tensor(inp=hidden_states,
-                                      requires_grad=hidden_states.requires_grad,
-                                      keep_graph=True)
+        output = make_viewless_tensor(
+            inp=hidden_states,
+            requires_grad=hidden_states.requires_grad,
+            keep_graph=True,
+        )
 
         # CUDA graph requires returned values to be Tensors
         if self.config.external_cuda_graph and self.training:
@@ -201,8 +212,9 @@ class Gemma3TransformerLayer(TransformerLayer):
 def get_norm_mlp_module_spec_te() -> ModuleSpec:
     return ModuleSpec(
         module=MLP,
-        submodules=MLPSubmodules(linear_fc1=TELayerNormColumnParallelLinear,
-                                 linear_fc2=TERowParallelLinear),
+        submodules=MLPSubmodules(
+            linear_fc1=TELayerNormColumnParallelLinear, linear_fc2=TERowParallelLinear
+        ),
     )
 
 
@@ -232,6 +244,7 @@ def get_gemma3_layer_spec_te(is_vit=False) -> ModuleSpec:
             post_feedforward_layernorm=TENorm,
         ),
     )
+
 
 def get_layer_spec_te(is_vit=False) -> ModuleSpec:
     attn_mask_type = AttnMaskType.no_mask if is_vit else AttnMaskType.causal

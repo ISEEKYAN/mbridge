@@ -1,20 +1,20 @@
+from typing import List, Optional
+
 import torch
 from einops import rearrange
-from typing import Optional, List
-
-from megatron.core.transformer import MegatronModule
 from megatron.core import tensor_parallel
+from megatron.core.inference.contexts import BaseInferenceContext
+from megatron.core.models.vision.clip_vit_model import CLIPViTModel
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.inference.contexts import BaseInferenceContext
-from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.models.vision.clip_vit_model import CLIPViTModel
 from megatron.core.utils import deprecate_inference_params
 
 from mbridge.core.util import split_data_cp_rank
-from mbridge.utils.mappings import all_gather_to_context_parallel_region
 from mbridge.models.gemma3.gpt_model import Gemma3GPTModel
 from mbridge.models.gemma3.projector import Gemma3MultiModalProjector
+from mbridge.utils.mappings import all_gather_to_context_parallel_region
 
 
 # Note: This is under development and may be missing features.
@@ -32,7 +32,7 @@ class Gemma3Model(MegatronModule):
         vision_projection_type: str = "mlp",
         parallel_output: bool = True,
         share_embeddings_and_output_weights: bool = False,
-        language_position_embedding_type: str = 'learned_absolute',
+        language_position_embedding_type: str = "learned_absolute",
         language_rotary_percent: float = 1.0,
         pre_process: bool = True,
         post_process: bool = True,
@@ -46,7 +46,9 @@ class Gemma3Model(MegatronModule):
         language_rope_scaling_factor: float = 8.0,
     ) -> None:
         super().__init__(config=language_transformer_config)
-        assert language_transformer_config.context_parallel_size == 1, "not support context parallel now"
+        assert (
+            language_transformer_config.context_parallel_size == 1
+        ), "not support context parallel now"
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -60,7 +62,9 @@ class Gemma3Model(MegatronModule):
 
         self.sequence_parallel_lm = language_transformer_config.sequence_parallel
         self.context_parallel_lm = language_transformer_config.context_parallel_size
-        self.tensor_model_parallel_size_lm = language_transformer_config.tensor_model_parallel_size
+        self.tensor_model_parallel_size_lm = (
+            language_transformer_config.tensor_model_parallel_size
+        )
 
         # This attribute is needed to check if an all-reduce is required
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
@@ -116,14 +120,14 @@ class Gemma3Model(MegatronModule):
         if self.add_decoder:
             return self.language_model.shared_embedding_or_output_weight()
         return None
-    
+
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
         # This is usually handled in schedules.py but some inference code still
         # gives us non-lists or None
         if not isinstance(input_tensor, list):
             input_tensor = [input_tensor]
-        assert len(input_tensor) == 1, 'input_tensor should only be length 1 for llava'
+        assert len(input_tensor) == 1, "input_tensor should only be length 1 for llava"
 
         if self.add_encoder and self.add_decoder:
             self.vision_model.set_input_tensor(input_tensor[0])
@@ -135,7 +139,10 @@ class Gemma3Model(MegatronModule):
             self.language_model.set_input_tensor(input_tensor[0])
 
     def freeze(
-        self, freeze_language_model: bool, freeze_vision_model: bool, freeze_vision_projection: bool
+        self,
+        freeze_language_model: bool,
+        freeze_vision_model: bool,
+        freeze_vision_projection: bool,
     ):
         """Freeze model modules.
 
@@ -158,13 +165,13 @@ class Gemma3Model(MegatronModule):
             for param in module.parameters():
                 param.requires_grad = False
 
-
     def _gather_image_embedings(self, image_embeddings):
         if self.context_parallel_lm < 2:
             return image_embeddings
 
-        return all_gather_to_context_parallel_region(image_embeddings, 1,
-                                                     torch.distributed.ReduceOp.SUM)
+        return all_gather_to_context_parallel_region(
+            image_embeddings, 1, torch.distributed.ReduceOp.SUM
+        )
 
     def _preprocess_data(
         self,
@@ -174,7 +181,9 @@ class Gemma3Model(MegatronModule):
         use_inference_kv_cache,
         image_token_index,
     ):
-        assert self.add_decoder, "input text preprocessing is only needed for the language model"
+        assert (
+            self.add_decoder
+        ), "input text preprocessing is only needed for the language model"
         assert input_ids is not None
 
         if image_embeddings is None:
@@ -194,8 +203,9 @@ class Gemma3Model(MegatronModule):
 
         # batch x seq_len x hidden
         image_embeddings = self._gather_image_embedings(image_embeddings)
-        language_embeddings = language_embeddings.masked_scatter(special_image_mask,
-                                                                 image_embeddings)
+        language_embeddings = language_embeddings.masked_scatter(
+            special_image_mask, image_embeddings
+        )
         # seq_len x batch x hidden
         language_embeddings = rearrange(language_embeddings, "b s h -> s b h")
         return language_embeddings
@@ -209,7 +219,9 @@ class Gemma3Model(MegatronModule):
         shard_factor = seq_dim = None
         if self.pre_process:
             if self.context_parallel_lm > 1 and self.sequence_parallel_lm:
-                shard_factor = self.tensor_model_parallel_size_lm * self.context_parallel_lm * 2
+                shard_factor = (
+                    self.tensor_model_parallel_size_lm * self.context_parallel_lm * 2
+                )
                 seq_dim = 0
             elif self.context_parallel_lm > 1:
                 shard_factor = self.context_parallel_lm * 2
@@ -219,17 +231,19 @@ class Gemma3Model(MegatronModule):
                 seq_dim = 0
 
             assert (
-                combined_embeddings.shape[seq_dim] %
-                shard_factor == 0), f"Sequence length should be divisible by {shard_factor} for \
+                combined_embeddings.shape[seq_dim] % shard_factor == 0
+            ), f"Sequence length should be divisible by {shard_factor} for \
                 Sequence/Context parallelism"
 
         if self.context_parallel_lm > 1 and self.pre_process:
-            combined_embeddings = split_data_cp_rank(combined_embeddings, self.context_parallel_lm,
-                                                     0)
+            combined_embeddings = split_data_cp_rank(
+                combined_embeddings, self.context_parallel_lm, 0
+            )
 
         if self.sequence_parallel_lm and self.pre_process:
             combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
-                combined_embeddings)  # [S/(CP*TP),B,H]
+                combined_embeddings
+            )  # [S/(CP*TP),B,H]
 
         return combined_embeddings
 
@@ -273,7 +287,9 @@ class Gemma3Model(MegatronModule):
                 otherwise logits of shape [b, s, vocab_size].
         """
 
-        inference_context = deprecate_inference_params(inference_context, inference_params)
+        inference_context = deprecate_inference_params(
+            inference_context, inference_params
+        )
 
         use_inference_kv_cache = (
             inference_context is not None
@@ -287,11 +303,13 @@ class Gemma3Model(MegatronModule):
             image_embeddings = None
         elif self.add_encoder and not has_images:
             # If no images provided, use an empty image embeddings tensor.
-            image_embeddings = torch.tensor([], dtype=images.dtype, device=images.device).reshape(
-                0, 0, 0
-            )
+            image_embeddings = torch.tensor(
+                [], dtype=images.dtype, device=images.device
+            ).reshape(0, 0, 0)
         elif self.add_encoder and has_images:
-            image_embeddings = self.vision_model(images)  # [num_tiles, img_seq_len, h_vision]
+            image_embeddings = self.vision_model(
+                images
+            )  # [num_tiles, img_seq_len, h_vision]
 
             # contiguous() required as `permute` can sparsify the tensor and this breaks pipelining
             image_embeddings = image_embeddings.permute(
@@ -340,8 +358,8 @@ class Gemma3Model(MegatronModule):
         )  # [combined_seq_len, b, h_language]
 
         if self.context_parallel_lm > 1 or self.sequence_parallel_lm:
-            combined_embeddings = (
-                self._process_embedding_token_parallel(combined_embeddings)
+            combined_embeddings = self._process_embedding_token_parallel(
+                combined_embeddings
             )
 
         output = self.language_model(

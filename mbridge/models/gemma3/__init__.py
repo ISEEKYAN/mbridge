@@ -8,6 +8,7 @@ from transformers import AutoConfig
 from mbridge.core import VLMBridge, register_model
 from mbridge.core.util import unwrap_model
 from mbridge.models.gemma3.model import Gemma3Model
+from mbridge.models.gemma3.projector import get_projector_module_spec_te
 from mbridge.models.gemma3.transformer_config import (
     Gemma3TransformerConfig,
     get_vision_model_config,
@@ -15,9 +16,8 @@ from mbridge.models.gemma3.transformer_config import (
 )
 from mbridge.models.gemma3.transformer_layer import (
     get_gemma3_layer_spec_te,
-    get_layer_spec_te
+    get_layer_spec_te,
 )
-from mbridge.models.gemma3.projector import get_projector_module_spec_te
 
 
 @register_model("gemma3")
@@ -29,6 +29,7 @@ class Gemma3Bridge(VLMBridge):
     optimizations for Gemma3 models, handling the conversion between
     Hugging Face Gemma3 format and Megatron-Core.
     """
+
     TransformerConfigClass = Gemma3TransformerConfig
 
     _DIRECT_MAPPING = {
@@ -132,13 +133,15 @@ class Gemma3Bridge(VLMBridge):
 
     def _adjust_mapping_for_shared_weights(self):
         if getattr(self.hf_config, "tie_word_embeddings", False):
-            self._DIRECT_MAPPING["language_model.output_layer.weight"] = "language_model.model.embed_tokens.weight"
+            self._DIRECT_MAPPING["language_model.output_layer.weight"] = (
+                "language_model.model.embed_tokens.weight"
+            )
 
     def _get_hf_shared_weight_keys(self):
         if getattr(self.hf_config, "tie_word_embeddings", False):
             return ["language_model.model.embed_tokens.weight"]
         return []
-    
+
     def _get_mcore_config_by_name(self, mcore_weights_name: str):
         if "vision_projection." in mcore_weights_name:
             assert hasattr(self, "vision_projection_config")
@@ -175,7 +178,7 @@ class Gemma3Bridge(VLMBridge):
         if len(convert_names) == 0:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names
-    
+
     def _weight_name_mapping_other(self, name: str) -> list[str]:
         split_name = name.split(".")
         layer_number = split_name[3]
@@ -227,9 +230,13 @@ class Gemma3Bridge(VLMBridge):
                 tmp_config = self.hf_config.vision_config
 
             num_attention_heads = tmp_config.num_attention_heads
-            num_key_value_heads = getattr(tmp_config, "num_key_value_heads", num_attention_heads)
+            num_key_value_heads = getattr(
+                tmp_config, "num_key_value_heads", num_attention_heads
+            )
             hidden_dim = tmp_config.hidden_size
-            head_dim = getattr(tmp_config, "head_dim", hidden_dim // num_attention_heads)
+            head_dim = getattr(
+                tmp_config, "head_dim", hidden_dim // num_attention_heads
+            )
 
             out_shape = (
                 [num_key_value_heads, -1, hidden_dim]
@@ -295,9 +302,13 @@ class Gemma3Bridge(VLMBridge):
                 tmp_config = self.hf_config.vision_config
 
             num_attention_heads = tmp_config.num_attention_heads
-            num_key_value_heads = getattr(tmp_config, "num_key_value_heads", num_attention_heads)
+            num_key_value_heads = getattr(
+                tmp_config, "num_key_value_heads", num_attention_heads
+            )
             hidden_dim = tmp_config.hidden_size
-            head_dim = getattr(tmp_config, "head_dim", hidden_dim // num_attention_heads)
+            head_dim = getattr(
+                tmp_config, "head_dim", hidden_dim // num_attention_heads
+            )
             group_dim = head_dim * num_attention_heads // num_key_value_heads
             q, k, v = hf_weights
             # q k v might be tp split
@@ -402,7 +413,9 @@ class Gemma3Bridge(VLMBridge):
 
             vision_projection_layer_spec = get_projector_module_spec_te()
             vision_projection_config = deepcopy(self.config)
-            vision_projection_config = get_vision_projection_config(vision_projection_config)
+            vision_projection_config = get_vision_projection_config(
+                vision_projection_config
+            )
             vision_projection_config.pipeline_model_parallel_size = 1
             vision_projection_config.recompute_granularity = None
             vision_projection_config.recompute_method = None
@@ -465,6 +478,6 @@ class Gemma3Bridge(VLMBridge):
             patch_size=14,
             mm_tokens_per_image=256,
             layernorm_zero_centered_gamma=True,
-            normalization='RMSNorm',
+            normalization="RMSNorm",
             rope_local_base_freq=10000.0,
         )

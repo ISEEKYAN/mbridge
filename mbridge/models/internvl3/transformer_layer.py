@@ -1,34 +1,30 @@
-from packaging import version
-
 import torch
-from torch import nn
-
 from megatron.core import __version__
-from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.utils import make_viewless_tensor
-from megatron.core.transformer.transformer_layer import (
-    TransformerLayerSubmodules,
-    TransformerLayer,
-)
-from megatron.core.transformer.mlp import MLP, MLPSubmodules
-from megatron.core.transformer.module import MegatronModule
 from megatron.core.extensions.transformer_engine import (
     TEColumnParallelLinear,
     TEDotProductAttention,
-    TERowParallelLinear,
     TELayerNormColumnParallelLinear,
+    TERowParallelLinear,
 )
+from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.tensor_parallel.layers import ColumnParallelLinear, RowParallelLinear
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
 from megatron.core.transformer.dot_product_attention import DotProductAttention
-from megatron.core.transformer.identity_op import IdentityOp
-
 from megatron.core.transformer.enums import AttnMaskType
-from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
+from megatron.core.transformer.identity_op import IdentityOp
+from megatron.core.transformer.mlp import MLP, MLPSubmodules
+from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_layer import (
+    TransformerLayer,
+    TransformerLayerSubmodules,
+)
+from megatron.core.utils import make_viewless_tensor
+from packaging import version
+from torch import nn
 
 try:
     import apex
-
     from megatron.core.fusions.fused_layer_norm import FusedLayerNorm
     from megatron.core.transformer.torch_norm import WrappedTorchNorm
 
@@ -39,7 +35,7 @@ except ImportError:
 
     from megatron.core.transformer.torch_norm import WrappedTorchNorm
 
-    warnings.warn(f'Apex is not installed. Falling back to Torch Norm')
+    warnings.warn(f"Apex is not installed. Falling back to Torch Norm")
     LNImpl = WrappedTorchNorm
 
 try:
@@ -55,19 +51,20 @@ class DropPath(MegatronModule):
     (when applied in main path of residual blocks).
     """
 
-    def __init__(self, config, drop_prob=0.):
+    def __init__(self, config, drop_prob=0.0):
         super(DropPath, self).__init__(config)
         self.drop_prob = drop_prob
 
     def forward(self, hidden_state):
-        if self.drop_prob == 0. or not self.training:
+        if self.drop_prob == 0.0 or not self.training:
             return hidden_state
         keep_prob = 1 - self.drop_prob
         # work with diff dim tensors, not just 2D ConvNets
         # hidden_state: [s, b, h]
-        shape = (1, ) + (hidden_state.shape[1], ) + (1, ) * (hidden_state.ndim - 2)
-        random_tensor = keep_prob + \
-            torch.rand(shape, dtype=hidden_state.dtype, device=hidden_state.device)
+        shape = (1,) + (hidden_state.shape[1],) + (1,) * (hidden_state.ndim - 2)
+        random_tensor = keep_prob + torch.rand(
+            shape, dtype=hidden_state.dtype, device=hidden_state.device
+        )
         random_tensor.floor_()  # binarize
         output = hidden_state.div(keep_prob) * random_tensor
         return output
@@ -75,18 +72,28 @@ class DropPath(MegatronModule):
 
 class Internvl2bVitTransformerLayer(TransformerLayer):
 
-    def __init__(self,
-                 config: InternvlTransformerConfig,
-                 submodules: TransformerLayerSubmodules,
-                 layer_number: int = 1,
-                 hidden_dropout: float = None,
-                 drop_path_rate: float = 0.0):
+    def __init__(
+        self,
+        config: InternvlTransformerConfig,
+        submodules: TransformerLayerSubmodules,
+        layer_number: int = 1,
+        hidden_dropout: float = None,
+        drop_path_rate: float = 0.0,
+    ):
         super().__init__(config, submodules, layer_number, hidden_dropout)
-        self.ls1 = nn.Parameter(config.initializer_factor * torch.ones(config.hidden_size))
-        self.ls2 = nn.Parameter(config.initializer_factor * torch.ones(config.hidden_size))
+        self.ls1 = nn.Parameter(
+            config.initializer_factor * torch.ones(config.hidden_size)
+        )
+        self.ls2 = nn.Parameter(
+            config.initializer_factor * torch.ones(config.hidden_size)
+        )
 
-        self.drop_path1 = DropPath(drop_path_rate) if drop_path_rate > 0.0 else nn.Identity()
-        self.drop_path2 = DropPath(drop_path_rate) if drop_path_rate > 0.0 else nn.Identity()
+        self.drop_path1 = (
+            DropPath(drop_path_rate) if drop_path_rate > 0.0 else nn.Identity()
+        )
+        self.drop_path2 = (
+            DropPath(drop_path_rate) if drop_path_rate > 0.0 else nn.Identity()
+        )
 
     def forward(
         self,
@@ -106,7 +113,7 @@ class Internvl2bVitTransformerLayer(TransformerLayer):
         residual = hidden_states
 
         extra_kwargs = {}
-        if version.parse(__version__) >= version.parse('0.12.0'):
+        if version.parse(__version__) >= version.parse("0.12.0"):
             extra_kwargs["inference_context"] = inference_context
         else:
             extra_kwargs["inference_params"] = inference_params
@@ -128,12 +135,14 @@ class Internvl2bVitTransformerLayer(TransformerLayer):
         )
 
         attention_output = self.drop_path1(
-            (attention_output_with_bias[0] + attention_output_with_bias[1]) * self.ls1)
+            (attention_output_with_bias[0] + attention_output_with_bias[1]) * self.ls1
+        )
         attention_output_with_bias = (attention_output, None)
 
         with self.bias_dropout_add_exec_handler():
-            hidden_states = self.self_attn_bda(self.training, self.config.bias_dropout_fusion)(
-                attention_output_with_bias, residual, self.hidden_dropout)
+            hidden_states = self.self_attn_bda(
+                self.training, self.config.bias_dropout_fusion
+            )(attention_output_with_bias, residual, self.hidden_dropout)
 
         # Residual connection.
         residual = hidden_states
@@ -149,12 +158,16 @@ class Internvl2bVitTransformerLayer(TransformerLayer):
             **extra_kwargs,
         )
 
-        if isinstance(attention_output_with_bias, dict) and "context" in attention_output_with_bias:
+        if (
+            isinstance(attention_output_with_bias, dict)
+            and "context" in attention_output_with_bias
+        ):
             context = attention_output_with_bias["context"]
 
         with self.bias_dropout_add_exec_handler():
-            hidden_states = self.cross_attn_bda(self.training, self.config.bias_dropout_fusion)(
-                attention_output_with_bias, residual, self.hidden_dropout)
+            hidden_states = self.cross_attn_bda(
+                self.training, self.config.bias_dropout_fusion
+            )(attention_output_with_bias, residual, self.hidden_dropout)
 
         # Residual connection.
         residual = hidden_states
@@ -164,18 +177,21 @@ class Internvl2bVitTransformerLayer(TransformerLayer):
 
         # MLP.
         mlp_output_with_bias = self.mlp(pre_mlp_layernorm_output)
-        mlp_output = self.drop_path2((mlp_output_with_bias[0] + mlp_output_with_bias[1]) * self.ls2)
+        mlp_output = self.drop_path2(
+            (mlp_output_with_bias[0] + mlp_output_with_bias[1]) * self.ls2
+        )
         mlp_output_with_bias = (mlp_output, None)
 
         with self.bias_dropout_add_exec_handler():
-            hidden_states = self.mlp_bda(self.training,
-                                         self.config.bias_dropout_fusion)(mlp_output_with_bias,
-                                                                          residual,
-                                                                          self.hidden_dropout)
+            hidden_states = self.mlp_bda(
+                self.training, self.config.bias_dropout_fusion
+            )(mlp_output_with_bias, residual, self.hidden_dropout)
 
-        output = make_viewless_tensor(inp=hidden_states,
-                                      requires_grad=hidden_states.requires_grad,
-                                      keep_graph=True)
+        output = make_viewless_tensor(
+            inp=hidden_states,
+            requires_grad=hidden_states.requires_grad,
+            keep_graph=True,
+        )
 
         # CUDA graph requires returned values to be Tensors
         if self.config.external_cuda_graph and self.training:

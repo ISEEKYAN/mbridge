@@ -1,5 +1,4 @@
 import torch
-
 from megatron.core.parallel_state import (
     get_context_parallel_group,
     get_context_parallel_world_size,
@@ -17,11 +16,13 @@ class _AllGatherToContextParallelRegion(torch.autograd.Function):
             *input_.shape[0:seq_dim],
             2,
             input_.shape[seq_dim] // 2,
-            *input_.shape[(seq_dim + 1):],
+            *input_.shape[(seq_dim + 1) :],
         )
 
         gathered_logits = [torch.zeros_like(input_) for _ in range(cp_size)]
-        torch.distributed.all_gather(gathered_logits, input_, group=get_context_parallel_group())
+        torch.distributed.all_gather(
+            gathered_logits, input_, group=get_context_parallel_group()
+        )
 
         reorded_logits = [None for _ in range(2 * cp_size)]
         if seq_dim == 1:
@@ -58,7 +59,7 @@ class _AllGatherToContextParallelRegion(torch.autograd.Function):
             *grad_output.shape[0:seq_dim],
             2 * cp_size,
             grad_output.shape[seq_dim] // (2 * cp_size),
-            *grad_output.shape[(seq_dim + 1):],
+            *grad_output.shape[(seq_dim + 1) :],
         )
 
         reordered_indices = []
@@ -72,24 +73,28 @@ class _AllGatherToContextParallelRegion(torch.autograd.Function):
         else:
             assert False
 
-        split_tensors = torch.split(grad_output, grad_output.size(seq_dim) // cp_size, dim=seq_dim)
+        split_tensors = torch.split(
+            grad_output, grad_output.size(seq_dim) // cp_size, dim=seq_dim
+        )
         grad_list = [t.contiguous() for t in split_tensors]
         assert split_tensors[0].shape == local_shape
 
-        local_grad = torch.empty(local_shape,
-                                 dtype=grad_output.dtype,
-                                 device=torch.cuda.current_device())
-        torch.distributed.reduce_scatter(local_grad, grad_list, op=bwd_op, group=cp_group)
+        local_grad = torch.empty(
+            local_shape, dtype=grad_output.dtype, device=torch.cuda.current_device()
+        )
+        torch.distributed.reduce_scatter(
+            local_grad, grad_list, op=bwd_op, group=cp_group
+        )
 
         local_grad = local_grad.view(
             *local_grad.shape[0:seq_dim],
             -1,
-            *local_grad.shape[(seq_dim + 2):],
+            *local_grad.shape[(seq_dim + 2) :],
         )
         return local_grad, None, None
 
 
-def all_gather_to_context_parallel_region(local_tensor,
-                                          gather_dim=1,
-                                          bwd_op=torch.distributed.ReduceOp.AVG):
+def all_gather_to_context_parallel_region(
+    local_tensor, gather_dim=1, bwd_op=torch.distributed.ReduceOp.AVG
+):
     return _AllGatherToContextParallelRegion.apply(local_tensor, gather_dim, bwd_op)

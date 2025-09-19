@@ -6,23 +6,25 @@ from collections import OrderedDict
 from typing import Literal, Optional, Tuple
 
 import torch
-from torch import Tensor
-
-from megatron.core import tensor_parallel
-from megatron.core import InferenceParams
+from megatron.core import InferenceParams, tensor_parallel
 from megatron.core.config_logger import has_config_logger_enabled, log_config_to_disk
+from megatron.core.models.common.embeddings.language_model_embedding import (
+    LanguageModelEmbedding,
+)
 from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEmbedding
+from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.models.gpt.gpt_model import GPTModel
+from torch import Tensor
 
 from mbridge.models.gemma3.transformer_config import Gemma3TransformerConfig
-from megatron.core.models.common.embeddings.language_model_embedding import LanguageModelEmbedding
 
 
 class LanguageModelEmbeddingScale(LanguageModelEmbedding):
 
-    def forward(self, input_ids: Tensor, position_ids: Tensor, tokentype_ids: int = None) -> Tensor:
+    def forward(
+        self, input_ids: Tensor, position_ids: Tensor, tokentype_ids: int = None
+    ) -> Tensor:
         """Forward pass of the embedding module.
 
         Args:
@@ -36,7 +38,7 @@ class LanguageModelEmbeddingScale(LanguageModelEmbedding):
         """
         word_embeddings = self.word_embeddings(input_ids)
         # MPATCH BEGINS
-        if hasattr(self.config, 'embed_scale'):
+        if hasattr(self.config, "embed_scale"):
             word_embeddings = word_embeddings * self.config.embed_scale
         # MPATCH ENDS
         if self.add_position_embedding:
@@ -52,7 +54,9 @@ class LanguageModelEmbeddingScale(LanguageModelEmbedding):
         if tokentype_ids is not None:
             assert self.tokentype_embeddings is not None
             # [b s h] -> [s b h] (So that it can be added with embeddings)
-            tokentype_embedding = self.tokentype_embeddings(tokentype_ids).permute(1, 0, 2)
+            tokentype_embedding = self.tokentype_embeddings(tokentype_ids).permute(
+                1, 0, 2
+            )
             embeddings = embeddings + tokentype_embedding
         else:
             assert self.tokentype_embeddings is None
@@ -66,7 +70,7 @@ class LanguageModelEmbeddingScale(LanguageModelEmbedding):
             if not self.reduce_scatter_embeddings and self.scatter_to_sequence_parallel:
                 # MPATCH BEGINS
                 extra_args = {}
-                if version.parse(__version__) >= version.parse('0.13.0'):
+                if version.parse(__version__) >= version.parse("0.13.0"):
                     extra_args["group"] = self.tp_group
                 embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
                     embeddings, **extra_args
@@ -75,7 +79,10 @@ class LanguageModelEmbeddingScale(LanguageModelEmbedding):
             # `scatter_to_sequence_parallel_region` returns a view, which prevents
             # the original tensor from being garbage collected. Clone to facilitate GC.
             # Has a small runtime cost (~0.5%).
-            if self.config.clone_scatter_output_in_embedding and self.scatter_to_sequence_parallel:
+            if (
+                self.config.clone_scatter_output_in_embedding
+                and self.scatter_to_sequence_parallel
+            ):
                 embeddings = embeddings.clone()
             with tensor_parallel.get_cuda_rng_tracker().fork():
                 embeddings = self.embedding_dropout(embeddings)
@@ -86,7 +93,7 @@ class LanguageModelEmbeddingScale(LanguageModelEmbedding):
 
 
 class Gemma3GPTModel(GPTModel):
-    """GPT Transformer language model. args ref: GPTModel   """
+    """GPT Transformer language model. args ref: GPTModel"""
 
     def __init__(
         self,
@@ -99,7 +106,9 @@ class Gemma3GPTModel(GPTModel):
         fp16_lm_cross_entropy: bool = False,
         parallel_output: bool = True,
         share_embeddings_and_output_weights: bool = False,
-        position_embedding_type: Literal['learned_absolute', 'rope', 'none'] = 'learned_absolute',
+        position_embedding_type: Literal[
+            "learned_absolute", "rope", "none"
+        ] = "learned_absolute",
         rotary_percent: float = 1.0,
         rotary_base: int = 10000,
         rope_scaling: bool = False,
@@ -135,7 +144,10 @@ class Gemma3GPTModel(GPTModel):
                 scatter_to_sequence_parallel=scatter_embedding_sequence_parallel,
             )
 
-        if self.position_embedding_type == 'rope' and not self.config.multi_latent_attention:
+        if (
+            self.position_embedding_type == "rope"
+            and not self.config.multi_latent_attention
+        ):
             self.rotary_pos_emb.inv_freq /= rope_scaling_factor
             self.rotary_pos_emb_local = RotaryEmbedding(
                 kv_channels=self.config.kv_channels,
@@ -167,7 +179,9 @@ class Gemma3GPTModel(GPTModel):
         if decoder_input is not None:
             pass
         elif self.pre_process:
-            decoder_input = self.embedding(input_ids=input_ids, position_ids=position_ids)
+            decoder_input = self.embedding(
+                input_ids=input_ids, position_ids=position_ids
+            )
         else:
             # intermediate stage of pipeline
             # decoder will get hidden_states from encoder.input_tensor
@@ -177,32 +191,46 @@ class Gemma3GPTModel(GPTModel):
         rotary_pos_emb = None
         rotary_pos_cos = None
         rotary_pos_sin = None
-        if self.position_embedding_type == 'rope' and not self.config.multi_latent_attention:
+        if (
+            self.position_embedding_type == "rope"
+            and not self.config.multi_latent_attention
+        ):
             if not self.training and self.config.flash_decode and inference_params:
                 # Flash decoding uses precomputed cos and sin for RoPE
                 assert False, "not implemented"
                 rotary_pos_cos, rotary_pos_sin = self.rotary_pos_emb_cache.setdefault(
                     inference_params.max_sequence_length,
-                    self.rotary_pos_emb.get_cos_sin(inference_params.max_sequence_length),
+                    self.rotary_pos_emb.get_cos_sin(
+                        inference_params.max_sequence_length
+                    ),
                 )
             else:
                 rotary_seq_len = self.rotary_pos_emb.get_rotary_seq_len(
-                    inference_params, self.decoder, decoder_input, self.config, packed_seq_params)
+                    inference_params,
+                    self.decoder,
+                    decoder_input,
+                    self.config,
+                    packed_seq_params,
+                )
                 rotary_pos_emb = self.rotary_pos_emb(
                     rotary_seq_len,
                     packed_seq=packed_seq_params is not None
-                    and packed_seq_params.qkv_format == 'thd',
+                    and packed_seq_params.qkv_format == "thd",
                 )
                 rotary_pos_emb_local = self.rotary_pos_emb_local(
                     rotary_seq_len,
                     packed_seq=packed_seq_params is not None
-                    and packed_seq_params.qkv_format == 'thd',
+                    and packed_seq_params.qkv_format == "thd",
                 )
                 rotary_pos_emb = (rotary_pos_emb, rotary_pos_emb_local)
-        if ((self.config.enable_cuda_graph or self.config.flash_decode)
-                and rotary_pos_cos is not None and inference_params):
+        if (
+            (self.config.enable_cuda_graph or self.config.flash_decode)
+            and rotary_pos_cos is not None
+            and inference_params
+        ):
             sequence_len_offset = torch.tensor(
-                [inference_params.sequence_len_offset] * inference_params.current_batch_size,
+                [inference_params.sequence_len_offset]
+                * inference_params.current_batch_size,
                 dtype=torch.int32,
                 device=rotary_pos_cos.device,  # Co-locate this with the rotary tensors
             )
@@ -229,19 +257,23 @@ class Gemma3GPTModel(GPTModel):
         output_weight = None
         if self.share_embeddings_and_output_weights:
             output_weight = self.shared_embedding_or_output_weight()
-        logits, _ = self.output_layer(hidden_states,
-                                      weight=output_weight,
-                                      runtime_gather_output=runtime_gather_output)
+        logits, _ = self.output_layer(
+            hidden_states,
+            weight=output_weight,
+            runtime_gather_output=runtime_gather_output,
+        )
 
         if has_config_logger_enabled(self.config):
-            payload = OrderedDict({
-                'input_ids': input_ids,
-                'position_ids': position_ids,
-                'attention_mask': attention_mask,
-                'decoder_input': decoder_input,
-                'logits': logits,
-            })
-            log_config_to_disk(self.config, payload, prefix='input_and_logits')
+            payload = OrderedDict(
+                {
+                    "input_ids": input_ids,
+                    "position_ids": position_ids,
+                    "attention_mask": attention_mask,
+                    "decoder_input": decoder_input,
+                    "logits": logits,
+                }
+            )
+            log_config_to_disk(self.config, payload, prefix="input_and_logits")
 
         if labels is None:
             # [s b h] => [b s h]

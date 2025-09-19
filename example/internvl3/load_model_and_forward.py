@@ -4,24 +4,22 @@
 import argparse
 
 import torch
-from transformers import AutoModel
-
+from data_proc import get_infer_data
 from megatron.core import parallel_state as mpu
-from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.tensor_parallel.mappings import (
     gather_from_tensor_model_parallel_region,
 )
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from transformers import AutoModel
 
 from mbridge import AutoBridge
-
-from data_proc import get_infer_data
 
 
 # hf logits vs megatron logits
 def cos_similarity(a, b):
     print(f"a {a.shape} b {b.shape}")
     a = a.float()
-    #a = a / a.norm(dim=-1, keepdim=True)
+    # a = a / a.norm(dim=-1, keepdim=True)
     a = torch.exp(a - a.max(dim=-1, keepdim=True)[0])
     a = a / a.norm(dim=-1, keepdim=True)
     """
@@ -29,7 +27,7 @@ def cos_similarity(a, b):
     a = a / a.norm(dim=-1, keepdim=True)
     """
     b = b.float()
-    #b =  b / b.norm(dim=-1, keepdim=True)
+    # b =  b / b.norm(dim=-1, keepdim=True)
     b = torch.exp(b - b.max(dim=-1, keepdim=True)[0])
     b = b / b.norm(dim=-1, keepdim=True)
     """
@@ -37,7 +35,9 @@ def cos_similarity(a, b):
     b =  b / b.norm(dim=-1, keepdim=True)
     """
     sim = (a * b).sum(dim=-1)
-    print(f"hf vs megatron cos_similarity min: {sim.min()}; max: {sim.max()}; mean: {sim.mean()}")
+    print(
+        f"hf vs megatron cos_similarity min: {sim.min()}; max: {sim.max()}; mean: {sim.mean()}"
+    )
 
 
 def init_distributed(tp=2, pp=1, cp=1, vpp=1, ep=1, etp=None):
@@ -93,9 +93,9 @@ def main():
     # Load megatron model
     hf_model_path = args.model_path
     print(f"rank{torch.distributed.get_rank()}: start loading model ...")
-    bridge = AutoBridge.from_pretrained(hf_model_path,
-                                        trust_remote_code=True,
-                                        make_vocab_size_divisible_by=256)
+    bridge = AutoBridge.from_pretrained(
+        hf_model_path, trust_remote_code=True, make_vocab_size_divisible_by=256
+    )
     # set sequence_parallel = False for forward
     bridge.config.sequence_parallel = False
     model = bridge.get_model()
@@ -151,7 +151,7 @@ def main():
         if mpu.get_tensor_model_parallel_world_size() > 1:
             megatron_output = gather_from_tensor_model_parallel_region(megatron_output)
 
-        cos_similarity(hf_output.logits, megatron_output[:, :, :bridge.vocab_size])
+        cos_similarity(hf_output.logits, megatron_output[:, :, : bridge.vocab_size])
 
     torch.distributed.barrier()
     torch.distributed.destroy_process_group()

@@ -371,9 +371,11 @@ def broadcast_str_from_megatron_pp(obj: any) -> any:
 
 
 # reference: megatron/training/utils.py get_batch_on_this_cp_rank
-def split_data_cp_rank(val: torch.Tensor, cp_size: int, seq_dim: int, cp_rank: int = None):
+def split_data_cp_rank(
+    val: torch.Tensor, cp_size: int, seq_dim: int, cp_rank: int = None
+):
     assert cp_size > 1
-    assert 0 == val.shape[seq_dim] % (2 * cp_size), f'{val.shape=} {cp_size=}'
+    assert 0 == val.shape[seq_dim] % (2 * cp_size), f"{val.shape=} {cp_size=}"
     if cp_rank is None:
         cp_rank = mpu.get_context_parallel_rank()
     if val is None:
@@ -383,11 +385,11 @@ def split_data_cp_rank(val: torch.Tensor, cp_size: int, seq_dim: int, cp_rank: i
         *val.shape[0:seq_dim],
         2 * cp_size,
         val.shape[seq_dim] // (2 * cp_size),
-        *val.shape[(seq_dim + 1):],
+        *val.shape[(seq_dim + 1) :],
     )
 
     index = torch.tensor([cp_rank, (2 * cp_size - cp_rank - 1)], device=val.device)
     val = val.index_select(seq_dim, index)
-    val = val.view(*val.shape[0:seq_dim], -1, *val.shape[(seq_dim + 2):])
+    val = val.view(*val.shape[0:seq_dim], -1, *val.shape[(seq_dim + 2) :])
 
     return val

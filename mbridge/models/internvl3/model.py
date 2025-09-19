@@ -1,20 +1,16 @@
 from typing import Optional
 
 import torch
-
-from megatron.core import InferenceParams
-from megatron.core.transformer import MegatronModule
-from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.transformer import TransformerConfig
-from megatron.core import tensor_parallel
-from megatron.core import mpu
+from megatron.core import InferenceParams, mpu, tensor_parallel
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer import MegatronModule, TransformerConfig
+from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_config import TransformerConfig
 
-from mbridge.models.internvl3.transformer_config import InternvlTransformerConfig
 from mbridge.models.internvl3.internvl_vit_model import InternvlVitModel
+from mbridge.models.internvl3.transformer_config import InternvlTransformerConfig
 
 
 # Note: This is under development and may be missing features.
@@ -54,7 +50,7 @@ class InternVLModel(MegatronModule):
         vision_projection_layer_spec: ModuleSpec,
         vision_projection_type: str = "mlp",
         parallel_output: bool = True,
-        language_position_embedding_type: str = 'rope',
+        language_position_embedding_type: str = "rope",
         language_rotary_percent: float = 1.0,
         pre_process: bool = True,
         post_process: bool = True,
@@ -116,7 +112,8 @@ class InternVLModel(MegatronModule):
             scatter_embedding_sequence_parallel=False,
         )
         self.share_embeddings_and_output_weights = (
-            self.language_model.share_embeddings_and_output_weights)
+            self.language_model.share_embeddings_and_output_weights
+        )
 
     def shared_embedding_or_output_weight(self):
         """This is a convenience method to surface the language model's word embeddings, which is
@@ -130,15 +127,21 @@ class InternVLModel(MegatronModule):
         # gives us non-lists or None
         if not isinstance(input_tensor, list):
             input_tensor = [input_tensor]
-        assert len(input_tensor) == 1, 'input_tensor should only be length 1 for Qwen2VL'
+        assert (
+            len(input_tensor) == 1
+        ), "input_tensor should only be length 1 for Qwen2VL"
 
         if self.pre_process:
             self.encoder_hidden_state = input_tensor[0]
         else:
             self.language_model.set_input_tensor(input_tensor[0])
 
-    def freeze(self, freeze_language_model: bool, freeze_vision_model: bool,
-               freeze_vision_projection: bool):
+    def freeze(
+        self,
+        freeze_language_model: bool,
+        freeze_vision_model: bool,
+        freeze_vision_projection: bool,
+    ):
         """Freeze model modules.
 
         Make specific modules non-trainable by setting requires_grad to False for the module's parameters.
@@ -171,8 +174,10 @@ class InternVLModel(MegatronModule):
         packed_seq_params: PackedSeqParams = None,
         image_token_index: int = -1,
     ) -> torch.Tensor:
-        use_inference_kv_cache = (inference_params is not None and "image_tokens_count"
-                                  in inference_params.key_value_memory_dict)
+        use_inference_kv_cache = (
+            inference_params is not None
+            and "image_tokens_count" in inference_params.key_value_memory_dict
+        )
         if use_inference_kv_cache:
             raise NotImplementedError()
 
@@ -185,8 +190,7 @@ class InternVLModel(MegatronModule):
                 vision_embeds = vision_embeds.transpose(0, 1).contiguous()
 
             language_embeddings: torch.Tensor = self.language_model.embedding(
-                input_ids=input_ids,
-                position_ids=None  # NOTE: disable
+                input_ids=input_ids, position_ids=None  # NOTE: disable
             ).clone()  # [text_seq_len, b, h_language]
 
             if vision_embeds is not None:
@@ -195,9 +199,11 @@ class InternVLModel(MegatronModule):
                 language_embeddings = language_embeddings.reshape(B * N, C)
 
                 input_ids = input_ids.reshape(B * N)
-                selected = (input_ids == image_token_index)
+                selected = input_ids == image_token_index
                 assert selected.sum() != 0
-                language_embeddings[selected] = vision_embeds.reshape(-1, C).to(language_embeddings.device)
+                language_embeddings[selected] = vision_embeds.reshape(-1, C).to(
+                    language_embeddings.device
+                )
 
                 language_embeddings = language_embeddings.reshape(B, N, C)
                 language_embeddings = language_embeddings.transpose(0, 1).contiguous()
@@ -206,7 +212,8 @@ class InternVLModel(MegatronModule):
 
         if self.config.sequence_parallel and self.pre_process:
             language_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
-                language_embeddings)  # [S/TP,B,H]
+                language_embeddings
+            )  # [S/TP,B,H]
 
         output = self.language_model(
             input_ids=None,

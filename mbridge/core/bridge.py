@@ -31,7 +31,7 @@ class Bridge(ABC):
         hf_config: AutoConfig,
         dtype: torch.dtype = torch.bfloat16,
         parallel_states: ParallelStates = None,
-        make_vocab_size_divisible_by: int = None
+        make_vocab_size_divisible_by: int = None,
     ):
         """
         Initialize a bridge instance.
@@ -204,7 +204,9 @@ class Bridge(ABC):
                 else:
                     mcore_weight = None
                 if hf_names[0] in {"lm_head.weight", "model.embed_tokens.weight"}:
-                    if param.shape[0] == 1 and (mcore_weight is None or mcore_weight.shape[0] != 1):
+                    if param.shape[0] == 1 and (
+                        mcore_weight is None or mcore_weight.shape[0] != 1
+                    ):
                         # skip lm_head.weight when the model is a value model
                         continue
 
@@ -690,13 +692,14 @@ class Bridge(ABC):
         hf_names = self._weight_name_mapping_mcore_to_hf(mcore_weights_name)
         if len(hf_names) == 1:
             # pad embeding and output layer
-            if self.make_vocab_size_divisible_by is not None and \
-                ("embedding.word_embeddings.weight" in mcore_weights_name or \
-                 "output_layer.weight" in mcore_weights_name):
+            if self.make_vocab_size_divisible_by is not None and (
+                "embedding.word_embeddings.weight" in mcore_weights_name
+                or "output_layer.weight" in mcore_weights_name
+            ):
                 assert mcore_weights.shape[0] == self.padded_vocab_size
                 assert self.vocab_size is not None
 
-                return [hf_names[0]], [mcore_weights[:self.vocab_size]]
+                return [hf_names[0]], [mcore_weights[: self.vocab_size]]
 
             return [hf_names[0]], [mcore_weights]
 
@@ -772,9 +775,10 @@ class Bridge(ABC):
 
         if len(hf_weights) == 1:
             # pad embeding and output layer
-            if self.make_vocab_size_divisible_by is not None and \
-                ("embedding.word_embeddings.weight" in mcore_weights_name or \
-                 "output_layer.weight" in mcore_weights_name):
+            if self.make_vocab_size_divisible_by is not None and (
+                "embedding.word_embeddings.weight" in mcore_weights_name
+                or "output_layer.weight" in mcore_weights_name
+            ):
                 assert hf_weights[0].shape[0] == self.vocab_size
                 assert self.padded_vocab_size is not None
 

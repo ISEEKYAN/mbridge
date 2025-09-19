@@ -8,15 +8,14 @@ from typing import Optional, Union
 
 import torch
 import torch.distributed
-from torch import Tensor
-from torch import nn
 from einops import rearrange
+from torch import Tensor, nn
 
 try:
     import xformers
     from xformers.ops.fmha import (
-        memory_efficient_attention_forward_requires_grad,
         memory_efficient_attention_backward,
+        memory_efficient_attention_forward_requires_grad,
     )
     from xformers.ops.fmha.attn_bias import AttentionBias
     from xformers.ops.fmha.common import AttentionOp
@@ -29,24 +28,24 @@ except:
         pass
 
 
-from megatron.core.transformer.enums import AttnMaskType
-from megatron.core.parallel_state import get_context_parallel_group
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.parallel_state import get_context_parallel_group
 from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.enums import AttnMaskType
 
 from mbridge.models.ext.llama3_cp.cp_utils import (
-    gather_cp_forward_zigzag,
+    gather_cp_backward,
     gather_cp_backward_zigzag,
     gather_cp_forward,
-    gather_cp_backward,
+    gather_cp_forward_zigzag,
 )
 
 
 @dataclass
 class GpatchPackedSeqParams(PackedSeqParams):
-    '''
+    """
     MemoryEfficientAttention params
-    '''
+    """
 
     use_zigzag: bool = True
     kv_slice: slice = None
@@ -123,8 +122,8 @@ class Llama3MemoryEfficientAttnFunc(torch.autograd.Function):
                 value_0 = value_0[:, kv_slice]
 
             if i + heads_k_stride < k_head_nums:
-                k_0 = key[:, :, (i + 1):(i + 1 + heads_k_stride), :].contiguous()
-                v_0 = value[:, :, (i + 1):(i + 1 + heads_k_stride), :].contiguous()
+                k_0 = key[:, :, (i + 1) : (i + 1 + heads_k_stride), :].contiguous()
+                v_0 = value[:, :, (i + 1) : (i + 1 + heads_k_stride), :].contiguous()
                 key_func, key_handle = gather_forward_func(
                     k_0,
                     seq_dim=1,
@@ -139,7 +138,16 @@ class Llama3MemoryEfficientAttnFunc(torch.autograd.Function):
                 )
                 wait_handles = [key_handle, value_handle]
 
-            query_0 = query[:, :, i * q_head_nums // k_head_nums:(i + heads_k_stride) * q_head_nums // k_head_nums, :]
+            query_0 = query[
+                :,
+                :,
+                i
+                * q_head_nums
+                // k_head_nums : (i + heads_k_stride)
+                * q_head_nums
+                // k_head_nums,
+                :,
+            ]
 
             out, lse = memory_efficient_attention_forward_requires_grad(
                 query_0,
@@ -195,7 +203,9 @@ class Llama3MemoryEfficientAttnFunc(torch.autograd.Function):
 
         q_head_nums = query.shape[2]
         _, _, k_head_nums, _ = key.shape
-        split_dout = torch.split(dout, dout.shape[2] // (k_head_nums // heads_k_stride), dim=2)
+        split_dout = torch.split(
+            dout, dout.shape[2] // (k_head_nums // heads_k_stride), dim=2
+        )
         assert len(split_dout) == len(out_list) == len(lse_list)
 
         dq_list = []
@@ -229,8 +239,8 @@ class Llama3MemoryEfficientAttnFunc(torch.autograd.Function):
                 value_0 = value_0[:, kv_slice]
 
             if i + heads_k_stride < k_head_nums:
-                k_0 = key[:, :, (i + 1):(i + 1 + heads_k_stride), :].contiguous()
-                v_0 = value[:, :, (i + 1):(i + 1 + heads_k_stride), :].contiguous()
+                k_0 = key[:, :, (i + 1) : (i + 1 + heads_k_stride), :].contiguous()
+                v_0 = value[:, :, (i + 1) : (i + 1 + heads_k_stride), :].contiguous()
                 key_func, key_handle = gather_forward_func(
                     k_0,
                     seq_dim=1,
@@ -245,7 +255,16 @@ class Llama3MemoryEfficientAttnFunc(torch.autograd.Function):
                 )
                 wait_handles = [key_handle, value_handle]
 
-            query_0 = query[:, :, i * q_head_nums // k_head_nums:(i + heads_k_stride) * q_head_nums // k_head_nums, :]
+            query_0 = query[
+                :,
+                :,
+                i
+                * q_head_nums
+                // k_head_nums : (i + heads_k_stride)
+                * q_head_nums
+                // k_head_nums,
+                :,
+            ]
 
             dq, dk, dv = memory_efficient_attention_backward(
                 split_dout[i],
@@ -303,7 +322,7 @@ class Llama3MemoryEfficientAttnFunc(torch.autograd.Function):
         d_query = torch.cat(dq_list, dim=2)
         d_key = torch.cat(dk_list, dim=2)
         d_value = torch.cat(dv_list, dim=2)
-        return (d_query, d_key, d_value) + (None, ) * 9
+        return (d_query, d_key, d_value) + (None,) * 9
 
 
 # q/k/v: batch_size x seqlen x head_cnt x head_dim
@@ -350,8 +369,8 @@ class MemoryEfficientAttention(nn.Module):
         k_channels: Optional[int] = None,
         v_channels: Optional[int] = None,
         cp_comm_type: str = "p2p",
-        #TODO(guanyouhe): 这里 mcore0.13 多了一个 model_comm_pgs，看看你是否需要修改
-        model_comm_pgs = None,
+        # TODO(guanyouhe): 这里 mcore0.13 多了一个 model_comm_pgs，看看你是否需要修改
+        model_comm_pgs=None,
     ):
         super().__init__()
         self.config = config
@@ -359,7 +378,9 @@ class MemoryEfficientAttention(nn.Module):
         self.attention_dropout = attention_dropout
         self.softmax_scale = softmax_scale
 
-        self.num_key_value_groups = self.config.num_attention_heads // self.config.num_query_groups
+        self.num_key_value_groups = (
+            self.config.num_attention_heads // self.config.num_query_groups
+        )
         self.scaling = None
         if hasattr(self.config, "query_pre_attn_scalar"):
             self.scaling = self.config.query_pre_attn_scalar**-0.5
@@ -372,7 +393,9 @@ class MemoryEfficientAttention(nn.Module):
         batch, slen, num_query_groups, head_dim = hidden_states.shape
         if n_rep == 1:
             return hidden_states
-        hidden_states = hidden_states[:, :, :, None, :].expand(batch, slen, num_query_groups, n_rep, head_dim)
+        hidden_states = hidden_states[:, :, :, None, :].expand(
+            batch, slen, num_query_groups, n_rep, head_dim
+        )
         return hidden_states.reshape(batch, slen, num_query_groups * n_rep, head_dim)
 
     def forward(
@@ -392,9 +415,15 @@ class MemoryEfficientAttention(nn.Module):
             key = self.repeat_kv(key, self.num_key_value_groups)
             value = self.repeat_kv(value, self.num_key_value_groups)
 
-        use_zigzag = packed_seq_params.use_zigzag if packed_seq_params is not None else True
+        use_zigzag = (
+            packed_seq_params.use_zigzag if packed_seq_params is not None else True
+        )
         kv_slice = packed_seq_params.kv_slice if packed_seq_params is not None else None
-        heads_k_stride = packed_seq_params.heads_k_stride if packed_seq_params is not None else key.shape[2]
+        heads_k_stride = (
+            packed_seq_params.heads_k_stride
+            if packed_seq_params is not None
+            else key.shape[2]
+        )
         if isinstance(attention_mask, AttentionBias):
             if attn_mask_type in [AttnMaskType.no_mask]:
                 assert not use_zigzag, "no mask should not use zigzag"
@@ -406,7 +435,9 @@ class MemoryEfficientAttention(nn.Module):
 
         assert key.shape[2] % heads_k_stride == 0, f"{key.shape=} {heads_k_stride=}"
         if attention_mask is not None and not isinstance(attention_mask, AttentionBias):
-            assert heads_k_stride == attention_mask.shape[1], "memory_efficient_attention need heads dim"
+            assert (
+                heads_k_stride == attention_mask.shape[1]
+            ), "memory_efficient_attention need heads dim"
 
         if attention_mask is None and attn_mask_type in [AttnMaskType.causal]:
             assert False, "可以支持，但要设置 mask"
