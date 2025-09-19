@@ -97,6 +97,11 @@ class LLMBridge(Bridge):
         base_config.update(kwargs)
         base_config.update(self.extra_args)
 
+        if "attention_backend" in base_config:
+            from megatron.core.transformer.enums import AttnBackend
+            if isinstance(base_config["attention_backend"], str):
+                base_config["attention_backend"] = AttnBackend[base_config["attention_backend"]]
+
         return self.TransformerConfigClass(**base_config)
 
     def _get_gptmodel_args(self) -> dict:
