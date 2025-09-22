@@ -12,8 +12,19 @@ The package contains:
 
 Version: 0.1.0
 """
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
-__version__ = "0.1.0"
+try:
+    __version__ = _pkg_version(__name__)
+except PackageNotFoundError:
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    data = tomllib.loads(pyproject.read_text())
+    __version__ = data["project"]["version"]
+
 
 # Import models module to ensure registration decorators are executed
 from . import models, utils

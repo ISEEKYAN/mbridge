@@ -665,7 +665,7 @@ class Bridge(ABC):
 
         if ".self_attention." in mcore_weights_name:
             return self._weight_name_mapping_attention(mcore_weights_name)
-        elif ".mlp." in mcore_weights_name:
+        elif "mlp" in mcore_weights_name:
             return self._weight_name_mapping_mlp(mcore_weights_name)
         else:
             return self._weight_name_mapping_other(mcore_weights_name)
