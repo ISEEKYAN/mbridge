@@ -24,7 +24,20 @@ class SafeTensorIO:
 
         self.hf_dir = hf_dir
 
+    # Some models have undergone structural changes across different versions of transformers,
+    # which may result in differences in key names
+    # for example: qwen2.5vl's structural change at transformers>=4.52.0
+    # Therefore, it is necessary to create a name mapping here.
+    def _mapping_hf_weight_names(
+        self,
+        hf_weight_names: list[str],
+    ) -> tuple[list[str], dict[str, str]]:
+        # new_hf_weight_names -> old_hf_weight_names
+        mapping_hf_weight_names = {k: k for k in hf_weight_names}
+        return hf_weight_names, mapping_hf_weight_names
+
     def load_some_hf_weight(self, hf_weight_names: list[str]) -> dict:
+        hf_weight_names, mapping_hf_weight_names = self._mapping_hf_weight_names(hf_weight_names)
         index = self.index
         hf_dir = self.hf_dir
         ret = {}
@@ -39,7 +52,7 @@ class SafeTensorIO:
                 with safe_open(safetensor_file, framework="pt", device="cpu") as f:
                     for name in weight_names:
                         ret[name] = f.get_tensor(name)
-            return ret
+            return {mapping_hf_weight_names[k]:v for k, v in ret.items()}
         # Search all safetensors files
         safetensor_files = glob(os.path.join(hf_dir, "*.safetensors"))
         # If there are safetensors files
@@ -56,7 +69,7 @@ class SafeTensorIO:
                 raise ValueError(
                     f"Weights {set(hf_weight_names)-set(ret.keys())} not found in safetensors files in {hf_dir}"
                 )
-            return ret
+            return {mapping_hf_weight_names[k]:v for k, v in ret.items()}
         if len(safetensor_files) == 0:
             if glob(os.path.join(hf_dir, "pytorch_model-*.bin")).__len__() > 0:
                 raise NotImplementedError(
