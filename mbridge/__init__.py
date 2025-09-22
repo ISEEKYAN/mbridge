@@ -18,7 +18,10 @@ from importlib.metadata import version as _pkg_version
 try:
     __version__ = _pkg_version(__name__)
 except PackageNotFoundError:
-    import tomllib
+    try:
+        import tomllib
+    except:
+        import tomli as tomllib
     from pathlib import Path
 
     pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
