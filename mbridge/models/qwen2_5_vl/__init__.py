@@ -9,6 +9,28 @@ from ...core import VLMBridge, register_model
 from ...core.util import unwrap_model
 from .model import Qwen2_5VLModel
 from .transformer_config import get_vision_model_config, get_vision_projection_config
+from mbridge.core.safetensor_io import SafeTensorIO
+
+
+class Qwen2_5VLSafeTensorIO(SafeTensorIO):
+
+    def _mapping_hf_weight_names(
+        self,
+        hf_weight_names: list[str],
+    ) -> tuple[list[str], dict[str, str]]:
+        ret_hf_weight_names = []
+        mapping_hf_weight_names = {}
+        for hf_weight_name in hf_weight_names:
+            new_hf_weight_name = hf_weight_name
+            if hf_weight_name not in self.index:
+                if new_hf_weight_name.startswith("model."):
+                    new_hf_weight_name = new_hf_weight_name.replace("model.",
+                                                                    "model.language_model.")
+                elif new_hf_weight_name.startswith("visual."):
+                    new_hf_weight_name = new_hf_weight_name.replace("visual.", "model.visual.")
+            ret_hf_weight_names.append(new_hf_weight_name)
+            mapping_hf_weight_names[new_hf_weight_name] = hf_weight_name
+        return ret_hf_weight_names, mapping_hf_weight_names
 
 
 @register_model("qwen2_5_vl")
@@ -105,6 +127,9 @@ class Qwen2_5VLBridge(VLMBridge):
             "visual.blocks.{layer_number}.norm2.weight"
         ],
     }
+
+    def _get_safetensor_io(self, weights_path: str):
+        return Qwen2_5VLSafeTensorIO(self._get_actual_hf_path(weights_path))
 
     def _adjust_mapping_for_shared_weights(self):
         if getattr(self.hf_config, "tie_word_embeddings", False):
