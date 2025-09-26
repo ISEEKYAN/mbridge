@@ -5,11 +5,12 @@ from typing import Callable, Generator, Optional
 import torch
 from transformers import AutoConfig
 
+from mbridge.core.safetensor_io import SafeTensorIO
+
 from ...core import VLMBridge, register_model
 from ...core.util import unwrap_model
 from .model import Qwen2_5VLModel
 from .transformer_config import get_vision_model_config, get_vision_projection_config
-from mbridge.core.safetensor_io import SafeTensorIO
 
 
 class Qwen2_5VLSafeTensorIO(SafeTensorIO):
@@ -24,10 +25,13 @@ class Qwen2_5VLSafeTensorIO(SafeTensorIO):
             new_hf_weight_name = hf_weight_name
             if hf_weight_name not in self.index:
                 if new_hf_weight_name.startswith("model."):
-                    new_hf_weight_name = new_hf_weight_name.replace("model.",
-                                                                    "model.language_model.")
+                    new_hf_weight_name = new_hf_weight_name.replace(
+                        "model.", "model.language_model."
+                    )
                 elif new_hf_weight_name.startswith("visual."):
-                    new_hf_weight_name = new_hf_weight_name.replace("visual.", "model.visual.")
+                    new_hf_weight_name = new_hf_weight_name.replace(
+                        "visual.", "model.visual."
+                    )
             ret_hf_weight_names.append(new_hf_weight_name)
             mapping_hf_weight_names[new_hf_weight_name] = hf_weight_name
         return ret_hf_weight_names, mapping_hf_weight_names
@@ -427,7 +431,8 @@ class Qwen2_5VLBridge(VLMBridge):
         return ret
 
     def _model_provider(
-        self, post_model_creation_callbacks: list[Callable[[torch.nn.Module], None]]
+        self,
+        post_model_creation_callbacks: list[Callable[[torch.nn.Module], None]],
     ):
         """
         Creates and returns a model provider function.
@@ -490,6 +495,7 @@ class Qwen2_5VLBridge(VLMBridge):
                 add_encoder=True,
                 parallel_output=True,
                 language_share_embeddings_and_output_weights=share_embeddings_and_output_weights,
+                vp_stage=vp_stage,
             )
 
             for callback in post_model_creation_callbacks:

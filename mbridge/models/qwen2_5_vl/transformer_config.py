@@ -84,6 +84,11 @@ def get_vision_model_config(config):
     config.fullatt_block_indexes = [7, 15, 23, 31]
     config._qwen2_5_vl_window_size = 112
     config.context_parallel_size = 1
+    config.pipeline_model_parallel_size = 1
+    config.num_layers_in_first_pipeline_stage = None
+    config.num_layers_in_last_pipeline_stage = None
+    config.virtual_pipeline_model_parallel_size = 1
+    config.pipeline_model_parallel_layout = None
     return config
 
 

@@ -3,6 +3,7 @@ import logging
 from collections import namedtuple
 from typing import List
 
+import megatron.core as mcore
 import torch
 from megatron.core import InferenceParams, tensor_parallel
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -78,6 +79,7 @@ class Qwen2_5VLModel(MegatronModule):
         language_share_embeddings_and_output_weights: bool = False,
         image_token_id: int = 151655,
         video_token_id: int = 151656,
+        vp_stage: int = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -122,7 +124,9 @@ class Qwen2_5VLModel(MegatronModule):
                 pre_process=True,
                 post_process=True,
             )
-
+        args = {}
+        if mcore.__version__ >= "0.13.0":
+            args["vp_stage"] = vp_stage
         self.language_model = GPTModel(
             config=language_transformer_config,
             transformer_layer_spec=language_transformer_layer_spec,
@@ -137,6 +141,7 @@ class Qwen2_5VLModel(MegatronModule):
             fp16_lm_cross_entropy=fp16_lm_cross_entropy,
             share_embeddings_and_output_weights=language_share_embeddings_and_output_weights,
             scatter_embedding_sequence_parallel=False,
+            **args,
         )
 
         self.share_embeddings_and_output_weights = (

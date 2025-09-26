@@ -1,6 +1,7 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 from typing import Optional
 
+import megatron.core as mcore
 import torch
 from megatron.core import InferenceParams
 from megatron.core.models.common.vision_module.vision_module import VisionModule
@@ -126,12 +127,16 @@ class Qwen2_5VisionModel(VisionModule):
         # Transformer layers.
         # TODO: Follow-up changes will make pre and post_process configurable. They are needed for supporting pipeline parallelism.
         # NOTE: a final layer norm and/or linear layer present in some implementations are omitted here.
+        args = {}
+        if mcore.__version__ >= "0.13.0":
+            args["vp_stage"] = 0
         self.decoder = TransformerBlock(
             config=transformer_config,
             spec=transformer_layer_spec,
             pre_process=self.pre_process,
             post_process=self.post_process,
             post_layer_norm=True,
+            **args,
         )
 
         self.merge_hidden_size = projection_config.ffn_hidden_size
