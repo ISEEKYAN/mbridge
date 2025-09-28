@@ -93,7 +93,6 @@ class Qwen3VLModel(MegatronModule):
 
         self.encoder_hidden_state = None
         self.vision_model = None
-        self.vision_projection = None
         self.language_model = None
         self.image_token_id = image_token_id
         self.video_token_id = video_token_id
@@ -174,13 +173,20 @@ class Qwen3VLModel(MegatronModule):
             modules.append(self.language_model)
         if freeze_vision_model and self.vision_model is not None:
             modules.append(self.vision_model)
-        # TODO(guanyouhe): 这里应该要 freeze 所有的 merger
-        if freeze_vision_projection and self.vision_projection is not None:
-            modules.append(self.vision_projection)
+        if freeze_vision_projection and self.vision_model is not None:
+            modules.append(self.vision_model.decoder.deepstack_merger_list)
+            modules.append(self.vision_model.merger)
 
         for module in modules:
             for param in module.parameters():
                 param.requires_grad = False
+
+        if freeze_vision_model and not freeze_vision_projection:
+            if self.vision_model is not None:
+                for param in self.vision_model.decoder.deepstack_merger_list.parameters():
+                    param.requires_grad = True
+                for param in self.vision_model.merger.parameters():
+                    param.requires_grad = True
 
     def forward(
         self,
