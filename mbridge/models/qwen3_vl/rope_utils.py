@@ -22,11 +22,12 @@ import torch
 from torch import Tensor, nn
 
 from megatron.core import parallel_state
-from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.models.common.embeddings.rope_utils import (
     _apply_rotary_pos_emb_bshd,
     get_pos_emb_on_this_cp_rank,
 )
+
+from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 
 
 # Prefer fused RoPE from Apex as we need the `transpose_output_memory` argument for the bshd trick.
@@ -276,7 +277,7 @@ def apply_rotary_pos_emb_thd_absolute(
 def apply_rotary_pos_emb_absolute(
     t: Tensor,
     freqs: Tensor,
-    config: TransformerConfig,
+    config: Qwen3VLTransformerConfig,
     cu_seqlens: Optional[Tensor] = None,
 ):
     """
@@ -285,25 +286,21 @@ def apply_rotary_pos_emb_absolute(
 
     In Qwen3-VL, the shape of freqs is (seq_length, bs, 1, 2 * dim) instead of [max_seqlen, 1, 1, 2 * dim]
     """
+    assert not config.apply_rope_fusion
+    orig_t_dtype = t.dtype
+    if config.apply_rotary_pos_emb_in_fp32:
+        t = t.float()
 
-    if config.apply_rope_fusion:
-        if cu_seqlens is None:
-            # NOTE: TE backends do not support mRoPE in bshd format when bs > 1
-            if freqs.shape[1] > 1:
-                return _apply_rotary_pos_emb_bshd(
-                    t, freqs, rotary_interleaved=config.rotary_interleaved
-                )
-            else:
-                return fused_apply_rotary_pos_emb(t, freqs)
-        else:
-            # NOTE: as expected, thd format can use bshd
-            return fused_apply_rotary_pos_emb(t[:, None], freqs).squeeze(1)
+    if cu_seqlens is None:
+        result = _apply_rotary_pos_emb_bshd(
+            t, freqs, rotary_interleaved=config.rotary_interleaved
+        )
     else:
-        if cu_seqlens is None:
-            return _apply_rotary_pos_emb_bshd(
-                t, freqs, rotary_interleaved=config.rotary_interleaved
-            )
-        else:
-            return apply_rotary_pos_emb_thd_absolute(
-                t, cu_seqlens, freqs, rotary_interleaved=config.rotary_interleaved
-            )
+        result = apply_rotary_pos_emb_thd_absolute(
+            t, cu_seqlens, freqs, rotary_interleaved=config.rotary_interleaved
+        )
+
+    if config.apply_rotary_pos_emb_in_fp32:
+        result = result.to(orig_t_dtype)
+
+    return result

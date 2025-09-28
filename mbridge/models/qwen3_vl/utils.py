@@ -55,8 +55,8 @@ class Qwen3VLVisionRotaryEmbedding(nn.Module):
 
     def forward(self, seqlen: int) -> torch.Tensor:
         if not hasattr(self, "inv_freq"):
-            inv_freq = 1.0 / (self.theta
-                              **(torch.arange(0, self.dim, 2, dtype=torch.float) / self.dim))
+            inv_freq = 1.0 / (self.theta**(torch.arange(
+                0, self.dim, 2, dtype=torch.float, device=torch.cuda.current_device()) / self.dim))
             self.register_buffer("inv_freq", inv_freq, persistent=False)
         seq = torch.arange(seqlen, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
         freqs = torch.outer(seq, self.inv_freq)

@@ -17,6 +17,7 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     num_position_embeddings: int = 2304
     out_hidden_size: int = 2304
 
+    apply_rotary_pos_emb_in_fp32: bool = False
     deepstack_visual_indexes: List[int] = field(default_factory=lambda: [8, 16, 24])
 
 
@@ -47,6 +48,7 @@ def get_vision_model_config(config: Qwen3VLTransformerConfig, hf_config):
     config.hidden_dropout = 0.0
     config.attention_dropout = 0.0
     config.layernorm_epsilon = 1e-6
+    config.apply_rotary_pos_emb_in_fp32 = True
 
     config.patch_size = hf_config.patch_size
     config.temporal_patch_size = hf_config.temporal_patch_size
