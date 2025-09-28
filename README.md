@@ -77,6 +77,9 @@ Currently supported models:
 - [x] Mixtral
 - [x] Qwen2.5-VL
 - [x] Mimo
+- [x] InternVL3
+- [x] Gemma3
+- [x] Qwen3VL
 
 
 ## Examples
