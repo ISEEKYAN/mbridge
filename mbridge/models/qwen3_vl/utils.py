@@ -166,17 +166,13 @@ def split_deepstack_embs(
     tp_slices = []
     for i in range(batch_size):
         idx = i * tp_size + tp_rank
-        if embed_cu_lens[idx] != embed_cu_lens[idx + 1]:
-            tp_slices.append(slice(embed_cu_lens[idx], embed_cu_lens[idx + 1]))
+        tp_slices.append(slice(embed_cu_lens[idx], embed_cu_lens[idx + 1]))
 
     deepstack_visual_embeds_ret = []
     for deepstack_visual_embed in deepstack_visual_embeds:
         tmp_slice_tensor = []
         for tp_slice in tp_slices:
             tmp_slice_tensor.append(deepstack_visual_embed[tp_slice])
-        if len(tmp_slice_tensor) != 0:
-            deepstack_visual_embeds_ret.append(torch.cat(tmp_slice_tensor, dim=0))
-        else:
-            deepstack_visual_embeds_ret.append(None)
+        deepstack_visual_embeds_ret.append(torch.cat(tmp_slice_tensor, dim=0))
 
     return visual_pos_masks_list[tp_rank], deepstack_visual_embeds_ret
