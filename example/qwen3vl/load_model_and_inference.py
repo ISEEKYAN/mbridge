@@ -5,7 +5,11 @@ import argparse
 from typing import Any
 from tqdm import trange
 
-from transformers import Qwen3VLProcessor
+try:
+    from transformers import Qwen3VLProcessor
+except:
+    print(f"your install the tranformers>=4.57.0 or install from source")
+
 import torch
 import torch.nn.functional as F
 

@@ -1,7 +1,10 @@
 import argparse
 
 import torch
-from transformers import Qwen3VLMoeForConditionalGeneration
+try:
+    from transformers import Qwen3VLMoeForConditionalGeneration
+except:
+    print(f"your install the tranformers>=4.57.0 or install from source")
 
 from example.qwen3vl.load_model_and_forward import get_sample_for_forward
 
