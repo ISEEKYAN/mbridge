@@ -230,11 +230,12 @@ class Qwen3VLModel(MegatronModule):
         video_start_index = 0
         vision_grid_thw = None
         vision_data = None
-        image_mask = image_input_mask
+        image_mask = None
         deepstack_feature_lists = None
 
         if self.pre_process:
             if image_grid_thw is not None:
+                image_mask = image_input_mask
                 if image_mask is None:
                     image_mask = (input_ids == self.image_token_id).contiguous()
                 vision_grid_thw = image_grid_thw
