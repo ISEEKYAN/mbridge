@@ -54,7 +54,8 @@ torchrun $DISTRIBUTED_ARGS \
     --tp $TP_SIZE \
     --pp $PP_SIZE \
     --ep $EP_SIZE \
-    --model_path /data/model/Qwen3-VL-235B-A22B-Instruct
+    --model_path /data/model/Qwen3-VL-235B-A22B-Instruct \
+    --check_export
 
 torchrun $DISTRIBUTED_ARGS \
     example/qwen3vl/load_model_and_inference.py \

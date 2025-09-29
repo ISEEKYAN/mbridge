@@ -201,6 +201,8 @@ class Qwen3VLModel(MegatronModule):
         pixel_values_videos: torch.Tensor = None,
         image_grid_thw: torch.Tensor = None,
         video_grid_thw: torch.Tensor = None,
+        # cat set at dataset
+        image_input_mask: torch.Tensor = None,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
 
@@ -228,12 +230,13 @@ class Qwen3VLModel(MegatronModule):
         video_start_index = 0
         vision_grid_thw = None
         vision_data = None
-        image_mask = None
+        image_mask = image_input_mask
         deepstack_feature_lists = None
 
         if self.pre_process:
             if image_grid_thw is not None:
-                image_mask = (input_ids == self.image_token_id).contiguous()
+                if image_mask is None:
+                    image_mask = (input_ids == self.image_token_id).contiguous()
                 vision_grid_thw = image_grid_thw
                 vision_data = pixel_values
                 video_start_index = image_mask.sum().item()

@@ -195,13 +195,13 @@ class Qwen3VLMoEBridge(Qwen3VBaseBridge):
         return []
 
     def _set_extra_config(self):
-        self.configpatch_size = self.hf_config.vision_config.patch_size
-        self.configtemporal_patch_size = self.hf_config.vision_config.temporal_patch_size
-        self.configin_channels = self.hf_config.vision_config.in_channels
-        self.configspatial_merge_size = self.hf_config.vision_config.spatial_merge_size
-        self.confignum_position_embeddings = self.hf_config.vision_config.num_position_embeddings
-        self.configout_hidden_size = self.hf_config.vision_config.out_hidden_size
-        self.configdeepstack_visual_indexes = deepcopy(
+        self.config.patch_size = self.hf_config.vision_config.patch_size
+        self.config.temporal_patch_size = self.hf_config.vision_config.temporal_patch_size
+        self.config.in_channels = self.hf_config.vision_config.in_channels
+        self.config.spatial_merge_size = self.hf_config.vision_config.spatial_merge_size
+        self.config.num_position_embeddings = self.hf_config.vision_config.num_position_embeddings
+        self.config.out_hidden_size = self.hf_config.vision_config.out_hidden_size
+        self.config.deepstack_visual_indexes = deepcopy(
             self.hf_config.vision_config.deepstack_visual_indexes)
 
     def _weight_name_mapping_mlp(self, name: str) -> list[str]:
