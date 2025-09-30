@@ -1,9 +1,10 @@
 from dataclasses import dataclass, field
 from typing import List
 from copy import deepcopy
+from functools import partial
 
 import torch
-from torch import Tensor, nn
+import torch.nn.functional as F
 
 from megatron.core.transformer import TransformerConfig
 
@@ -19,19 +20,6 @@ class Qwen3VLTransformerConfig(TransformerConfig):
 
     apply_rotary_pos_emb_in_fp32: bool = False
     deepstack_visual_indexes: List[int] = field(default_factory=lambda: [8, 16, 24])
-
-
-class PytorchGELUTanh(nn.Module):
-    """
-    A fast C implementation of the tanh approximation of the GeLU activation function. See
-    https://huggingface.co/papers/1606.08415.
-
-    This implementation is equivalent to NewGELU and FastGELU but much faster. However, it is not an exact numerical
-    match due to rounding errors.
-    """
-
-    def forward(self, input: Tensor) -> Tensor:
-        return nn.functional.gelu(input, approximate="tanh")
 
 
 def get_vision_model_config(config: Qwen3VLTransformerConfig, hf_config):
@@ -58,8 +46,8 @@ def get_vision_model_config(config: Qwen3VLTransformerConfig, hf_config):
     config.out_hidden_size = hf_config.out_hidden_size
     config.deepstack_visual_indexes = deepcopy(hf_config.deepstack_visual_indexes)
 
-    config.gated_linear_unit = False # no gated
-    config.activation_func = PytorchGELUTanh() # hidden_act
+    config.gated_linear_unit = False  # no gated
+    config.activation_func = partial(F.gelu, approximate="tanh")  # hidden_act
     config.kv_channels = config.hidden_size // config.num_attention_heads
     config.num_query_groups = config.num_attention_heads  # no GQA
     config.layernorm_zero_centered_gamma = False  # False
