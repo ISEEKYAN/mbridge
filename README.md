@@ -1,5 +1,5 @@
 # Important
-[Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge) is the official NVIDIA maintained version, we will migrate to Megatron-Bridge soon.
+This project is being deprecated and no new models will be supported. Please contribute your suggestions/ideas to github.com/nvidia-nemo/megatron-bridge. Thank you.
 
 # MBridge: Bridge Megatron-Core to Hugging Face/Reinforcement Learning
 
