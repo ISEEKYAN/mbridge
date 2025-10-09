@@ -1,5 +1,5 @@
 # Important
-This project is being deprecated and no new models will be supported. Please contribute your suggestions/ideas to github.com/nvidia-nemo/megatron-bridge. Thank you.
+This project is being deprecated and no new models will be supported. Please contribute your suggestions/ideas to [github.com/nvidia-nemo/megatron-bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge). Thank you.
 
 # MBridge: Bridge Megatron-Core to Hugging Face/Reinforcement Learning
 
