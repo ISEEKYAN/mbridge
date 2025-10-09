@@ -102,11 +102,6 @@ model = bridge.get_model(weight_path=HF_MODEL_PATH, post_model_creation_callback
 
 ```
 
-## Development Roadmap
-
-MBridge will continue to maintain support for popular models, but will not develop more advanced features.
-See [Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge) for more advanced features.
-
 ## Acknowledgements
 - [veRL](https://github.com/volcengine/verl) has adopted MBridge as a connector to Megatron-Core.
 - [slime](https://github.com/THUDM/slime) has adopted MBridge as Megatron-Core checkpoint converter.
