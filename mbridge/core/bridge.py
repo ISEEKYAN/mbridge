@@ -57,6 +57,10 @@ class Bridge(ABC):
         self.vocab_size = None
         self.padded_vocab_size = None
 
+        # Some moe models require multiple weights to be combined into one,
+        # such as qwen3vl. It will cache it into this buff until all weights are collected.
+        self.export_weights_buff = {}
+
     def get_model(
         self,
         weight_path: str = None,
@@ -297,6 +301,7 @@ class Bridge(ABC):
     def export_weights(
         self, models: list[torch.nn.Module]
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
+        assert len(self.export_weights_buff) == 0, f"should be empty {self.export_weights_buff=}"
         models = [unwrap_model(model) for model in models]
 
         def get_model_chunk_generator():
@@ -401,6 +406,10 @@ class Bridge(ABC):
                     converted_names, converted_params = self._weight_to_hf_format(
                         name, merge_params
                     )
+                    # Some moe models require multiple weights to be merge into one, such as qwen3vl
+                    if len(converted_names) == 0:
+                        continue
+
                     yield from zip(converted_names, converted_params)
                 continue
 
@@ -429,6 +438,9 @@ class Bridge(ABC):
             converted_names, converted_params = self._weight_to_hf_format(
                 name, infer_params
             )
+            # Some moe models require multiple weights to be merge into one, such as qwen3vl
+            if len(converted_names) == 0:
+                continue
 
             yield from zip(converted_names, converted_params)
 
