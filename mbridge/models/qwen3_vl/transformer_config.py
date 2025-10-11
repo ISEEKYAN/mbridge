@@ -1,11 +1,10 @@
-from dataclasses import dataclass, field
-from typing import List
 from copy import deepcopy
+from dataclasses import dataclass, field
 from functools import partial
+from typing import List
 
 import torch
 import torch.nn.functional as F
-
 from megatron.core.transformer import TransformerConfig
 
 
@@ -55,7 +54,7 @@ def get_vision_model_config(config: Qwen3VLTransformerConfig, hf_config):
     config.bias_activation_fusion = False  # no swiglu, set false
     config.bias_dropout_fusion = False  # no dropout, set false
     config.attention_softmax_in_fp32 = True  # use True
-    config.normalization = 'LayerNorm'
+    config.normalization = "LayerNorm"
 
     config.tp_comm_overlap = False
     config.sequence_parallel = False

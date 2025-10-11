@@ -2,20 +2,19 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
-from torch import nn
-from torch.nn import functional as F
-
 from megatron.core import InferenceParams
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.enums import ModelType
-from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.utils import get_tensor_model_parallel_group_if_none
+from torch import nn
+from torch.nn import functional as F
 
-from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from mbridge.models.qwen3_vl.transformer_block import Qwen3VLVisionTransformerBlock
+from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from mbridge.models.qwen3_vl.utils import (
     Qwen3VLVisionPatchEmbed,
     Qwen3VLVisionPatchMerger,
@@ -31,6 +30,7 @@ class Qwen3VLVisionModel(VisionModule):
         transformer_layer_spec (ModuleSpec): Specifies module to use for transformer layers.
         patch_merger_spec (ModuleSpec): Specifies module to use for transformer layers.
     """
+
     def __init__(
         self,
         transformer_config: Qwen3VLTransformerConfig,
@@ -46,11 +46,14 @@ class Qwen3VLVisionModel(VisionModule):
         self.spatial_merge_unit = self.spatial_merge_size * self.spatial_merge_size
 
         self.patch_embed = Qwen3VLVisionPatchEmbed(transformer_config)
-        self.pos_embed = nn.Embedding(transformer_config.num_position_embeddings,
-                                      transformer_config.hidden_size)
+        self.pos_embed = nn.Embedding(
+            transformer_config.num_position_embeddings, transformer_config.hidden_size
+        )
         self.num_grid_per_side = int(transformer_config.num_position_embeddings**0.5)
 
-        head_dim = transformer_config.hidden_size // transformer_config.num_attention_heads
+        head_dim = (
+            transformer_config.hidden_size // transformer_config.num_attention_heads
+        )
         self.rotary_pos_emb = Qwen3VLVisionRotaryEmbedding(head_dim // 2)
 
         self.model_type = ModelType.encoder_or_decoder
@@ -104,15 +107,29 @@ class Qwen3VLVisionModel(VisionModule):
 
             block_rows = torch.arange(merged_h, device=device)  # block row indices
             block_cols = torch.arange(merged_w, device=device)  # block col indices
-            intra_row = torch.arange(merge_size, device=device)  # intra-block row offsets
-            intra_col = torch.arange(merge_size, device=device)  # intra-block col offsets
+            intra_row = torch.arange(
+                merge_size, device=device
+            )  # intra-block row offsets
+            intra_col = torch.arange(
+                merge_size, device=device
+            )  # intra-block col offsets
 
             # Compute full-resolution positions
-            row_idx = block_rows[:, None, None, None] * merge_size + intra_row[None, None, :, None]
-            col_idx = block_cols[None, :, None, None] * merge_size + intra_col[None, None, None, :]
+            row_idx = (
+                block_rows[:, None, None, None] * merge_size
+                + intra_row[None, None, :, None]
+            )
+            col_idx = (
+                block_cols[None, :, None, None] * merge_size
+                + intra_col[None, None, None, :]
+            )
 
-            row_idx = row_idx.expand(merged_h, merged_w, merge_size, merge_size).reshape(-1)
-            col_idx = col_idx.expand(merged_h, merged_w, merge_size, merge_size).reshape(-1)
+            row_idx = row_idx.expand(
+                merged_h, merged_w, merge_size, merge_size
+            ).reshape(-1)
+            col_idx = col_idx.expand(
+                merged_h, merged_w, merge_size, merge_size
+            ).reshape(-1)
 
             coords = torch.stack((row_idx, col_idx), dim=-1)
 
@@ -166,21 +183,29 @@ class Qwen3VLVisionModel(VisionModule):
                 idx_list[i].extend(indices[i].tolist())
                 weight_list[i].extend(weights[i].tolist())
 
-        idx_tensor = torch.tensor(idx_list, dtype=torch.long, device=self.pos_embed.weight.device)
+        idx_tensor = torch.tensor(
+            idx_list, dtype=torch.long, device=self.pos_embed.weight.device
+        )
         weight_tensor = torch.tensor(
-            weight_list, dtype=self.pos_embed.weight.dtype, device=self.pos_embed.weight.device
+            weight_list,
+            dtype=self.pos_embed.weight.dtype,
+            device=self.pos_embed.weight.device,
         )
         pos_embeds = self.pos_embed(idx_tensor) * weight_tensor[:, :, None]
         patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
-        patch_pos_embeds = patch_pos_embeds.split([h * w for h, w in zip(grid_hs, grid_ws)])
+        patch_pos_embeds = patch_pos_embeds.split(
+            [h * w for h, w in zip(grid_hs, grid_ws)]
+        )
 
         patch_pos_embeds_permute = []
         merge_size = self.config.spatial_merge_size
         for pos_embed, t, h, w in zip(patch_pos_embeds, grid_ts, grid_hs, grid_ws):
             pos_embed = pos_embed.repeat(t, 1)
             pos_embed = (
-                pos_embed.view(t, h // merge_size, merge_size, w // merge_size, merge_size, -1)
+                pos_embed.view(
+                    t, h // merge_size, merge_size, w // merge_size, merge_size, -1
+                )
                 .permute(0, 1, 3, 2, 4, 5)
                 .flatten(0, 4)
             )

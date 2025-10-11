@@ -65,12 +65,16 @@ class Qwen3VLSelfAttention(SelfAttention):
         # Check if we need to skip RoPE
         # no_rope is 0-indexed array and self.layer_number is 1-indexed
         no_rope = (
-            self.config.no_rope_freq[self.layer_number - 1] if self.config.no_rope_freq else False
+            self.config.no_rope_freq[self.layer_number - 1]
+            if self.config.no_rope_freq
+            else False
         )
         if no_rope:
             rotary_pos_emb = None
 
-        inference_context = deprecate_inference_params(inference_context, inference_params)
+        inference_context = deprecate_inference_params(
+            inference_context, inference_params
+        )
 
         if inference_context and inference_context.is_dynamic_batching():
             assert HAVE_FA3 or is_fa_min_version(
@@ -78,7 +82,11 @@ class Qwen3VLSelfAttention(SelfAttention):
             ), "flash attn verion v2.7.3 and above is required for dynamic batching."
 
         # hidden_states: [sq, b, h]
-        if self.config.flash_decode and not self.training and inference_context is not None:
+        if (
+            self.config.flash_decode
+            and not self.training
+            and inference_context is not None
+        ):
             rotary_pos_emb = None
         else:
             assert rotary_pos_cos is None and rotary_pos_sin is None
@@ -93,7 +101,9 @@ class Qwen3VLSelfAttention(SelfAttention):
         # Get the query, key and value tensors based on the type of attention -
         # self or cross attn.
         nvtx_range_push(suffix="qkv")
-        query, key, value = self.get_query_key_value_tensors(hidden_states, key_value_states)
+        query, key, value = self.get_query_key_value_tensors(
+            hidden_states, key_value_states
+        )
         nvtx_range_pop(suffix="qkv")
 
         # ===================================================
@@ -112,9 +122,9 @@ class Qwen3VLSelfAttention(SelfAttention):
         if in_decode_mode and self.config.flash_decode:
             assert self.layer_number in inference_context.key_value_memory_dict
             assert inference_context.sequence_len_offset is not None
-            inference_key_memory, inference_value_memory = inference_context.key_value_memory_dict[
-                self.layer_number
-            ]
+            inference_key_memory, inference_value_memory = (
+                inference_context.key_value_memory_dict[self.layer_number]
+            )
             output = self.flash_decode(
                 sequence_len_offset=sequence_len_offset,
                 query_layer=query,
@@ -187,7 +197,11 @@ class Qwen3VLSelfAttention(SelfAttention):
                     )
                 else:
                     query = inference_context.apply_rotary_emb_query(
-                        query, q_pos_emb, self.config, cu_seqlens_q, self.model_comm_pgs.cp
+                        query,
+                        q_pos_emb,
+                        self.config,
+                        cu_seqlens_q,
+                        self.model_comm_pgs.cp,
                     )
             if k_pos_emb is not None:
                 key = apply_rotary_pos_emb_absolute(
@@ -251,9 +265,9 @@ class Qwen3VLSelfAttention(SelfAttention):
                     kv_lengths_decode_only,
                     block_table,
                 )
-                core_attn_out = rearrange(core_attn_out, 's b h d -> s b (h d)')
+                core_attn_out = rearrange(core_attn_out, "s b h d -> s b (h d)")
 
-        if packed_seq_params is not None and packed_seq_params.qkv_format == 'thd':
+        if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
             # reshape to same output shape as unpacked case
             # (t, np, hn) -> (t, b=1, h=np*hn)
             # t is the pack size = sum (sq_i)

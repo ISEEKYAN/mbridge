@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+
 try:
     from transformers import Qwen3VLConfig, Qwen3VLProcessor
     from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
@@ -9,12 +10,12 @@ try:
 except:
     print(f"your install the tranformers>=4.57.0 or install from source")
 from megatron.core.models.common.embeddings.rope_utils import _apply_rotary_pos_emb_bshd
+
+from example.qwen3vl.load_model_and_forward import get_sample_for_forward
 from mbridge.models.qwen3_vl.rope_utils import (
     Qwen3VLMultimodalRotaryEmbedding,
     get_rope_index,
 )
-
-from example.qwen3vl.load_model_and_forward import get_sample_for_forward
 
 
 def init_q_k(hf_config, token_ids):
@@ -58,7 +59,7 @@ if __name__ == "__main__":
     x = torch.randn([128, 256], dtype=torch.bfloat16, device="cuda:0")
     hf_cos, hf_sin = hf(x, position_ids)
 
-    mrope_section=[24, 20, 20]
+    mrope_section = [24, 20, 20]
     emb = mlm(position_ids, mrope_section)
 
     cos_ = (torch.cos(emb)).to(x.dtype)

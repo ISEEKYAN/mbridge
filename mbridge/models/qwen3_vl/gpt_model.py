@@ -1,18 +1,16 @@
 from typing import Literal, Optional
 
 import torch
+from megatron.core.inference.contexts import BaseInferenceContext
+from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
 
-from megatron.core.inference.contexts import BaseInferenceContext
-from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.utils import deprecate_inference_params
-
-from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer.spec_utils import ModuleSpec
-
-from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-from mbridge.models.qwen3_vl.transformer_block import Qwen3VLTransformerBlock
 from mbridge.models.qwen3_vl.rope_utils import Qwen3VLMultimodalRotaryEmbedding
+from mbridge.models.qwen3_vl.transformer_block import Qwen3VLTransformerBlock
+from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 
 
 class Qwen3VLGPTModel(GPTModel):
@@ -28,8 +26,9 @@ class Qwen3VLGPTModel(GPTModel):
         fp16_lm_cross_entropy: bool = False,
         parallel_output: bool = True,
         share_embeddings_and_output_weights: bool = False,
-        position_embedding_type: Literal['learned_absolute', 'rope', 'mrope',
-                                         'none'] = 'learned_absolute',
+        position_embedding_type: Literal[
+            "learned_absolute", "rope", "mrope", "none"
+        ] = "learned_absolute",
         rotary_percent: float = 1.0,
         rotary_base: int = 10000,
         rope_scaling: bool = False,
@@ -111,16 +110,23 @@ class Qwen3VLGPTModel(GPTModel):
                 `parallel_output` arg in the constructor will be used.
         """
 
-        inference_context = deprecate_inference_params(inference_context, inference_params)
+        inference_context = deprecate_inference_params(
+            inference_context, inference_params
+        )
 
-        decoder_input, rotary_pos_emb, rotary_pos_cos, rotary_pos_sin, sequence_len_offset = (
-            self._preprocess(
-                input_ids=input_ids,
-                position_ids=position_ids,
-                decoder_input=decoder_input,
-                inference_context=inference_context,
-                packed_seq_params=packed_seq_params,
-            ))
+        (
+            decoder_input,
+            rotary_pos_emb,
+            rotary_pos_cos,
+            rotary_pos_sin,
+            sequence_len_offset,
+        ) = self._preprocess(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            decoder_input=decoder_input,
+            inference_context=inference_context,
+            packed_seq_params=packed_seq_params,
+        )
 
         # Run decoder.
         hidden_states = self.decoder(

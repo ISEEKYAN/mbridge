@@ -3,6 +3,7 @@
 
 import argparse
 from typing import Any
+
 from tqdm import trange
 
 try:
@@ -12,18 +13,16 @@ except:
 
 import torch
 import torch.nn.functional as F
-
 from megatron.core import parallel_state as mpu
-from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.models.gpt.gpt_model import ModelType
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.mappings import (
     gather_from_tensor_model_parallel_region,
 )
-from megatron.core.models.gpt.gpt_model import ModelType
-
-from mbridge import AutoBridge
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
 from example.qwen3vl.load_model_and_forward import get_sample_for_forward
+from mbridge import AutoBridge
 
 
 def init_distributed(tp=2, pp=1, cp=1, vpp=1, ep=1, etp=None):
@@ -72,8 +71,12 @@ def mcore_fwd_fn(data_iterator, model):
         input_ids=sample["input_ids"].cuda(),
         position_ids=None,
         attention_mask=None,
-        pixel_values=sample["pixel_values"].cuda() if "pixel_values" in sample else None,
-        image_grid_thw=sample["image_grid_thw"].cuda() if "image_grid_thw" in sample else None,
+        pixel_values=(
+            sample["pixel_values"].cuda() if "pixel_values" in sample else None
+        ),
+        image_grid_thw=(
+            sample["image_grid_thw"].cuda() if "image_grid_thw" in sample else None
+        ),
     )
     if isinstance(output_tensor, tuple):
         output_tensor = output_tensor[0]
@@ -82,8 +85,8 @@ def mcore_fwd_fn(data_iterator, model):
     def loss_fn(output_tensor, non_loss_data=True):
         loss = output_tensor.mean()
         return loss, {
-            'loss': loss.detach(),
-            'logits': output_tensor.detach(),
+            "loss": loss.detach(),
+            "logits": output_tensor.detach(),
         }
 
     return output_tensor, loss_fn
@@ -124,7 +127,9 @@ def main():
     bridge = AutoBridge.from_pretrained(hf_model_path)
     if args.pp > 1:
         num_layer = bridge.hf_config.text_config.num_hidden_layers
-        first_last_layer = num_layer - (num_layer + args.pp - 1) // args.pp * (args.pp - 2)
+        first_last_layer = num_layer - (num_layer + args.pp - 1) // args.pp * (
+            args.pp - 2
+        )
         assert first_last_layer > 1
         bridge.set_extra_args(
             num_layers_in_first_pipeline_stage=first_last_layer // 2,
@@ -173,17 +178,24 @@ def main():
             if mpu.is_pipeline_last_stage():
                 megatron_output = mcore_output[0]["logits"]
                 if mpu.get_tensor_model_parallel_world_size() > 1:
-                    megatron_output = gather_from_tensor_model_parallel_region(megatron_output)
+                    megatron_output = gather_from_tensor_model_parallel_region(
+                        megatron_output
+                    )
 
                 megatron_output = megatron_output[:, :real_seq_length, :]
                 next_token = megatron_output[:, -1, :].argmax(dim=-1)[0].item()
-                if torch.distributed.get_rank() == torch.distributed.get_world_size() - 1:
+                if (
+                    torch.distributed.get_rank()
+                    == torch.distributed.get_world_size() - 1
+                ):
                     print(f"{i=} {next_token=}")
 
             next_token = broadcast_object_within_pp(next_token)
             generated_tokens.append(next_token)
             input_ids[0].append(next_token)
-            sample["input_ids"] = torch.tensor(input_ids, device=torch.cuda.current_device())
+            sample["input_ids"] = torch.tensor(
+                input_ids, device=torch.cuda.current_device()
+            )
             if next_token == eos_token_id:
                 break
 

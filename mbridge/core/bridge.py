@@ -301,7 +301,9 @@ class Bridge(ABC):
     def export_weights(
         self, models: list[torch.nn.Module]
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
-        assert len(self.export_weights_buff) == 0, f"should be empty {self.export_weights_buff=}"
+        assert (
+            len(self.export_weights_buff) == 0
+        ), f"should be empty {self.export_weights_buff=}"
         models = [unwrap_model(model) for model in models]
 
         def get_model_chunk_generator():

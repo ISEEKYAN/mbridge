@@ -2,17 +2,16 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
-from torch import nn
-from torch.nn import functional as F
-
 from megatron.core import InferenceParams
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.enums import ModelType
-from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.utils import get_tensor_model_parallel_group_if_none
+from torch import nn
+from torch.nn import functional as F
 
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 
@@ -31,17 +30,26 @@ class Qwen3VLVisionPatchEmbed(nn.Module):
         self.embed_dim = config.hidden_size
 
         kernel_size = [self.temporal_patch_size, self.patch_size, self.patch_size]
-        self.proj = nn.Conv3d(self.in_channels,
-                              self.embed_dim,
-                              kernel_size=kernel_size,
-                              stride=kernel_size,
-                              bias=True)
+        self.proj = nn.Conv3d(
+            self.in_channels,
+            self.embed_dim,
+            kernel_size=kernel_size,
+            stride=kernel_size,
+            bias=True,
+        )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         target_dtype = self.proj.weight.dtype
-        hidden_states = hidden_states.view(-1, self.in_channels, self.temporal_patch_size,
-                                           self.patch_size, self.patch_size)
-        hidden_states = self.proj(hidden_states.to(dtype=target_dtype)).view(-1, self.embed_dim)
+        hidden_states = hidden_states.view(
+            -1,
+            self.in_channels,
+            self.temporal_patch_size,
+            self.patch_size,
+            self.patch_size,
+        )
+        hidden_states = self.proj(hidden_states.to(dtype=target_dtype)).view(
+            -1, self.embed_dim
+        )
         return hidden_states
 
 
@@ -55,10 +63,23 @@ class Qwen3VLVisionRotaryEmbedding(nn.Module):
 
     def forward(self, seqlen: int) -> torch.Tensor:
         if not hasattr(self, "inv_freq"):
-            inv_freq = 1.0 / (self.theta**(torch.arange(
-                0, self.dim, 2, dtype=torch.float, device=torch.cuda.current_device()) / self.dim))
+            inv_freq = 1.0 / (
+                self.theta
+                ** (
+                    torch.arange(
+                        0,
+                        self.dim,
+                        2,
+                        dtype=torch.float,
+                        device=torch.cuda.current_device(),
+                    )
+                    / self.dim
+                )
+            )
             self.register_buffer("inv_freq", inv_freq, persistent=False)
-        seq = torch.arange(seqlen, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
+        seq = torch.arange(
+            seqlen, device=self.inv_freq.device, dtype=self.inv_freq.dtype
+        )
         freqs = torch.outer(seq, self.inv_freq)
         return freqs
 

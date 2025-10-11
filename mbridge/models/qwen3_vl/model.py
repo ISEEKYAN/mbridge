@@ -1,17 +1,17 @@
 import logging
 
 import torch
-from megatron.core import InferenceParams, tensor_parallel, mpu
+from megatron.core import InferenceParams, mpu, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from mbridge.models.qwen3_vl.attention import Qwen3VLSelfAttention
-from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-from mbridge.models.qwen3_vl.vision_model import Qwen3VLVisionModel
-from mbridge.models.qwen3_vl.rope_utils import get_rope_index
 from mbridge.models.qwen3_vl.gpt_model import Qwen3VLGPTModel
+from mbridge.models.qwen3_vl.rope_utils import get_rope_index
+from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from mbridge.models.qwen3_vl.utils import split_deepstack_embs
+from mbridge.models.qwen3_vl.vision_model import Qwen3VLVisionModel
 
 
 # Note: This is under development and may be missing features.
@@ -125,8 +125,9 @@ class Qwen3VLModel(MegatronModule):
             share_embeddings_and_output_weights=language_share_embeddings_and_output_weights,
             scatter_embedding_sequence_parallel=False,
         )
-        assert len(vision_transformer_config.deepstack_visual_indexes) < len(self.language_model.decoder.layers), \
-            "the deepstack_visual_embeds should on the first pp-stage"
+        assert len(vision_transformer_config.deepstack_visual_indexes) < len(
+            self.language_model.decoder.layers
+        ), "the deepstack_visual_embeds should on the first pp-stage"
 
         self.share_embeddings_and_output_weights = (
             self.language_model.share_embeddings_and_output_weights
@@ -183,7 +184,9 @@ class Qwen3VLModel(MegatronModule):
 
         if freeze_vision_model and not freeze_vision_projection:
             if self.vision_model is not None:
-                for param in self.vision_model.decoder.deepstack_merger_list.parameters():
+                for (
+                    param
+                ) in self.vision_model.decoder.deepstack_merger_list.parameters():
                     param.requires_grad = True
                 for param in self.vision_model.merger.parameters():
                     param.requires_grad = True
@@ -191,7 +194,7 @@ class Qwen3VLModel(MegatronModule):
     def forward(
         self,
         input_ids: torch.Tensor,
-        position_ids: torch.Tensor = None, # can set at dataset
+        position_ids: torch.Tensor = None,  # can set at dataset
         attention_mask: torch.Tensor = None,
         labels: torch.Tensor = None,
         inference_params: InferenceParams = None,
@@ -224,7 +227,9 @@ class Qwen3VLModel(MegatronModule):
             output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
                 [b, s, vocab_size].
         """
-        assert pixel_values_videos is None and video_grid_thw is None, "not support video now"
+        assert (
+            pixel_values_videos is None and video_grid_thw is None
+        ), "not support video now"
         assert inference_params is None, "not support inference"
 
         video_start_index = 0
@@ -273,11 +278,19 @@ class Qwen3VLModel(MegatronModule):
                 assert video_embeds is None, "not support video now"
 
                 if image_embeds is not None:
-                    combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+                    combined_embeddings = combined_embeddings.transpose(
+                        0, 1
+                    ).contiguous()
                     combined_embeddings[image_mask] = image_embeds
-                    combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+                    combined_embeddings = combined_embeddings.transpose(
+                        0, 1
+                    ).contiguous()
             if self.config.sequence_parallel:
-                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
+                combined_embeddings = (
+                    tensor_parallel.scatter_to_sequence_parallel_region(
+                        combined_embeddings
+                    )
+                )
                 combined_embeddings = combined_embeddings.contiguous()
         else:
             combined_embeddings = None

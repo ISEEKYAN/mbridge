@@ -1,6 +1,5 @@
 import torch
 
-
 from mbridge.core import VLMBridge, register_model
 from mbridge.core.util import unwrap_model
 
@@ -11,37 +10,43 @@ class Qwen3VBaseBridge(VLMBridge):
     def _adjust_mapping_for_shared_weights(self):
         if getattr(self.hf_config.text_config, "tie_word_embeddings", False):
             self._DIRECT_MAPPING["language_model.output_layer.weight"] = (
-                "model.embed_tokens.weight")
+                "model.embed_tokens.weight"
+            )
 
     def _get_hf_shared_weight_keys(self):
         if getattr(self.hf_config.text_config, "tie_word_embeddings", False):
             return ["model.embed_tokens.weight"]
         return []
-    
+
     def _get_mcore_config_by_name(self, mcore_weights_name: str):
         if "vision_model." in mcore_weights_name:
             assert hasattr(self, "vision_config")
             return self.vision_config
         return self.config
 
-    def _weight_name_mapping_mcore_local_to_global(self,
-                                                   model: torch.nn.Module,
-                                                   consider_ep: bool = True) -> dict[str, str]:
+    def _weight_name_mapping_mcore_local_to_global(
+        self, model: torch.nn.Module, consider_ep: bool = True
+    ) -> dict[str, str]:
         # vpp
         local_layer_to_global_layer = {}
         model = unwrap_model(model)
-        if hasattr(model, "language_model") and hasattr(model.language_model, "decoder"):
+        if hasattr(model, "language_model") and hasattr(
+            model.language_model, "decoder"
+        ):
             for idx, layer in enumerate(model.language_model.decoder.layers):
                 local_layer_to_global_layer[idx] = layer.layer_number - 1
-        all_param_names = [k for k in model.state_dict().keys() if "_extra_state" not in k]
+        all_param_names = [
+            k for k in model.state_dict().keys() if "_extra_state" not in k
+        ]
         ret = {}
         for param_name in all_param_names:
             keyword = "language_model.decoder.layers."
             if keyword in param_name:
                 layer_idx = int(param_name.split(keyword)[1].split(".")[0])
                 global_layer_idx = local_layer_to_global_layer[layer_idx]
-                ret[param_name] = param_name.replace(f"layers.{layer_idx}.",
-                                                     f"layers.{global_layer_idx}.")
+                ret[param_name] = param_name.replace(
+                    f"layers.{layer_idx}.", f"layers.{global_layer_idx}."
+                )
             else:
                 ret[param_name] = param_name
 
@@ -71,7 +76,9 @@ class Qwen3VBaseBridge(VLMBridge):
         key = ".".join(split_name)
         convert_names = []
         mapping_names = self._ATTENTION_MAPPING[key]
-        convert_names.extend([x.format(layer_number=layer_number) for x in mapping_names])
+        convert_names.extend(
+            [x.format(layer_number=layer_number) for x in mapping_names]
+        )
         if len(convert_names) == 0:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names
@@ -83,7 +90,9 @@ class Qwen3VBaseBridge(VLMBridge):
         key = ".".join(split_name)
         convert_names = []
         mapping_names = self._MLP_MAPPING[key]
-        convert_names.extend([x.format(layer_number=layer_number) for x in mapping_names])
+        convert_names.extend(
+            [x.format(layer_number=layer_number) for x in mapping_names]
+        )
         if len(convert_names) == 0:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names
@@ -128,39 +137,54 @@ class Qwen3VBaseBridge(VLMBridge):
             vision_hidden_size = tmp_config.hidden_size
             vision_num_query_groups = tmp_config.num_heads
             vision_head_dim = vision_hidden_size // tmp_config.num_heads
-            if '.attn.qkv.weight' in hf_names[0]:
-                mcore_weights = mcore_weights.view(
-                    vision_num_query_groups,
-                    3,
-                    -1,
-                    vision_head_dim,
-                    vision_hidden_size,
-                ).transpose(0, 1).reshape(-1, vision_hidden_size).contiguous()
+            if ".attn.qkv.weight" in hf_names[0]:
+                mcore_weights = (
+                    mcore_weights.view(
+                        vision_num_query_groups,
+                        3,
+                        -1,
+                        vision_head_dim,
+                        vision_hidden_size,
+                    )
+                    .transpose(0, 1)
+                    .reshape(-1, vision_hidden_size)
+                    .contiguous()
+                )
 
-            if '.attn.qkv.bias' in hf_names[0]:
-                mcore_weights = mcore_weights.view(
-                    vision_num_query_groups,
-                    3,
-                    -1,
-                ).transpose(0, 1).reshape(-1).contiguous()
+            if ".attn.qkv.bias" in hf_names[0]:
+                mcore_weights = (
+                    mcore_weights.view(
+                        vision_num_query_groups,
+                        3,
+                        -1,
+                    )
+                    .transpose(0, 1)
+                    .reshape(-1)
+                    .contiguous()
+                )
 
             # moe
             if ".mlp.experts.linear_fc" in mcore_weights_name:
                 # get export index
                 experts_key = hf_names[0]
                 experts_idx = int(mcore_weights_name.split(".weight")[-1])
-                
+
                 if experts_key not in self.export_weights_buff:
                     self.export_weights_buff[experts_key] = {}
                 assert experts_idx not in self.export_weights_buff
                 self.export_weights_buff[experts_key][experts_idx] = mcore_weights.T
 
-                if len(self.export_weights_buff[experts_key]) < self.config.num_moe_experts:    
+                if (
+                    len(self.export_weights_buff[experts_key])
+                    < self.config.num_moe_experts
+                ):
                     return [], []
-                
+
                 mcore_weights_list = []
                 for idx in range(self.config.num_moe_experts):
-                    mcore_weights_list.append(self.export_weights_buff[experts_key].pop(idx))
+                    mcore_weights_list.append(
+                        self.export_weights_buff[experts_key].pop(idx)
+                    )
                 self.export_weights_buff.pop(experts_key)
                 return [hf_names[0]], [torch.stack(mcore_weights_list)]
 
@@ -179,7 +203,9 @@ class Qwen3VBaseBridge(VLMBridge):
             num_attention_heads = self.hf_config.text_config.num_attention_heads
 
             head_dim = getattr(
-                self.hf_config.text_config, "head_dim", hidden_dim // num_attention_heads
+                self.hf_config.text_config,
+                "head_dim",
+                hidden_dim // num_attention_heads,
             )
             out_shape = (
                 [num_key_value_heads, -1, hidden_dim]
@@ -234,25 +260,40 @@ class Qwen3VBaseBridge(VLMBridge):
             vision_hidden_size = tmp_config.hidden_size
             vision_num_query_groups = tmp_config.num_heads
             vision_head_dim = vision_hidden_size // tmp_config.num_heads
-            if '.attn.qkv.weight' in hf_names[0]:
-                return hf_weights[0].view(
-                    3,
-                    vision_num_query_groups,
-                    -1,
-                    vision_head_dim,
-                    vision_hidden_size,
-                ).transpose(0, 1).flatten(1, 2).reshape(-1, vision_hidden_size).contiguous()
+            if ".attn.qkv.weight" in hf_names[0]:
+                return (
+                    hf_weights[0]
+                    .view(
+                        3,
+                        vision_num_query_groups,
+                        -1,
+                        vision_head_dim,
+                        vision_hidden_size,
+                    )
+                    .transpose(0, 1)
+                    .flatten(1, 2)
+                    .reshape(-1, vision_hidden_size)
+                    .contiguous()
+                )
 
-            if '.attn.qkv.bias' in hf_names[0]:
-                return hf_weights[0].view(
-                    3,
-                    vision_num_query_groups,
-                    -1,
-                ).transpose(0, 1).flatten(1, 2).view(-1).contiguous()
+            if ".attn.qkv.bias" in hf_names[0]:
+                return (
+                    hf_weights[0]
+                    .view(
+                        3,
+                        vision_num_query_groups,
+                        -1,
+                    )
+                    .transpose(0, 1)
+                    .flatten(1, 2)
+                    .view(-1)
+                    .contiguous()
+                )
             # pad embeding and output layer
-            if self.make_vocab_size_divisible_by is not None and \
-                ("embedding.word_embeddings.weight" in mcore_weights_name or \
-                 "output_layer.weight" in mcore_weights_name):
+            if self.make_vocab_size_divisible_by is not None and (
+                "embedding.word_embeddings.weight" in mcore_weights_name
+                or "output_layer.weight" in mcore_weights_name
+            ):
                 assert hf_weights[0].shape[0] == self.vocab_size
                 assert self.padded_vocab_size is not None
 
@@ -270,7 +311,9 @@ class Qwen3VBaseBridge(VLMBridge):
                 local_experts_idx = int(mcore_weights_name.split(".weight")[-1])
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size
-                experts_idx = local_experts_idx + num_experts_per_rank * self.mpu.ep_rank
+                experts_idx = (
+                    local_experts_idx + num_experts_per_rank * self.mpu.ep_rank
+                )
                 return hf_weights[0][experts_idx].T.clone().contiguous()
 
             return hf_weights[0]
@@ -288,7 +331,9 @@ class Qwen3VBaseBridge(VLMBridge):
                 num_attention_heads = self.hf_config.text_config.vision_config.num_heads
                 num_key_value_heads = self.hf_config.text_config.vision_config.num_heads
             head_dim = getattr(
-                self.hf_config.text_config, "head_dim", hidden_dim // num_attention_heads
+                self.hf_config.text_config,
+                "head_dim",
+                hidden_dim // num_attention_heads,
             )
             group_dim = head_dim * num_attention_heads // num_key_value_heads
             q, k, v = hf_weights

@@ -2,18 +2,24 @@ from contextlib import nullcontext
 from typing import Optional, Union
 
 import torch
-from torch import Tensor
-from torch import nn
-
-from megatron.core import tensor_parallel, parallel_state
+from megatron.core import parallel_state, tensor_parallel
 from megatron.core.enums import Fp8Recipe
 from megatron.core.fp8_utils import get_fp8_context
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.packed_seq_params import PackedSeqParams
-# from megatron.core.process_groups_config import ModelCommProcessGroups
-from megatron.core.utils import WrappedTensor, deprecate_inference_params, make_viewless_tensor
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.transformer.transformer_block import TransformerBlock, TransformerBlockSubmodules
+from megatron.core.transformer.transformer_block import (
+    TransformerBlock,
+    TransformerBlockSubmodules,
+)
+
+# from megatron.core.process_groups_config import ModelCommProcessGroups
+from megatron.core.utils import (
+    WrappedTensor,
+    deprecate_inference_params,
+    make_viewless_tensor,
+)
+from torch import Tensor, nn
 
 try:
     import transformer_engine.pytorch as te  # pylint: disable=unused-import
@@ -54,13 +60,16 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             vp_stage=vp_stage,
         )
         self.deepstack_visual_indexes = config.deepstack_visual_indexes
-        self.deepstack_merger_list = nn.ModuleList([
-            Qwen3VLVisionPatchMerger(
-                config,
-                patch_merger_spec,
-                use_postshuffle_norm=True,
-            ) for _ in range(len(config.deepstack_visual_indexes))
-        ])
+        self.deepstack_merger_list = nn.ModuleList(
+            [
+                Qwen3VLVisionPatchMerger(
+                    config,
+                    patch_merger_spec,
+                    use_postshuffle_norm=True,
+                )
+                for _ in range(len(config.deepstack_visual_indexes))
+            ]
+        )
 
     def _checkpointed_forward(
         self,
@@ -102,7 +111,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                         l_no = layer.layer_number - 1
                         if l_no in self.deepstack_visual_indexes:
                             deepstack_idx = self.deepstack_visual_indexes.index(l_no)
-                            deepstack_feature = self.deepstack_merger_list[deepstack_idx](hidden_states)
+                            deepstack_feature = self.deepstack_merger_list[
+                                deepstack_idx
+                            ](hidden_states)
                             deepstack_feature_lists.append(deepstack_feature)
                 return hidden_states, deepstack_feature_lists, context
 
@@ -133,7 +144,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     rotary_pos_emb,
                 )
 
-        if self.config.recompute_method == 'uniform':
+        if self.config.recompute_method == "uniform":
             # Uniformly divide the total number of Transformer layers and checkpoint
             # the input activation of each divided chunk.
             # A method to further reduce memory usage reducing checkpoints.
@@ -145,7 +156,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
 
                 layer_idx += self.config.recompute_num_layers
 
-        elif self.config.recompute_method == 'block':
+        elif self.config.recompute_method == "block":
             # Checkpoint the input activation of only a set number of individual
             # Transformer layers and skip the rest.
             # A method fully use the device memory removing redundant re-computation.
@@ -158,12 +169,21 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     recompute_skip_num_layers += 1
                 if (
                     layer_idx >= recompute_skip_num_layers
-                    and layer_idx < self.config.recompute_num_layers + recompute_skip_num_layers
+                    and layer_idx
+                    < self.config.recompute_num_layers + recompute_skip_num_layers
                 ):
-                    hidden_states, deepstack_feature_lists, context = checkpoint_handler(custom(layer_idx, layer_idx + 1))
+                    hidden_states, deepstack_feature_lists, context = (
+                        checkpoint_handler(custom(layer_idx, layer_idx + 1))
+                    )
                 else:
-                    hidden_states, deepstack_feature_lists, context = custom(layer_idx, layer_idx + 1)(
-                        hidden_states, attention_mask, context, context_mask, rotary_pos_emb
+                    hidden_states, deepstack_feature_lists, context = custom(
+                        layer_idx, layer_idx + 1
+                    )(
+                        hidden_states,
+                        attention_mask,
+                        context,
+                        context_mask,
+                        rotary_pos_emb,
                     )
         else:
             raise ValueError("Invalid activation recompute method.")
@@ -215,7 +235,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             [s, b, h], and optionally the updated context tensor if cross-attention is used.
         """
 
-        inference_context = deprecate_inference_params(inference_context, inference_params)
+        inference_context = deprecate_inference_params(
+            inference_context, inference_params
+        )
 
         # Delete the obsolete reference to the initial input tensor if necessary
         if isinstance(hidden_states, WrappedTensor):
@@ -240,7 +262,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
         #   likely redundant, since p2p_communication.py (likely originator)
         #   already creates viewless tensors. That said, make_viewless_tensor()
         #   is called here to be future-proof and corner-case-proof.
-        hidden_states = make_viewless_tensor(inp=hidden_states, requires_grad=True, keep_graph=True)
+        hidden_states = make_viewless_tensor(
+            inp=hidden_states, requires_grad=True, keep_graph=True
+        )
 
         if self.config.sequence_parallel:
             rng_context = tensor_parallel.get_cuda_rng_tracker().fork()
@@ -252,14 +276,19 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
         # if we are using other fp8 recipes, then the context manager enter&exit are free
         # we can wrap fp8_context within the for loop over layers, so that we can fine-grained
         # control which layer will be fp8 or bf16
-        use_outer_fp8_context = self.config.fp8 and self.config.fp8_recipe == Fp8Recipe.delayed
-        use_inner_fp8_context = self.config.fp8 and self.config.fp8_recipe != Fp8Recipe.delayed
-        outer_fp8_context = get_fp8_context(self.config) if use_outer_fp8_context else nullcontext()
-
+        use_outer_fp8_context = (
+            self.config.fp8 and self.config.fp8_recipe == Fp8Recipe.delayed
+        )
+        use_inner_fp8_context = (
+            self.config.fp8 and self.config.fp8_recipe != Fp8Recipe.delayed
+        )
+        outer_fp8_context = (
+            get_fp8_context(self.config) if use_outer_fp8_context else nullcontext()
+        )
 
         with rng_context, outer_fp8_context:
             # Forward pass.
-            if self.config.recompute_granularity == 'full' and self.training:
+            if self.config.recompute_granularity == "full" and self.training:
                 hidden_states, deepstack_feature_lists = self._checkpointed_forward(
                     hidden_states=hidden_states,
                     attention_mask=attention_mask,
@@ -296,7 +325,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
 
                         if l_no in self.deepstack_visual_indexes:
                             deepstack_idx = self.deepstack_visual_indexes.index(l_no)
-                            deepstack_feature = self.deepstack_merger_list[deepstack_idx](hidden_states)
+                            deepstack_feature = self.deepstack_merger_list[
+                                deepstack_idx
+                            ](hidden_states)
                             deepstack_feature_lists.append(deepstack_feature)
 
                     if (
@@ -304,7 +335,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                         and self.config.cpu_offloading
                         and self.group_prefetch_offload_commit_async is not None
                     ):
-                        hidden_states = self.group_prefetch_offload_commit_async(hidden_states)
+                        hidden_states = self.group_prefetch_offload_commit_async(
+                            hidden_states
+                        )
 
         # Final layer norm.
         if self.final_layernorm is not None:
@@ -326,6 +359,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
 
 class Qwen3VLTransformerBlock(TransformerBlock):
     """Transformer class."""
+
     def _checkpointed_forward(
         self,
         hidden_states: Tensor,
@@ -343,8 +377,15 @@ class Qwen3VLTransformerBlock(TransformerBlock):
         """Forward method with activation checkpointing."""
 
         def custom(start: int, end: int):
-            def custom_forward(hidden_states, attention_mask, context, context_mask, rotary_pos_emb,
-                               visual_pos_masks, deepstack_visual_embeds):
+            def custom_forward(
+                hidden_states,
+                attention_mask,
+                context,
+                context_mask,
+                rotary_pos_emb,
+                visual_pos_masks,
+                deepstack_visual_embeds,
+            ):
                 for index in range(start, end):
                     layer = self._get_layer(index)
                     inner_fp8_context = (
@@ -405,7 +446,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     deepstack_visual_embeds,
                 )
 
-        if self.config.recompute_method == 'uniform':
+        if self.config.recompute_method == "uniform":
             # Uniformly divide the total number of Transformer layers and checkpoint
             # the input activation of each divided chunk.
             # A method to further reduce memory usage reducing checkpoints.
@@ -417,7 +458,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
 
                 layer_idx += self.config.recompute_num_layers
 
-        elif self.config.recompute_method == 'block':
+        elif self.config.recompute_method == "block":
             # Checkpoint the input activation of only a set number of individual
             # Transformer layers and skip the rest.
             # A method fully use the device memory removing redundant re-computation.
@@ -430,12 +471,19 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     recompute_skip_num_layers += 1
                 if (
                     layer_idx >= recompute_skip_num_layers
-                    and layer_idx < self.config.recompute_num_layers + recompute_skip_num_layers
+                    and layer_idx
+                    < self.config.recompute_num_layers + recompute_skip_num_layers
                 ):
-                    hidden_states, context = checkpoint_handler(custom(layer_idx, layer_idx + 1))
+                    hidden_states, context = checkpoint_handler(
+                        custom(layer_idx, layer_idx + 1)
+                    )
                 else:
                     hidden_states, context = custom(layer_idx, layer_idx + 1)(
-                        hidden_states, attention_mask, context, context_mask, rotary_pos_emb
+                        hidden_states,
+                        attention_mask,
+                        context,
+                        context_mask,
+                        rotary_pos_emb,
                     )
         else:
             raise ValueError("Invalid activation recompute method.")
@@ -491,9 +539,12 @@ class Qwen3VLTransformerBlock(TransformerBlock):
         """
         if self.pre_process and deepstack_visual_embeds is not None:
             assert len(deepstack_visual_embeds) < len(
-                self.layers), "the deepstack_visual_embeds should on the first pp-stage"
+                self.layers
+            ), "the deepstack_visual_embeds should on the first pp-stage"
 
-        inference_context = deprecate_inference_params(inference_context, inference_params)
+        inference_context = deprecate_inference_params(
+            inference_context, inference_params
+        )
 
         # Delete the obsolete reference to the initial input tensor if necessary
         if isinstance(hidden_states, WrappedTensor):
@@ -518,7 +569,9 @@ class Qwen3VLTransformerBlock(TransformerBlock):
         #   likely redundant, since p2p_communication.py (likely originator)
         #   already creates viewless tensors. That said, make_viewless_tensor()
         #   is called here to be future-proof and corner-case-proof.
-        hidden_states = make_viewless_tensor(inp=hidden_states, requires_grad=True, keep_graph=True)
+        hidden_states = make_viewless_tensor(
+            inp=hidden_states, requires_grad=True, keep_graph=True
+        )
 
         if self.config.sequence_parallel:
             rng_context = tensor_parallel.get_cuda_rng_tracker().fork()
@@ -530,13 +583,19 @@ class Qwen3VLTransformerBlock(TransformerBlock):
         # if we are using other fp8 recipes, then the context manager enter&exit are free
         # we can wrap fp8_context within the for loop over layers, so that we can fine-grained
         # control which layer will be fp8 or bf16
-        use_outer_fp8_context = self.config.fp8 and self.config.fp8_recipe == Fp8Recipe.delayed
-        use_inner_fp8_context = self.config.fp8 and self.config.fp8_recipe != Fp8Recipe.delayed
-        outer_fp8_context = get_fp8_context(self.config) if use_outer_fp8_context else nullcontext()
+        use_outer_fp8_context = (
+            self.config.fp8 and self.config.fp8_recipe == Fp8Recipe.delayed
+        )
+        use_inner_fp8_context = (
+            self.config.fp8 and self.config.fp8_recipe != Fp8Recipe.delayed
+        )
+        outer_fp8_context = (
+            get_fp8_context(self.config) if use_outer_fp8_context else nullcontext()
+        )
 
         with rng_context, outer_fp8_context:
             # Forward pass.
-            if self.config.recompute_granularity == 'full' and self.training:
+            if self.config.recompute_granularity == "full" and self.training:
                 hidden_states = self._checkpointed_forward(
                     hidden_states=hidden_states,
                     attention_mask=attention_mask,
@@ -585,7 +644,9 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                         and self.config.cpu_offloading
                         and self.group_prefetch_offload_commit_async is not None
                     ):
-                        hidden_states = self.group_prefetch_offload_commit_async(hidden_states)
+                        hidden_states = self.group_prefetch_offload_commit_async(
+                            hidden_states
+                        )
 
         # Final layer norm.
         if self.final_layernorm is not None:
@@ -604,8 +665,12 @@ class Qwen3VLTransformerBlock(TransformerBlock):
 
         return hidden_states
 
-    def _deepstack_process(self, hidden_states: torch.Tensor, visual_pos_masks: torch.Tensor,
-                           visual_embeds: torch.Tensor):
+    def _deepstack_process(
+        self,
+        hidden_states: torch.Tensor,
+        visual_pos_masks: torch.Tensor,
+        visual_embeds: torch.Tensor,
+    ):
         hidden_states = hidden_states.transpose(0, 1).contiguous()
         local_this = hidden_states[visual_pos_masks, :].clone() + visual_embeds
         hidden_states[visual_pos_masks, :] = local_this

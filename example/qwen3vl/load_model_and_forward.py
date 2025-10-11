@@ -1,8 +1,9 @@
 # Example to use tp/pp/cp/vpp to test dense model
 # torchrun --nproc_per_node=8 example/qwen3vl/load_model_and_forward.py --model_path /path/to/model
 
-import os
 import argparse
+import os
+
 import requests
 
 try:
@@ -12,14 +13,13 @@ except:
 
 import torch
 import torch.nn.functional as F
-
 from megatron.core import parallel_state as mpu
-from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.models.gpt.gpt_model import ModelType
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.mappings import (
     gather_from_tensor_model_parallel_region,
 )
-from megatron.core.models.gpt.gpt_model import ModelType
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
 from mbridge import AutoBridge
 
@@ -30,7 +30,7 @@ def download_img(filename):
         response = requests.get(image_url, stream=True)
         response.raise_for_status()
 
-        with open(filename, 'wb') as file:
+        with open(filename, "wb") as file:
             for chunk in response.iter_content(chunk_size=8192):
                 file.write(chunk)
     except requests.exceptions.RequestException as e:
@@ -46,27 +46,18 @@ def get_sample_for_forward(hf_model_path):
     if True:
         if not os.path.exists("../australia.jpg"):
             download_img(filename)
-        messages = [{
-            "role":
-            "user",
-            "content": [{
-                "type": "image",
-                "image": filename
-            }, {
-                "type": "text",
-                "text": text
-            }]
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": filename},
+                    {"type": "text", "text": text},
+                ],
+            }
+        ]
     else:
         text = "Given the accelerating trajectory of artificial intelligence, where do you foresee the most critical point of divergence between a future in which AI acts as a fundamentally benevolent, symbiotic partner in elevating human consciousness, collective intelligence, and our capacity to solve existential challenges, and a future where it inadvertently becomes an insidious, alienating force that amplifies societal biases, erodes human agency, and creates a new, opaque class structure based on access to and control of cognitive capital—and what specific, measurable factors in our current approach to AI development, governance, and education will be the primary determinants in steering us toward one outcome over the other?"
-        messages = [{
-            "role":
-            "user",
-            "content": [{
-                "type": "text",
-                "text": text
-            }]
-        }]
+        messages = [{"role": "user", "content": [{"type": "text", "text": text}]}]
 
     inputs = processor.apply_chat_template(
         messages,
@@ -87,7 +78,7 @@ def get_sample_for_forward(hf_model_path):
 def cos_similarity(a, b):
     print(f"a {a.shape} b {b.shape}")
     a = a.float()
-    #a = a / a.norm(dim=-1, keepdim=True)
+    # a = a / a.norm(dim=-1, keepdim=True)
     a = torch.exp(a - a.max(dim=-1, keepdim=True)[0])
     a = a / a.norm(dim=-1, keepdim=True)
     """
@@ -95,7 +86,7 @@ def cos_similarity(a, b):
     a = a / a.norm(dim=-1, keepdim=True)
     """
     b = b.float()
-    #b =  b / b.norm(dim=-1, keepdim=True)
+    # b =  b / b.norm(dim=-1, keepdim=True)
     b = torch.exp(b - b.max(dim=-1, keepdim=True)[0])
     b = b / b.norm(dim=-1, keepdim=True)
     """
@@ -103,7 +94,9 @@ def cos_similarity(a, b):
     b =  b / b.norm(dim=-1, keepdim=True)
     """
     sim = (a * b).sum(dim=-1)
-    print(f"hf vs megatron cos_similarity min: {sim.min()}; max: {sim.max()}; mean: {sim.mean()}")
+    print(
+        f"hf vs megatron cos_similarity min: {sim.min()}; max: {sim.max()}; mean: {sim.mean()}"
+    )
 
 
 def init_distributed(tp=2, pp=1, cp=1, vpp=1, ep=1, etp=None):
@@ -153,8 +146,12 @@ def mcore_fwd_fn(data_iterator, model):
         input_ids=sample["input_ids"].cuda(),
         position_ids=None,
         attention_mask=None,
-        pixel_values=sample["pixel_values"].cuda() if "pixel_values" in sample else None,
-        image_grid_thw=sample["image_grid_thw"].cuda() if "image_grid_thw" in sample else None,
+        pixel_values=(
+            sample["pixel_values"].cuda() if "pixel_values" in sample else None
+        ),
+        image_grid_thw=(
+            sample["image_grid_thw"].cuda() if "image_grid_thw" in sample else None
+        ),
     )
     if isinstance(output_tensor, tuple):
         output_tensor = output_tensor[0]
@@ -163,8 +160,8 @@ def mcore_fwd_fn(data_iterator, model):
     def loss_fn(output_tensor, non_loss_data=True):
         loss = output_tensor.mean()
         return loss, {
-            'loss': loss.detach(),
-            'logits': output_tensor.detach(),
+            "loss": loss.detach(),
+            "logits": output_tensor.detach(),
         }
 
     return output_tensor, loss_fn
@@ -191,7 +188,9 @@ def main():
     bridge.config.sequence_parallel = True
     if args.pp > 1:
         num_layer = bridge.hf_config.text_config.num_hidden_layers
-        first_last_layer = num_layer - (num_layer + args.pp - 1) // args.pp * (args.pp - 2)
+        first_last_layer = num_layer - (num_layer + args.pp - 1) // args.pp * (
+            args.pp - 2
+        )
         assert first_last_layer > 1
         bridge.set_extra_args(
             num_layers_in_first_pipeline_stage=first_last_layer // 2,
@@ -199,11 +198,13 @@ def main():
         )
     model = bridge.get_model(model_type=ModelType.encoder_and_decoder)
     assert len(model) == 1
-    bridge.load_weights(model, hf_model_path, memory_efficient=True)
+    bridge.load_weights(model, hf_model_path, memory_efficient=False)
 
     # check the export
     if args.check_export:
-        print(f"rank{torch.distributed.get_rank()}: end load weight, start check export ...")
+        print(
+            f"rank{torch.distributed.get_rank()}: end load weight, start check export ..."
+        )
         keys = bridge.safetensor_io.load_hf_weight_names()
         loaded_keys = set()
         # export weights
@@ -250,11 +251,14 @@ def main():
         if mpu.is_pipeline_last_stage():
             megatron_output = mcore_output[0]["logits"]
             if mpu.get_tensor_model_parallel_world_size() > 1:
-                megatron_output = gather_from_tensor_model_parallel_region(megatron_output)
+                megatron_output = gather_from_tensor_model_parallel_region(
+                    megatron_output
+                )
 
             megatron_output = megatron_output[:, :real_seq_length, :]
-            hf_output = torch.load("/tmp/hf_qwen3vl.pt",
-                                   map_location="cpu").to(megatron_output.device)
+            hf_output = torch.load("/tmp/hf_qwen3vl.pt", map_location="cpu").to(
+                megatron_output.device
+            )
             cos_similarity(hf_output, megatron_output)
             print(f"Finish Done")
 

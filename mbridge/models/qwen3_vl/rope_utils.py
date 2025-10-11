@@ -15,20 +15,19 @@
 
 
 from __future__ import annotations
+
 import logging
-from typing import Optional, List
+from typing import List, Optional
 
 import torch
-from torch import Tensor, nn
-
 from megatron.core import parallel_state
 from megatron.core.models.common.embeddings.rope_utils import (
     _apply_rotary_pos_emb_bshd,
     get_pos_emb_on_this_cp_rank,
 )
+from torch import Tensor, nn
 
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-
 
 # Prefer fused RoPE from Apex as we need the `transpose_output_memory` argument for the bshd trick.
 # See https://gitlab-master.nvidia.com/ADLR/megatron-lm/-/merge_requests/2469.
@@ -79,11 +78,13 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         self.inv_freq = 1.0 / (
             rotary_base
             ** (
-                torch.arange(0, dim, 2, dtype=torch.float32, device=torch.cuda.current_device())
+                torch.arange(
+                    0, dim, 2, dtype=torch.float32, device=torch.cuda.current_device()
+                )
                 / dim
             )
         )
-    
+
     def apply_interleaved_mrope(self, freqs, mrope_section):
         """Apply interleaved MRoPE to 3D rotary embeddings.
         Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
@@ -118,7 +119,9 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             seq *= 1 / self.seq_len_interpolation_factor
 
         # shape (3, bs, dim, 1)
-        inv_freq_expanded = self.inv_freq[None, None, :, None].expand(3, seq.shape[1], -1, 1)
+        inv_freq_expanded = self.inv_freq[None, None, :, None].expand(
+            3, seq.shape[1], -1, 1
+        )
         # shape (3, bs, 1, seq_length)
         seq_expanded = seq[:, :, None, :].float()
         # shape (3, bs, seq_length, dim)
@@ -131,7 +134,9 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         if parallel_state.get_context_parallel_world_size() > 1:
             # slice rotary_pos_emb along sequence dimension and select the parition of the current
             # CP rank
-            emb = get_pos_emb_on_this_cp_rank(emb, 0, parallel_state.get_context_parallel_group())
+            emb = get_pos_emb_on_this_cp_rank(
+                emb, 0, parallel_state.get_context_parallel_group()
+            )
         return emb
 
 
@@ -150,11 +155,15 @@ def get_rope_index(
 
     # Since we use timestamps to seperate videos, like <t1> <vision_start> <frame1> <vision_end> <t2> <vision_start> <frame2> <vision_end>, the video_grid_thw should also be split
     if video_grid_thw is not None:
-        video_grid_thw = torch.repeat_interleave(video_grid_thw, video_grid_thw[:, 0], dim=0)
+        video_grid_thw = torch.repeat_interleave(
+            video_grid_thw, video_grid_thw[:, 0], dim=0
+        )
         video_grid_thw[:, 0] = 1
 
     mrope_position_deltas = []
-    if input_ids is not None and (image_grid_thw is not None or video_grid_thw is not None):
+    if input_ids is not None and (
+        image_grid_thw is not None or video_grid_thw is not None
+    ):
         total_input_ids = input_ids
         if attention_mask is None:
             attention_mask = torch.ones_like(total_input_ids)
@@ -170,7 +179,9 @@ def get_rope_index(
         for i, input_ids in enumerate(total_input_ids):
             input_ids = input_ids[attention_mask[i] == 1]
             image_nums, video_nums = 0, 0
-            vision_start_indices = torch.argwhere(input_ids == vision_start_token_id).squeeze(1)
+            vision_start_indices = torch.argwhere(
+                input_ids == vision_start_token_id
+            ).squeeze(1)
             vision_tokens = input_ids[vision_start_indices + 1]
             image_nums = (vision_tokens == image_token_id).sum()
             video_nums = (vision_tokens == video_token_id).sum()
@@ -213,32 +224,67 @@ def get_rope_index(
                 )
                 text_len = ed - st
 
-                st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
-                llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
+                st_idx = (
+                    llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
+                )
+                llm_pos_ids_list.append(
+                    torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
+                )
 
                 # t_index is always 0 because llm_grid_t is always 1 (we use timestamps to encode the temporal information for videos)
-                t_index = torch.arange(llm_grid_t).view(-1, 1).expand(-1, llm_grid_h * llm_grid_w).flatten()
-                h_index = torch.arange(llm_grid_h).view(1, -1, 1).expand(llm_grid_t, -1, llm_grid_w).flatten()
-                w_index = torch.arange(llm_grid_w).view(1, 1, -1).expand(llm_grid_t, llm_grid_h, -1).flatten()
-                llm_pos_ids_list.append(torch.stack([t_index, h_index, w_index]) + text_len + st_idx)
+                t_index = (
+                    torch.arange(llm_grid_t)
+                    .view(-1, 1)
+                    .expand(-1, llm_grid_h * llm_grid_w)
+                    .flatten()
+                )
+                h_index = (
+                    torch.arange(llm_grid_h)
+                    .view(1, -1, 1)
+                    .expand(llm_grid_t, -1, llm_grid_w)
+                    .flatten()
+                )
+                w_index = (
+                    torch.arange(llm_grid_w)
+                    .view(1, 1, -1)
+                    .expand(llm_grid_t, llm_grid_h, -1)
+                    .flatten()
+                )
+                llm_pos_ids_list.append(
+                    torch.stack([t_index, h_index, w_index]) + text_len + st_idx
+                )
                 st = ed + llm_grid_t * llm_grid_h * llm_grid_w
 
             if st < len(input_tokens):
-                st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
+                st_idx = (
+                    llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
+                )
                 text_len = len(input_tokens) - st
-                llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
+                llm_pos_ids_list.append(
+                    torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
+                )
 
             llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
-            position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(position_ids.device)
-            mrope_position_deltas.append(llm_positions.max() + 1 - len(total_input_ids[i]))
-        mrope_position_deltas = torch.tensor(mrope_position_deltas, device=input_ids.device).unsqueeze(1)
+            position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(
+                position_ids.device
+            )
+            mrope_position_deltas.append(
+                llm_positions.max() + 1 - len(total_input_ids[i])
+            )
+        mrope_position_deltas = torch.tensor(
+            mrope_position_deltas, device=input_ids.device
+        ).unsqueeze(1)
         return position_ids, mrope_position_deltas
     else:
         if attention_mask is not None:
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(attention_mask == 0, 1)
-            position_ids = position_ids.unsqueeze(0).expand(3, -1, -1).to(attention_mask.device)
-            max_position_ids = position_ids.max(0, keepdim=False)[0].max(-1, keepdim=True)[0]
+            position_ids = (
+                position_ids.unsqueeze(0).expand(3, -1, -1).to(attention_mask.device)
+            )
+            max_position_ids = position_ids.max(0, keepdim=False)[0].max(
+                -1, keepdim=True
+            )[0]
             mrope_position_deltas = max_position_ids + 1 - attention_mask.shape[-1]
         else:
             position_ids = (
