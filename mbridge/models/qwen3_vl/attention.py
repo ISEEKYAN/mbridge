@@ -38,6 +38,7 @@ class Qwen3VLSelfAttention(SelfAttention):
         sequence_len_offset: Optional[int] = None,
         *,
         inference_params: Optional[BaseInferenceContext] = None,
+        rotary_pos_cos_sin: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Tensor]:
         """
         Perform a forward pass through the attention module.

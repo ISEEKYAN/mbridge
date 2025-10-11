@@ -10,7 +10,7 @@ from megatron.core.enums import Fp8Recipe
 from megatron.core.fp8_utils import get_fp8_context
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.process_groups_config import ModelCommProcessGroups
+# from megatron.core.process_groups_config import ModelCommProcessGroups
 from megatron.core.utils import WrappedTensor, deprecate_inference_params, make_viewless_tensor
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlock, TransformerBlockSubmodules
@@ -39,7 +39,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
         post_layer_norm: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
-        model_comm_pgs: ModelCommProcessGroups = None,
+        # model_comm_pgs: ModelCommProcessGroups = None,
         vp_stage: Optional[int] = None,
         patch_merger_spec: ModuleSpec = None,
     ):
@@ -50,7 +50,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             post_layer_norm=post_layer_norm,
             pre_process=pre_process,
             post_process=post_process,
-            model_comm_pgs=model_comm_pgs,
+            # model_comm_pgs=model_comm_pgs,
             vp_stage=vp_stage,
         )
         self.deepstack_visual_indexes = config.deepstack_visual_indexes
