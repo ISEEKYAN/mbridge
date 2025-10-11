@@ -15,7 +15,7 @@ from .transformer_config import get_vision_model_config, get_vision_projection_c
 
 class Qwen2_5VLSafeTensorIO(SafeTensorIO):
 
-    def _mapping_hf_weight_names(
+    def _mapping_weight_names_old2new(
         self,
         hf_weight_names: list[str],
     ) -> tuple[list[str], dict[str, str]]:
@@ -31,6 +31,27 @@ class Qwen2_5VLSafeTensorIO(SafeTensorIO):
                 elif new_hf_weight_name.startswith("visual."):
                     new_hf_weight_name = new_hf_weight_name.replace(
                         "visual.", "model.visual."
+                    )
+            ret_hf_weight_names.append(new_hf_weight_name)
+            mapping_hf_weight_names[new_hf_weight_name] = hf_weight_name
+        return ret_hf_weight_names, mapping_hf_weight_names
+
+    def _mapping_weight_names_new2old(
+        self,
+        hf_weight_names: list[str],
+    ) -> tuple[list[str], dict[str, str]]:
+        ret_hf_weight_names = []
+        mapping_hf_weight_names = {}
+        for hf_weight_name in hf_weight_names:
+            new_hf_weight_name = hf_weight_name
+            if hf_weight_name in self.index:
+                if new_hf_weight_name.startswith("model.language_model."):
+                    new_hf_weight_name = new_hf_weight_name.replace(
+                        "model.language_model.", "model."
+                    )
+                elif new_hf_weight_name.startswith("model.visual."):
+                    new_hf_weight_name = new_hf_weight_name.replace(
+                        "model.visual.", "visual."
                     )
             ret_hf_weight_names.append(new_hf_weight_name)
             mapping_hf_weight_names[new_hf_weight_name] = hf_weight_name

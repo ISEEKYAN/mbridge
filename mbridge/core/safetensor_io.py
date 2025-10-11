@@ -27,8 +27,16 @@ class SafeTensorIO:
     # Some models have undergone structural changes across different versions of transformers,
     # which may result in differences in key names
     # for example: qwen2.5vl's structural change at transformers>=4.52.0
-    # Therefore, it is necessary to create a name mapping here.
-    def _mapping_hf_weight_names(
+    # Therefore, it is necessary to create two name mappings here.
+    def _mapping_weight_names_old2new(
+        self,
+        hf_weight_names: list[str],
+    ) -> tuple[list[str], dict[str, str]]:
+        # new_hf_weight_names -> old_hf_weight_names
+        mapping_hf_weight_names = {k: k for k in hf_weight_names}
+        return hf_weight_names, mapping_hf_weight_names
+
+    def _mapping_weight_names_new2old(
         self,
         hf_weight_names: list[str],
     ) -> tuple[list[str], dict[str, str]]:
@@ -37,7 +45,7 @@ class SafeTensorIO:
         return hf_weight_names, mapping_hf_weight_names
 
     def load_some_hf_weight(self, hf_weight_names: list[str]) -> dict:
-        hf_weight_names, mapping_hf_weight_names = self._mapping_hf_weight_names(
+        hf_weight_names, mapping_hf_weight_names = self._mapping_weight_names_old2new(
             hf_weight_names
         )
         index = self.index
@@ -155,10 +163,11 @@ class SafeTensorIO:
             save_file({hf_weight_name: tensor}, tmp_filename)
         for filename, keys_for_file in filename_to_keys_map.items():
             states = {}
-            for key in keys_for_file:
-                tmp_filename = f"{new_hf_dir}/{key}.safetensors"
+            old_keys_for_file, _ = self._mapping_weight_names_new2old(keys_for_file)
+            for old_key, key in zip(old_keys_for_file, keys_for_file):
+                tmp_filename = f"{new_hf_dir}/{old_key}.safetensors"
                 with safe_open(tmp_filename, framework="pt", device="cpu") as f:
-                    states[key] = f.get_tensor(key)
+                    states[key] = f.get_tensor(old_key)
                     os.remove(tmp_filename)
             save_file(states, os.path.join(new_hf_dir, filename))
         return
