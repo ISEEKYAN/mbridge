@@ -1,5 +1,5 @@
 # Important
-This project is being deprecated and no new models will be supported. Please contribute your suggestions/ideas to github.com/nvidia-nemo/megatron-bridge. Thank you.
+This project is being deprecated and no new models will be supported. Please contribute your suggestions/ideas to [github.com/nvidia-nemo/megatron-bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge). Thank you.
 
 # MBridge: Bridge Megatron-Core to Hugging Face/Reinforcement Learning
 
@@ -101,11 +101,6 @@ bridge = AutoBridge.from_pretrained(HF_MODEL_PATH)
 model = bridge.get_model(weight_path=HF_MODEL_PATH, post_model_creation_callbacks=[make_value_model, freeze_moe_router])
 
 ```
-
-## Development Roadmap
-
-MBridge will continue to maintain support for popular models, but will not develop more advanced features.
-See [Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge) for more advanced features.
 
 ## Acknowledgements
 - [veRL](https://github.com/volcengine/verl) has adopted MBridge as a connector to Megatron-Core.
