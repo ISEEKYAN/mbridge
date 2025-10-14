@@ -143,6 +143,48 @@ class SafeTensorIO:
             )
         return
 
+    def save_tmp_hf_weight(
+        self,
+        per_tensor_generator: Generator[tuple[str, torch.Tensor], None, None],
+        new_hf_dir: str,
+    ):
+        assert self.index, "index file is required for memory efficient saving"
+        for hf_weight_name, tensor in per_tensor_generator:
+            tmp_filename = f"{new_hf_dir}/{hf_weight_name}.safetensors"
+            save_file({hf_weight_name: tensor}, tmp_filename)
+
+    def save_hf_weight_merge(
+        self,
+        new_hf_dir: str,
+        rank: int = 0,
+        world_soze: int = 1,
+    ):
+        assert self.index, "index file is required for memory efficient saving"
+
+        filename_to_keys_map = defaultdict(set)
+        for key, filename in self.index.items():
+            filename_to_keys_map[filename].add(key)
+
+        filename_list = sorted(list(filename_to_keys_map.keys()))
+        if world_soze > 1:
+            num_files = len(filename_list)
+            num_files_rank = (num_files + world_soze - 1) // world_soze
+            begin_idx = min(num_files, rank * num_files_rank)
+            end_idx = min(num_files, (rank + 1) * num_files_rank)
+            filename_list = filename_list[begin_idx:end_idx]
+
+        for filename in filename_list:
+            keys_for_file = filename_to_keys_map[filename]
+            states = {}
+            old_keys_for_file, _ = self._mapping_weight_names_new2old(keys_for_file)
+            for old_key, key in zip(old_keys_for_file, keys_for_file):
+                tmp_filename = f"{new_hf_dir}/{old_key}.safetensors"
+                with safe_open(tmp_filename, framework="pt", device="cpu") as f:
+                    states[key] = f.get_tensor(old_key)
+                    os.remove(tmp_filename)
+            save_file(states, os.path.join(new_hf_dir, filename))
+        return
+
     def save_hf_weight_memory_efficient(
         self,
         per_tensor_generator: Generator[tuple[str, torch.Tensor], None, None],
@@ -155,21 +197,8 @@ class SafeTensorIO:
         """
         assert self.index, "index file is required for memory efficient saving"
 
-        filename_to_keys_map = defaultdict(set)
-        for key, filename in self.index.items():
-            filename_to_keys_map[filename].add(key)
-        for hf_weight_name, tensor in per_tensor_generator:
-            tmp_filename = f"{new_hf_dir}/{hf_weight_name}.safetensors"
-            save_file({hf_weight_name: tensor}, tmp_filename)
-        for filename, keys_for_file in filename_to_keys_map.items():
-            states = {}
-            old_keys_for_file, _ = self._mapping_weight_names_new2old(keys_for_file)
-            for old_key, key in zip(old_keys_for_file, keys_for_file):
-                tmp_filename = f"{new_hf_dir}/{old_key}.safetensors"
-                with safe_open(tmp_filename, framework="pt", device="cpu") as f:
-                    states[key] = f.get_tensor(old_key)
-                    os.remove(tmp_filename)
-            save_file(states, os.path.join(new_hf_dir, filename))
+        self.save_tmp_hf_weight(per_tensor_generator, new_hf_dir)
+        self.save_hf_weight_merge(new_hf_dir)
         return
 
     def save_index(self, new_hf_dir: str):

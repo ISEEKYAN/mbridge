@@ -5,6 +5,7 @@ from typing import Callable, Generator
 
 import torch
 from megatron.core.models.gpt.gpt_model import ModelType
+from megatron.core import parallel_state
 from transformers import AutoConfig
 from transformers.utils.hub import cached_file
 
@@ -256,19 +257,60 @@ class Bridge(ABC):
                 # load
                 param.copy_(param_to_load)
 
+    def _save_weights_fast(
+        self,
+        per_tensor_generator: Generator[tuple[str, torch.Tensor], None, None],
+        weights_path: str,
+    ) -> None:
+        dp_rank = parallel_state.get_data_parallel_rank()
+        is_save_rank = (self.mpu.tp_rank == 0 and self.mpu.cp_rank == 0 and dp_rank == 0)
+
+        if not is_save_rank:
+            for _, _ in per_tensor_generator:
+                pass
+        else:
+            self.safetensor_io.save_tmp_hf_weight(per_tensor_generator, weights_path)
+        torch.distributed.barrier()
+
+        rank = torch.distributed.get_rank()
+        world_size = torch.distributed.get_world_size()
+        self.safetensor_io.save_hf_weight_merge(
+            weights_path,
+            rank,
+            world_size,
+        )
+
+        if 0 == rank:
+            self.safetensor_io.save_index(weights_path)
+            self.hf_config.save_pretrained(weights_path)
+        torch.distributed.barrier()
+        return
+
     def save_weights(
-        self, models: list, weights_path: str, memory_efficient: bool = False
+        self,
+        models: list,
+        weights_path: str,
+        memory_efficient: bool = False,
+        no_gather_pp: bool = False,
     ) -> None:
         """
         Save weights from a Megatron-Core model into a Hugging Face model.
+        when `no_gather_pp` is ture, `weights_path` should be distributed file system
         """
         is_distributed = (
             torch.distributed.is_available() and torch.distributed.is_initialized()
         )
+
         rank = torch.distributed.get_rank() if is_distributed else 0
         if not os.path.exists(weights_path):
             os.makedirs(weights_path, exist_ok=True)
-        per_tensor_generator = self.export_weights(models)
+        per_tensor_generator = self.export_weights(models, no_gather_pp)
+
+        if no_gather_pp:
+            assert memory_efficient, f"no_gather_pp should use with memory_efficient"
+            assert is_distributed, f"no_gather_pp should use in distributed"
+            return self._save_weights_fast(per_tensor_generator, weights_path)
+
         if rank != 0:
             for _, _ in per_tensor_generator:
                 pass
@@ -299,7 +341,7 @@ class Bridge(ABC):
         self.config = self._build_config()
 
     def export_weights(
-        self, models: list[torch.nn.Module]
+        self, models: list[torch.nn.Module], no_gather_pp: bool = False
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
         assert (
             len(self.export_weights_buff) == 0
@@ -363,9 +405,15 @@ class Bridge(ABC):
                 name = local_to_global_map[iter_name]
             else:
                 name, param = None, None
+                if no_gather_pp:
+                    continue
 
-            name = broadcast_str_from_megatron_pp(name)
-            broad_pp_param = broadcast_from_megatron_pp(param)
+            if no_gather_pp:
+                assert iter_pp_rank == self.mpu.pp_rank
+                broad_pp_param = param
+            else:
+                name = broadcast_str_from_megatron_pp(name)
+                broad_pp_param = broadcast_from_megatron_pp(param)
 
             # EP
             if ".mlp.experts.linear_fc" in name and self.mpu.ep_size > 1:
