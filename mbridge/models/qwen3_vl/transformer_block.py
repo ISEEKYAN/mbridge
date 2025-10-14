@@ -144,17 +144,20 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     rotary_pos_emb,
                 )
 
+        deepstack_feature_lists = []
         if self.config.recompute_method == "uniform":
             # Uniformly divide the total number of Transformer layers and checkpoint
             # the input activation of each divided chunk.
             # A method to further reduce memory usage reducing checkpoints.
             layer_idx = 0
+            
             while layer_idx < self.num_layers_per_pipeline_rank:
-                hidden_states, deepstack_feature_lists, context = checkpoint_handler(
+                hidden_states, layer_deepstack_feature_lists, context = checkpoint_handler(
                     custom(layer_idx, layer_idx + self.config.recompute_num_layers)
                 )
 
                 layer_idx += self.config.recompute_num_layers
+                deepstack_feature_lists.extend(layer_deepstack_feature_lists)
 
         elif self.config.recompute_method == "block":
             # Checkpoint the input activation of only a set number of individual
@@ -172,11 +175,11 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     and layer_idx
                     < self.config.recompute_num_layers + recompute_skip_num_layers
                 ):
-                    hidden_states, deepstack_feature_lists, context = (
+                    hidden_states, layer_deepstack_feature_lists, context = (
                         checkpoint_handler(custom(layer_idx, layer_idx + 1))
                     )
                 else:
-                    hidden_states, deepstack_feature_lists, context = custom(
+                    hidden_states, layer_deepstack_feature_lists, context = custom(
                         layer_idx, layer_idx + 1
                     )(
                         hidden_states,
@@ -185,6 +188,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                         context_mask,
                         rotary_pos_emb,
                     )
+                deepstack_feature_lists.extend(layer_deepstack_feature_lists)
         else:
             raise ValueError("Invalid activation recompute method.")
 
@@ -383,8 +387,6 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                 context,
                 context_mask,
                 rotary_pos_emb,
-                visual_pos_masks,
-                deepstack_visual_embeds,
             ):
                 for index in range(start, end):
                     layer = self._get_layer(index)
@@ -405,14 +407,6 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                             packed_seq_params=packed_seq_params,
                         )
 
-                        if self.pre_process and deepstack_visual_embeds is not None:
-                            l_no = layer.layer_number - 1
-                            if l_no in range(len(deepstack_visual_embeds)):
-                                hidden_states = self._deepstack_process(
-                                    hidden_states,
-                                    visual_pos_masks,
-                                    deepstack_visual_embeds[l_no],
-                                )
                 return hidden_states, context
 
             return custom_forward
@@ -430,8 +424,6 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     context,
                     context_mask,
                     rotary_pos_emb,
-                    visual_pos_masks,
-                    deepstack_visual_embeds,
                 )
             else:
                 return tensor_parallel.checkpoint(
@@ -442,8 +434,6 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     context,
                     context_mask,
                     rotary_pos_emb,
-                    visual_pos_masks,
-                    deepstack_visual_embeds,
                 )
 
         if self.config.recompute_method == "uniform":
@@ -455,6 +445,16 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                 hidden_states, context = checkpoint_handler(
                     custom(layer_idx, layer_idx + self.config.recompute_num_layers)
                 )
+
+                if self.pre_process and deepstack_visual_embeds is not None:
+                    layer = self._get_layer(layer_idx)
+                    assert layer_idx == layer.layer_number - 1
+                    if layer_idx in range(len(deepstack_visual_embeds)):
+                        hidden_states = self._deepstack_process(
+                            hidden_states,
+                            visual_pos_masks,
+                            deepstack_visual_embeds[layer_idx],
+                        )
 
                 layer_idx += self.config.recompute_num_layers
 
@@ -485,6 +485,16 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                         context_mask,
                         rotary_pos_emb,
                     )
+                
+                if self.pre_process and deepstack_visual_embeds is not None:
+                    layer = self._get_layer(layer_idx)
+                    assert layer_idx == layer.layer_number - 1
+                    if layer_idx in range(len(deepstack_visual_embeds)):
+                        hidden_states = self._deepstack_process(
+                            hidden_states,
+                            visual_pos_masks,
+                            deepstack_visual_embeds[layer_idx],
+                        )
         else:
             raise ValueError("Invalid activation recompute method.")
 
