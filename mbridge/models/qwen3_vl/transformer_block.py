@@ -441,6 +441,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
             # the input activation of each divided chunk.
             # A method to further reduce memory usage reducing checkpoints.
             layer_idx = 0
+            assert self.config.recompute_num_layers == 1
             while layer_idx < self.num_layers_per_pipeline_rank:
                 hidden_states, context = checkpoint_handler(
                     custom(layer_idx, layer_idx + self.config.recompute_num_layers)
