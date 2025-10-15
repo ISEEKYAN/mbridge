@@ -64,4 +64,6 @@ def get_vision_model_config(config: Qwen3VLTransformerConfig, hf_config):
     config.num_layers_in_last_pipeline_stage = None
     config.virtual_pipeline_model_parallel_size = 1
     config.pipeline_model_parallel_layout = None
+    config.account_for_embedding_in_pipeline_split = None
+    config.account_for_loss_in_pipeline_split = None
     return config
