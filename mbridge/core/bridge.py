@@ -291,11 +291,11 @@ class Bridge(ABC):
         models: list,
         weights_path: str,
         memory_efficient: bool = False,
-        no_gather_pp: bool = False,
+        distributed_filesystem: bool = False,
     ) -> None:
         """
         Save weights from a Megatron-Core model into a Hugging Face model.
-        when `no_gather_pp` is ture, `weights_path` should be distributed file system
+        when `distributed_filesystem` is ture, `weights_path` should be distributed file system
         """
         is_distributed = (
             torch.distributed.is_available() and torch.distributed.is_initialized()
@@ -304,11 +304,11 @@ class Bridge(ABC):
         rank = torch.distributed.get_rank() if is_distributed else 0
         if not os.path.exists(weights_path):
             os.makedirs(weights_path, exist_ok=True)
-        per_tensor_generator = self.export_weights(models, no_gather_pp)
+        per_tensor_generator = self.export_weights(models, distributed_filesystem)
 
-        if no_gather_pp:
-            assert memory_efficient, f"no_gather_pp should use with memory_efficient"
-            assert is_distributed, f"no_gather_pp should use in distributed"
+        if distributed_filesystem:
+            assert memory_efficient, f"distributed_filesystem should use with memory_efficient"
+            assert is_distributed, f"distributed_filesystem should use in distributed"
             return self._save_weights_fast(per_tensor_generator, weights_path)
 
         if rank != 0:
@@ -341,7 +341,7 @@ class Bridge(ABC):
         self.config = self._build_config()
 
     def export_weights(
-        self, models: list[torch.nn.Module], no_gather_pp: bool = False
+        self, models: list[torch.nn.Module], distributed_filesystem: bool = False
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
         assert (
             len(self.export_weights_buff) == 0
@@ -405,10 +405,10 @@ class Bridge(ABC):
                 name = local_to_global_map[iter_name]
             else:
                 name, param = None, None
-                if no_gather_pp:
+                if distributed_filesystem:
                     continue
 
-            if no_gather_pp:
+            if distributed_filesystem:
                 assert iter_pp_rank == self.mpu.pp_rank
                 broad_pp_param = param
             else:
