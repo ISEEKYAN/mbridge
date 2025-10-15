@@ -157,7 +157,7 @@ class SafeTensorIO:
         self,
         new_hf_dir: str,
         rank: int = 0,
-        world_soze: int = 1,
+        world_size: int = 1,
     ):
         assert self.index, "index file is required for memory efficient saving"
 
@@ -166,9 +166,9 @@ class SafeTensorIO:
             filename_to_keys_map[filename].add(key)
 
         filename_list = sorted(list(filename_to_keys_map.keys()))
-        if world_soze > 1:
+        if world_size > 1:
             num_files = len(filename_list)
-            num_files_rank = (num_files + world_soze - 1) // world_soze
+            num_files_rank = (num_files + world_size - 1) // world_size
             begin_idx = min(num_files, rank * num_files_rank)
             end_idx = min(num_files, (rank + 1) * num_files_rank)
             filename_list = filename_list[begin_idx:end_idx]
