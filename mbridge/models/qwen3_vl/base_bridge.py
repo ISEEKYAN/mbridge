@@ -37,21 +37,6 @@ class Qwen3VBaseBridge(VLMBridge):
             return self.vision_config
         return self.config
 
-    def _set_extra_config(self):
-        self.config.patch_size = self.hf_config.vision_config.patch_size
-        self.config.temporal_patch_size = (
-            self.hf_config.vision_config.temporal_patch_size
-        )
-        self.config.in_channels = self.hf_config.vision_config.in_channels
-        self.config.spatial_merge_size = self.hf_config.vision_config.spatial_merge_size
-        self.config.num_position_embeddings = (
-            self.hf_config.vision_config.num_position_embeddings
-        )
-        self.config.out_hidden_size = self.hf_config.vision_config.out_hidden_size
-        self.config.deepstack_visual_indexes = deepcopy(
-            self.hf_config.vision_config.deepstack_visual_indexes
-        )
-
     def _weight_name_mapping_mcore_local_to_global(
         self, model: torch.nn.Module, consider_ep: bool = True
     ) -> dict[str, str]:
@@ -417,7 +402,6 @@ class Qwen3VBaseBridge(VLMBridge):
             add_encoder=True,
             vp_stage: Optional[int] = None,
         ):
-            self._set_extra_config()
             transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
             vision_transformer_config = get_vision_model_config(
                 deepcopy(self.config), self.hf_config.vision_config

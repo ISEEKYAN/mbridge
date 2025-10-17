@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 from mbridge.core import register_model
 from mbridge.models.qwen3_vl.base_bridge import Qwen3VBaseBridge
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
@@ -166,9 +168,19 @@ class Qwen3VLBridge(Qwen3VBaseBridge):
             batch_p2p_comm=True,
             distribute_saved_activations=False,
             cp_comm_type="p2p",
+            # qwen3vl specific
             mrope_section=self.hf_config.text_config.rope_scaling.get(
-                "mrope_section", [24, 20, 20]
+                "mrope_section",
+                [24, 20, 20],
             ),
+            patch_size=self.hf_config.vision_config.patch_size,
+            temporal_patch_size=self.hf_config.vision_config.temporal_patch_size,
+            in_channels=self.hf_config.vision_config.in_channels,
+            spatial_merge_size=self.hf_config.vision_config.spatial_merge_size,
+            num_position_embeddings=self.hf_config.vision_config.num_position_embeddings,
+            out_hidden_size=self.hf_config.vision_config.out_hidden_size,
+            deepstack_visual_indexes=deepcopy(
+                self.hf_config.vision_config.deepstack_visual_indexes),
         )
 
 
@@ -283,8 +295,17 @@ class Qwen3VLMoEBridge(Qwen3VBaseBridge):
             # Qwen specific
             moe_router_pre_softmax=False,
             qk_layernorm=True,
+            # qwen3vl specific
             mrope_section=self.hf_config.text_config.rope_scaling.get(
                 "mrope_section",
                 [24, 20, 20],
             ),
+            patch_size=self.hf_config.vision_config.patch_size,
+            temporal_patch_size=self.hf_config.vision_config.temporal_patch_size,
+            in_channels=self.hf_config.vision_config.in_channels,
+            spatial_merge_size=self.hf_config.vision_config.spatial_merge_size,
+            num_position_embeddings=self.hf_config.vision_config.num_position_embeddings,
+            out_hidden_size=self.hf_config.vision_config.out_hidden_size,
+            deepstack_visual_indexes=deepcopy(
+                self.hf_config.vision_config.deepstack_visual_indexes),
         )
