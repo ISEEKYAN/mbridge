@@ -11,7 +11,7 @@ from safetensors.torch import save_file
 
 
 class SafeTensorIO:
-    def __init__(self, hf_dir: str):
+    def __init__(self, hf_dir: str, ignore_mtp: bool = False):
         index_file = os.path.join(hf_dir, "model.safetensors.index.json")
 
         self.index = {}
@@ -19,6 +19,14 @@ class SafeTensorIO:
         if os.path.exists(index_file):
             with open(index_file, "r") as f:
                 origin_index = json.load(f)
+
+                filtered_index = {}
+                for key, value in origin_index["weight_map"].items():
+                    if ignore_mtp and"mtp" in key:
+                        continue
+                    filtered_index[key] = value
+                origin_index["weight_map"] = filtered_index
+
                 self.index = origin_index["weight_map"]
                 self.origin_index = origin_index
 
