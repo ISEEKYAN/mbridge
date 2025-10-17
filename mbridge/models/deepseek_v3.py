@@ -125,52 +125,60 @@ class DeepseekV3Bridge(LLMBridge):
             mtp_args["mtp_num_layers"] = hf_config.num_nextn_predict_layers
             mtp_args["mtp_loss_scaling_factor"] = 0.1
 
-        return self._build_base_config(
-            attention_backend=AttnBackend.fused,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            ffn_hidden_size=hf_config.intermediate_size,
-            qk_layernorm=True,
+        base_config={
+            "attention_backend": AttnBackend.fused,
+            "layernorm_epsilon": hf_config.rms_norm_eps,
+            "ffn_hidden_size": hf_config.intermediate_size,
+            "qk_layernorm": True,
             # moe specific
-            moe_ffn_hidden_size=hf_config.moe_intermediate_size,
-            moe_token_dispatcher_type="alltoall",
-            moe_router_bias_update_rate=0.001,
-            moe_router_enable_expert_bias=True,
-            moe_router_topk=hf_config.num_experts_per_tok,
-            num_moe_experts=hf_config.n_routed_experts,
-            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size
-            * hf_config.n_shared_experts,
-            moe_aux_loss_coeff=getattr(hf_config, "aux_loss_alpha", 0.001),
+            "moe_ffn_hidden_size": hf_config.moe_intermediate_size,
+            "moe_token_dispatcher_type": "alltoall",
+            "moe_router_bias_update_rate": 0.001,
+            "moe_router_enable_expert_bias": True,
+            "moe_router_topk": hf_config.num_experts_per_tok,
+            "num_moe_experts": hf_config.n_routed_experts,
+            "moe_shared_expert_intermediate_size": hf_config.moe_intermediate_size * hf_config.n_shared_experts,
+            "moe_aux_loss_coeff": getattr(hf_config, "aux_loss_alpha", 0.001),
             # moe_router_load_balancing_type="seq_aux_loss",
-            moe_router_load_balancing_type="none",  # default None for RL
-            moe_shared_expert_overlap=True,
-            moe_grouped_gemm=True,
-            moe_router_score_function="sigmoid",
-            moe_router_pre_softmax=True,
-            moe_router_topk_scaling_factor=hf_config.routed_scaling_factor,
-            moe_layer_freq=moe_layer_freq,
+            "moe_router_load_balancing_type": "none",  # default None for RL
+            "moe_shared_expert_overlap": True,
+            "moe_grouped_gemm": True,
+            "moe_router_score_function": "sigmoid",
+            "moe_router_pre_softmax": True,
+            "moe_router_topk_scaling_factor": hf_config.routed_scaling_factor,
+            "moe_layer_freq": moe_layer_freq,
             # MLA
-            q_lora_rank=hf_config.q_lora_rank,
-            kv_lora_rank=hf_config.kv_lora_rank,
-            qk_head_dim=hf_config.qk_nope_head_dim,
-            qk_pos_emb_head_dim=hf_config.qk_rope_head_dim,
-            v_head_dim=hf_config.v_head_dim,
-            rotary_base=hf_config.rope_theta,
-            rotary_scaling_factor=mla_rope_config["factor"],
-            rope_type=mla_rope_config["type"],
-            mscale=mla_rope_config["mscale"],
-            mscale_all_dim=mla_rope_config["mscale_all_dim"],
-            max_position_embeddings=mla_rope_config["original_max_position_embeddings"],
-            beta_fast=mla_rope_config["beta_fast"],
-            beta_slow=mla_rope_config["beta_slow"],
+            "q_lora_rank": hf_config.q_lora_rank,
+            "kv_lora_rank": hf_config.kv_lora_rank,
+            "qk_head_dim": hf_config.qk_nope_head_dim,
+            "qk_pos_emb_head_dim": hf_config.qk_rope_head_dim,
+            "v_head_dim": hf_config.v_head_dim,
+            "rotary_base": hf_config.rope_theta,
+            "rotary_scaling_factor": mla_rope_config["factor"],
+            "rope_type": mla_rope_config["type"],
+            "mscale": mla_rope_config["mscale"],
+            "mscale_all_dim": mla_rope_config["mscale_all_dim"],
+            "original_max_position_embeddings": mla_rope_config["original_max_position_embeddings"],
+            "beta_fast": mla_rope_config["beta_fast"],
+            "beta_slow": mla_rope_config["beta_slow"],
             # mcore 0.12 moe
-            moe_router_dtype="fp32",
-            disable_bf16_reduced_precision_matmul=True,
+            "moe_router_dtype": "fp32",
+            "disable_bf16_reduced_precision_matmul": True,
             # other
-            persist_layer_norm=True,
-            bias_activation_fusion=True,
-            bias_dropout_fusion=True,
-            **mtp_args,
-        )
+            "persist_layer_norm": True,
+            "bias_activation_fusion": True,
+            "bias_dropout_fusion": True,
+        }
+        
+        import megatron.core
+        megatron_version = getattr(megatron.core, '__version__')
+        if megatron_version >= "0.14":
+            base_config["original_max_position_embeddings"] = mla_rope_config["original_max_position_embeddings"]
+        else:
+            base_config["max_position_embeddings"] = mla_rope_config["original_max_position_embeddings"]
+
+        base_config.update(mtp_args)
+        return self._build_base_config(**base_config) 
 
     def _get_gptmodel_args(self) -> dict:
         """
