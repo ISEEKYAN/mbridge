@@ -263,13 +263,16 @@ class Bridge(ABC):
         weights_path: str,
     ) -> None:
         dp_rank = parallel_state.get_data_parallel_rank()
-        is_save_rank = (self.mpu.tp_rank == 0 and self.mpu.cp_rank == 0 and dp_rank == 0)
+        save_rank = dp_rank * self.mpu.cp_size + self.mpu.cp_rank
+        dp_cp_size = self.mpu.cp_size * parallel_state.get_data_parallel_world_size()
 
-        if not is_save_rank:
-            for _, _ in per_tensor_generator:
-                pass
-        else:
-            self.safetensor_io.save_tmp_hf_weight(per_tensor_generator, weights_path)
+        # save dense weight will faster
+        param_cnt = 0
+        for hf_weight_name, tensor in per_tensor_generator:
+            # only tp_rank 0 should write
+            if param_cnt % dp_cp_size == save_rank and self.mpu.tp_rank == 0:
+                self.safetensor_io.save_tmp_hf_weight(hf_weight_name, tensor, weights_path)
+            param_cnt += 1
         torch.distributed.barrier()
 
         rank = torch.distributed.get_rank()

@@ -145,6 +145,16 @@ class SafeTensorIO:
 
     def save_tmp_hf_weight(
         self,
+        hf_weight_name: str,
+        tensor: torch.tensor,
+        new_hf_dir: str,
+    ):
+        assert self.index, "index file is required for memory efficient saving"
+        tmp_filename = f"{new_hf_dir}/{hf_weight_name}.safetensors"
+        save_file({hf_weight_name: tensor}, tmp_filename)
+
+    def save_tmp_hf_weights(
+        self,
         per_tensor_generator: Generator[tuple[str, torch.Tensor], None, None],
         new_hf_dir: str,
     ):
@@ -197,7 +207,7 @@ class SafeTensorIO:
         """
         assert self.index, "index file is required for memory efficient saving"
 
-        self.save_tmp_hf_weight(per_tensor_generator, new_hf_dir)
+        self.save_tmp_hf_weights(per_tensor_generator, new_hf_dir)
         self.save_hf_weight_merge(new_hf_dir)
         return
 
