@@ -572,9 +572,13 @@ class InternVL3Bridge(VLMBridge):
                 add_qkv_bias=True,
                 qk_layernorm=False,
             )
-        else:
+        elif self.hf_config.llm_config.model_type == 'qwen3':
             return self._build_base_config(
                 # qwen3
                 text_config_key="llm_config",
                 qk_layernorm=True,
             )
+        else:
+            assert (
+                self.hf_config.llm_config.model_type == "qwen2" or self.hf_config.llm_config.model_type == "qwen3"
+            ), f"only support the qwen2 and qwen3 llm, now is {self.hf_config.llm_config.model_type}"
