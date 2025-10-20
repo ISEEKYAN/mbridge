@@ -47,14 +47,15 @@ DISTRIBUTED_ARGS="
 
 # run the huggingface fwd
 python example/qwen3vl/hf_fwd_moe.py \
-    --model_path /data/model/Qwen3-VL-235B-A22B-Instruct
+    --model_path ../hf-hub/Qwen/Qwen3-VL-30B-A3B-Instruct
 
 torchrun $DISTRIBUTED_ARGS \
     example/qwen3vl/load_model_and_forward.py \
     --tp $TP_SIZE \
     --pp $PP_SIZE \
     --ep $EP_SIZE \
-    --model_path /data/model/Qwen3-VL-235B-A22B-Instruct \
+    --etp 1 \
+    --model_path ../hf-hub/Qwen/Qwen3-VL-30B-A3B-Instruct \
     --check_export
 
 torchrun $DISTRIBUTED_ARGS \
@@ -62,4 +63,23 @@ torchrun $DISTRIBUTED_ARGS \
     --tp $TP_SIZE \
     --pp $PP_SIZE \
     --ep $EP_SIZE \
-    --model_path /data/model/Qwen3-VL-235B-A22B-Instruct
+    --etp 1 \
+    --model_path ../hf-hub/Qwen/Qwen3-VL-30B-A3B-Instruct
+
+
+# run the huggingface fwd
+python example/qwen3vl/hf_fwd.py \
+    --model_path ../hf-hub/Qwen/Qwen3-VL-4B-Instruct
+
+torchrun $DISTRIBUTED_ARGS \
+    example/qwen3vl/load_model_and_forward.py \
+    --tp $TP_SIZE \
+    --pp $PP_SIZE \
+    --model_path ../hf-hub/Qwen/Qwen3-VL-4B-Instruct \
+    --check_export
+
+torchrun $DISTRIBUTED_ARGS \
+    example/qwen3vl/load_model_and_inference.py \
+    --tp $TP_SIZE \
+    --pp $PP_SIZE \
+    --model_path ../hf-hub/Qwen/Qwen3-VL-4B-Instruct
