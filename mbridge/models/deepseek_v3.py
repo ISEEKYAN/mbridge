@@ -158,7 +158,6 @@ class DeepseekV3Bridge(LLMBridge):
             "rope_type": mla_rope_config["type"],
             "mscale": mla_rope_config["mscale"],
             "mscale_all_dim": mla_rope_config["mscale_all_dim"],
-            "original_max_position_embeddings": mla_rope_config["original_max_position_embeddings"],
             "beta_fast": mla_rope_config["beta_fast"],
             "beta_slow": mla_rope_config["beta_slow"],
             # mcore 0.12 moe
