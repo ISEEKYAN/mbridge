@@ -173,6 +173,7 @@ class InternVLModel(MegatronModule):
         inference_params: InferenceParams = None,
         packed_seq_params: PackedSeqParams = None,
         image_token_index: int = -1,
+        **kwargs,
     ) -> torch.Tensor:
         use_inference_kv_cache = (
             inference_params is not None
@@ -223,6 +224,7 @@ class InternVLModel(MegatronModule):
             labels=labels,
             inference_params=inference_params,
             packed_seq_params=packed_seq_params,
+            **kwargs,
         )
 
         return output

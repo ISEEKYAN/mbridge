@@ -135,6 +135,7 @@ class Glm4VLModel(MegatronModule, VLMixin):
         image_grid_thw: torch.Tensor = None,
         video_grid_thw: torch.Tensor = None,
         runtime_gather_output=False,
+        **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen2VL model.
 
@@ -206,6 +207,7 @@ class Glm4VLModel(MegatronModule, VLMixin):
             inference_context=inference_context,
             runtime_gather_output=runtime_gather_output,
             **(extra_block_kwargs or {}),
+            **kwargs,
         )
 
         return output
