@@ -103,6 +103,12 @@ class SafeTensorIO:
                     ret.extend(f.keys())
             return ret
 
+    def get_keys_maps_to_save(self) -> dict:
+        filename_to_keys_map = defaultdict(set)
+        for key, filename in self.index.items():
+            filename_to_keys_map[filename].add(key)
+        return filename_to_keys_map
+
     def save_hf_weight(
         self,
         per_tensor_generator: Generator[tuple[str, torch.Tensor], None, None],
@@ -124,9 +130,7 @@ class SafeTensorIO:
             save_file(states, safetensor_file)
             return
 
-        filename_to_keys_map = defaultdict(set)
-        for key, filename in self.index.items():
-            filename_to_keys_map[filename].add(key)
+        filename_to_keys_map = self.get_keys_maps_to_save()
         states = {}
         for hf_weight_name, tensor in per_tensor_generator:
             states[hf_weight_name] = tensor.cpu()

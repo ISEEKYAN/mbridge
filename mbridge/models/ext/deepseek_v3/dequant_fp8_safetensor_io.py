@@ -62,3 +62,11 @@ class DequantFP8SafeTensorIO(SafeTensorIO):
         # set default dtype back to float32
         torch.set_default_dtype(torch.float32)
         return ret
+
+    def get_keys_maps_to_save(self) -> dict:
+        filename_to_keys_map = defaultdict(set)
+        for key, filename in self.index.items():
+            if key.endswith("_scale_inv"):
+                continue
+            filename_to_keys_map[filename].add(key)
+        return filename_to_keys_map
