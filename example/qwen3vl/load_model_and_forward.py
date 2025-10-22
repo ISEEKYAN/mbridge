@@ -74,6 +74,35 @@ def get_sample_for_forward(hf_model_path):
     return inputs
 
 
+def gather_output_from_cp(input_: torch.Tensor, seq_dim, cp_size, cp_group):
+    assert seq_dim in [0, 1] and input_.dim() > seq_dim
+    # Split local_logits into two parts
+    input_ = input_.view(
+        *input_.shape[0:seq_dim],
+        2,
+        input_.shape[seq_dim] // 2,
+        *input_.shape[(seq_dim + 1):],
+    )
+
+    gathered_logits = [torch.zeros_like(input_) for _ in range(cp_size)]
+    torch.distributed.all_gather(gathered_logits, input_, group=cp_group)
+
+    reorded_logits = [None for _ in range(2 * cp_size)]
+    if seq_dim == 1:
+        for rank in range(cp_size):
+            reorded_logits[rank] = gathered_logits[rank][:, 0]
+            reorded_logits[2 * cp_size - rank - 1] = gathered_logits[rank][:, 1]
+    elif seq_dim == 0:
+        for rank in range(cp_size):
+            reorded_logits[rank] = gathered_logits[rank][0]
+            reorded_logits[2 * cp_size - rank - 1] = gathered_logits[rank][1]
+    else:
+        assert False
+    gathered_logits = torch.cat(reorded_logits, dim=seq_dim)
+
+    return gathered_logits
+
+
 # hf logits vs megatron logits
 def cos_similarity(a, b):
     print(f"a {a.shape} b {b.shape}")
@@ -225,12 +254,15 @@ def main():
     sample = get_sample_for_forward(hf_model_path)
     real_seq_length = sample["input_ids"].shape[-1]
     torch.distributed.barrier()
+    seq_length_factor = args.tp
+    if args.cp > 1:
+        seq_length_factor *= (args.cp * 2)
     with torch.no_grad():
         fwd_bwd_function = get_forward_backward_func()
 
         seq_length = real_seq_length
-        if real_seq_length % args.tp != 0:
-            seq_length = (real_seq_length + args.tp - 1) // args.tp * args.tp
+        if real_seq_length % seq_length_factor != 0:
+            seq_length = (real_seq_length + seq_length_factor - 1) // seq_length_factor * seq_length_factor
             sample["input_ids"] = F.pad(
                 sample["input_ids"],
                 (0, seq_length - real_seq_length, 0, 0),
@@ -250,6 +282,13 @@ def main():
 
         if mpu.is_pipeline_last_stage():
             megatron_output = mcore_output[0]["logits"]
+            if mpu.get_context_parallel_world_size() > 1:
+                megatron_output = gather_output_from_cp(
+                    megatron_output,
+                    1,
+                    mpu.get_context_parallel_world_size(),
+                    mpu.get_context_parallel_group(),
+                )
             if mpu.get_tensor_model_parallel_world_size() > 1:
                 megatron_output = gather_from_tensor_model_parallel_region(
                     megatron_output
