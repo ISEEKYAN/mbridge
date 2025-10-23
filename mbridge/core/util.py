@@ -393,3 +393,181 @@ def split_data_cp_rank(
     val = val.view(*val.shape[0:seq_dim], -1, *val.shape[(seq_dim + 2) :])
 
     return val
+
+
+# also can use in qwen2vl/qwen2.5vl
+def qwen2vl_pad_and_split(
+    cp_size: int,
+    hw_factor: int,
+    pixel_values: list[torch.Tensor],
+    image_grid_thws: list[torch.Tensor],
+):
+    assert len(pixel_values) == len(image_grid_thws)
+    # split the pixel_values
+    split_pixel_values = []
+    split_image_grid_thws = []
+    for pixel_value, image_grid_thw in zip(pixel_values, image_grid_thws):
+        split_image_grid_thw = list(torch.split(image_grid_thw, 1, dim=0))
+        split_image_grid_thws.extend(split_image_grid_thw)
+        slice_begin = 0
+        for ele in split_image_grid_thw:
+            slice_end = slice_begin + ele.prod().item()
+            split_pixel_values.append(pixel_value[slice_begin:slice_end].clone())
+            slice_begin = slice_end
+
+    pixel_values = split_pixel_values
+    image_grid_thws = split_image_grid_thws
+    img_num = len(image_grid_thws)
+
+    img_num_per_rank = img_num // cp_size
+    img_num_remain = img_num % cp_size
+    cp_img_num = []
+    for i in range(cp_size):
+        cp_img_num.append(img_num_per_rank)
+        if i < img_num_remain:
+            cp_img_num[i] += 1
+
+    img_idx = 0
+    new_pixel_values = []
+    new_image_grid_thws = []
+    images_padded = []
+    for i in range(cp_size):
+        seq_len = 0
+        img_begin_idx = img_idx
+        img_end_idx = img_begin_idx + cp_img_num[i]
+        img_idx += cp_img_num[i]
+
+        for j in range(img_begin_idx, img_end_idx):
+            seq_len += pixel_values[j].size(0)
+            new_pixel_values.append(pixel_values[j])
+            new_image_grid_thws.append(image_grid_thws[j])
+
+        image_padded = 0 != seq_len % hw_factor
+        if image_padded:
+            padded_seqlen = (seq_len + hw_factor - 1) // hw_factor * hw_factor - seq_len
+            assert padded_seqlen > 0 and padded_seqlen % 4 == 0
+            new_pixel_values.append(
+                torch.zeros(
+                    [padded_seqlen, pixel_values[0].size(-1)],
+                    dtype=pixel_values[0].dtype,
+                    device=pixel_values[0].device,
+                )
+            )
+            new_image_grid_thws.append(
+                torch.tensor(
+                    [[1, 2, padded_seqlen // 2]],
+                    dtype=image_grid_thws[0].dtype,
+                    device=image_grid_thws[0].device,
+                )
+            )
+            cp_img_num[i] += 1
+        images_padded.append(int(image_padded))
+
+    return new_pixel_values, new_image_grid_thws, cp_img_num, images_padded
+
+
+@torch.no_grad
+def qwen3vl_cp_split(
+    cp_size: int,
+    pixel_values: torch.Tensor,
+    image_grid_thw: torch.Tensor,
+):
+    assert cp_size > 1
+    if pixel_values is None:
+        assert image_grid_thw is None
+        return None, None, None, None
+
+    assert not pixel_values.requires_grad
+    assert not image_grid_thw.requires_grad
+
+    hw_factor = 4
+    new_pixel_values, new_image_grid_thws, cp_img_num, images_padded = qwen2vl_pad_and_split(
+        cp_size,
+        hw_factor,
+        [pixel_values],
+        [image_grid_thw],
+    )
+    for image_padded in images_padded:
+        assert not image_padded, "qwen3vl vit not support sp now, no need to paded"
+
+    pixel_values = torch.cat(new_pixel_values, dim=0)
+    image_grid_thw = torch.cat(new_image_grid_thws, dim=0)
+    return pixel_values, image_grid_thw, cp_img_num, images_padded
+
+
+def get_vision_cp_data(
+    vision_data: torch.Tensor,
+    vision_grid_thw: torch.Tensor,
+    square_merge_size: int,
+    cp_img_num: list[int],
+    images_padded: list[bool],
+):
+    """Get vision data and grid_thw for context parallelism.
+    Returns:
+        vision_data (torch.Tensor): Vision data of shape [total_thw_size, n_features].
+        vision_grid_thw (torch.Tensor): Vision grid_thw of shape [total_thw_size, 3].
+        seqlens_list (list of torch.Tensor): List of seqlens of the vision data in each context parallel rank,
+                                             for the all gather after vision encoder.
+    """
+    # we use the context parallelism size and context parallel group of LLM for vision model.
+    # we only divide the number of images in each context parallel rank.
+    cp_size = mpu.get_context_parallel_world_size()
+    cp_rank = mpu.get_context_parallel_rank()
+    assert cp_size == len(cp_img_num)
+
+    seqlens = torch.repeat_interleave(
+        vision_grid_thw[:, 1] * vision_grid_thw[:, 2], vision_grid_thw[:, 0]
+    )
+    vision_grid_thw_list = []
+    vision_data_list = []
+    seqlens_list = []
+    img_idx = 0
+    for i in range(cp_size):
+        start_idx = img_idx
+        end_idx = start_idx + cp_img_num[i]
+        img_idx += cp_img_num[i]
+
+        vision_grid_thw_list.append(vision_grid_thw[start_idx:end_idx])
+        if images_padded[i]:
+            seqlens_list.append(seqlens[start_idx:end_idx - 1])
+        else:
+            seqlens_list.append(seqlens[start_idx:end_idx])
+        data_start_idx = seqlens[:start_idx].sum()
+        data_end_idx = seqlens[:end_idx].sum()
+        vision_data_list.append(vision_data[data_start_idx:data_end_idx])
+    new_vision_grid_thw = vision_grid_thw_list[cp_rank]
+    new_vision_data = vision_data_list[cp_rank]
+    new_seqlens_list = [t // square_merge_size for t in seqlens_list]
+    return new_vision_data, new_vision_grid_thw, new_seqlens_list
+
+
+class AllGatherVisionEmbeddings(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, seqlens_on_cp_ranks):
+        outputs = []
+        for i in range(len(seqlens_on_cp_ranks)):
+            o = torch.zeros(
+                (seqlens_on_cp_ranks[i].sum(), *input.shape[1:]),
+                device=input.device,
+                dtype=input.dtype,
+                layout=input.layout,
+            )
+            outputs.append(o)
+        torch.distributed.all_gather(
+            outputs, input, group=mpu.get_context_parallel_group()
+        )
+        cp_rank = mpu.get_context_parallel_rank()
+        ctx.cp_rank = cp_rank
+        ctx.save_for_backward(*seqlens_on_cp_ranks)
+
+        output = torch.cat(outputs, dim=0)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        cp_rank = ctx.cp_rank
+        seqlens_on_cp_ranks = ctx.saved_tensors
+        start_idx = torch.cat(seqlens_on_cp_ranks[:cp_rank]).sum() if cp_rank != 0 else 0
+        end_idx = start_idx + seqlens_on_cp_ranks[cp_rank].sum()
+        grad_output = grad_output[start_idx:end_idx]
+        return grad_output, None

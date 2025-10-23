@@ -21,7 +21,10 @@ from megatron.core.tensor_parallel.mappings import (
 )
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
-from example.qwen3vl.load_model_and_forward import get_sample_for_forward
+from example.qwen3vl.load_model_and_forward import (
+    get_sample_for_forward,
+    gather_output_from_cp,
+)
 from mbridge import AutoBridge
 
 
@@ -147,6 +150,9 @@ def main():
     generated_tokens = []
     max_new_tokens = 1000
     torch.distributed.barrier()
+    seq_length_factor = args.tp
+    if args.cp > 1:
+        seq_length_factor *= (args.cp * 2)
     with torch.no_grad():
         fwd_bwd_function = get_forward_backward_func()
 
@@ -155,8 +161,8 @@ def main():
         ):
             real_seq_length = sample["input_ids"].shape[-1]
             seq_length = real_seq_length
-            if real_seq_length % args.tp != 0:
-                seq_length = (real_seq_length + args.tp - 1) // args.tp * args.tp
+            if real_seq_length % seq_length_factor != 0:
+                seq_length = (real_seq_length + seq_length_factor - 1) // seq_length_factor * seq_length_factor
                 sample["input_ids"] = F.pad(
                     sample["input_ids"],
                     (0, seq_length - real_seq_length, 0, 0),
@@ -177,6 +183,13 @@ def main():
             next_token = -1
             if mpu.is_pipeline_last_stage():
                 megatron_output = mcore_output[0]["logits"]
+                if mpu.get_context_parallel_world_size() > 1:
+                    megatron_output = gather_output_from_cp(
+                        megatron_output,
+                        1,
+                        mpu.get_context_parallel_world_size(),
+                        mpu.get_context_parallel_group(),
+                    )
                 if mpu.get_tensor_model_parallel_world_size() > 1:
                     megatron_output = gather_from_tensor_model_parallel_region(
                         megatron_output
