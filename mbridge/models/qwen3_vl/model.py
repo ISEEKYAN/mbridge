@@ -206,6 +206,7 @@ class Qwen3VLModel(MegatronModule):
         video_grid_thw: torch.Tensor = None,
         # cat set at dataset
         image_input_mask: torch.Tensor = None,
+        **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
 
@@ -328,6 +329,7 @@ class Qwen3VLModel(MegatronModule):
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
             **(extra_block_kwargs or {}),
+            **kwargs,
         )
 
         return output
