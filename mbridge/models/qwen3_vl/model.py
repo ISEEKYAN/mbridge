@@ -217,6 +217,7 @@ class Qwen3VLModel(MegatronModule):
         image_input_mask: torch.Tensor = None,
         cp_img_num: list[int] = None,
         images_padded: list[bool] = None,
+        **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
 
@@ -385,6 +386,7 @@ class Qwen3VLModel(MegatronModule):
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
             **(extra_block_kwargs or {}),
+            **kwargs,
         )
 
         return output
