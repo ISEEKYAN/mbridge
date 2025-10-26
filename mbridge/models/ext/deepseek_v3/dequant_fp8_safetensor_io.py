@@ -62,3 +62,27 @@ class DequantFP8SafeTensorIO(SafeTensorIO):
         # set default dtype back to float32
         torch.set_default_dtype(torch.float32)
         return ret
+
+    def get_keys_maps_to_save(self) -> dict:
+        filename_to_keys_map = defaultdict(set)
+        for key, filename in self.index.items():
+            if key.endswith("_scale_inv"):
+                continue
+            filename_to_keys_map[filename].add(key)
+        return filename_to_keys_map
+    
+    def save_index(self, new_hf_dir: str):
+        if self.origin_index:
+            weight_map = {}
+            for key, filename in self.origin_index['weight_map'].items():
+                if key.endswith("_scale_inv"):
+                    continue
+                weight_map[key] = filename
+            self.origin_index['weight_map'] = weight_map
+            with open(
+                os.path.join(new_hf_dir, "model.safetensors.index.json"), "w"
+            ) as f:
+                json.dump(self.origin_index, f)
+        else:
+            warnings.warn("No index file found, saving index file failed")
+        return
