@@ -20,10 +20,9 @@ readonly WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
 readonly MASTER_PORT=65535
 export MASTER_ADDR="${_MASTER_ADDR:-localhost}"
 
-# only support tp for demo
-readonly TP_SIZE=4
+readonly TP_SIZE=2
 readonly PP_SIZE=2
-readonly CP_SIZE=1
+readonly CP_SIZE=2
 readonly EP_SIZE=2
 
 echo "INFO
@@ -55,6 +54,7 @@ torchrun $DISTRIBUTED_ARGS \
     --pp $PP_SIZE \
     --ep $EP_SIZE \
     --etp 1 \
+    --cp $CP_SIZE \
     --model_path ../hf-hub/Qwen/Qwen3-VL-30B-A3B-Instruct \
     --check_export
 
@@ -64,6 +64,7 @@ torchrun $DISTRIBUTED_ARGS \
     --pp $PP_SIZE \
     --ep $EP_SIZE \
     --etp 1 \
+    --cp $CP_SIZE \
     --model_path ../hf-hub/Qwen/Qwen3-VL-30B-A3B-Instruct
 
 
@@ -75,6 +76,7 @@ torchrun $DISTRIBUTED_ARGS \
     example/qwen3vl/load_model_and_forward.py \
     --tp $TP_SIZE \
     --pp $PP_SIZE \
+    --cp $CP_SIZE \
     --model_path ../hf-hub/Qwen/Qwen3-VL-4B-Instruct \
     --check_export
 
@@ -82,4 +84,5 @@ torchrun $DISTRIBUTED_ARGS \
     example/qwen3vl/load_model_and_inference.py \
     --tp $TP_SIZE \
     --pp $PP_SIZE \
+    --cp $CP_SIZE \
     --model_path ../hf-hub/Qwen/Qwen3-VL-4B-Instruct

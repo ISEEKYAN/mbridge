@@ -13,6 +13,13 @@ from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from mbridge.models.qwen3_vl.utils import split_deepstack_embs
 from mbridge.models.qwen3_vl.vision_model import Qwen3VLVisionModel
 
+from mbridge.core.util import (
+    qwen3vl_cp_split,
+    get_vision_cp_data,
+    AllGatherVisionEmbeddings,
+    split_data_cp_rank,
+)
+
 
 # Note: This is under development and may be missing features.
 class Qwen3VLModel(MegatronModule):
@@ -97,6 +104,8 @@ class Qwen3VLModel(MegatronModule):
         self.image_token_id = image_token_id
         self.video_token_id = video_token_id
         self.vision_start_token_id = vision_start_token_id
+
+        self.square_merge_size = vision_transformer_config.spatial_merge_size**2
 
         # This attribute is needed to check if an all-reduce is required
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
@@ -204,8 +213,10 @@ class Qwen3VLModel(MegatronModule):
         pixel_values_videos: torch.Tensor = None,
         image_grid_thw: torch.Tensor = None,
         video_grid_thw: torch.Tensor = None,
-        # cat set at dataset
+        # can set at dataset
         image_input_mask: torch.Tensor = None,
+        cp_img_num: list[int] = None,
+        images_padded: list[bool] = None,
         **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
@@ -238,6 +249,7 @@ class Qwen3VLModel(MegatronModule):
         vision_data = None
         image_mask = None
         deepstack_feature_lists = None
+        cp_size = mpu.get_context_parallel_world_size()
 
         if self.pre_process:
             if image_grid_thw is not None:
@@ -251,10 +263,50 @@ class Qwen3VLModel(MegatronModule):
 
             vision_embeds = None
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
-                vision_embeds, deepstack_feature_lists = self.vision_model(
-                    hidden_states=vision_data,
-                    grid_thw=vision_grid_thw,
-                )
+                if cp_size > 1:
+                    if cp_img_num is None:
+                        assert images_padded is None
+                        vision_data, vision_grid_thw, cp_img_num, images_padded = qwen3vl_cp_split(
+                            cp_size,
+                            vision_data,
+                            vision_grid_thw,
+                        )
+                    vision_data, vision_grid_thw, seqlen_on_cp_ranks = get_vision_cp_data(
+                        vision_data,
+                        vision_grid_thw,
+                        self.square_merge_size,
+                        cp_img_num,
+                        images_padded,
+                    )
+                if vision_data.shape[0] > 0:
+                    vision_embeds, deepstack_feature_lists = self.vision_model(
+                        hidden_states=vision_data,
+                        grid_thw=vision_grid_thw,
+                    )
+                else:
+                    vision_embeds = torch.zeros(
+                        (0, self.language_model.config.hidden_size),
+                        device=vision_data.device,
+                        dtype=torch.bfloat16,
+                    )
+                    deepstack_feature_lists = []
+                    for _ in self.vision_model.config.deepstack_visual_indexes:
+                        deepstack_feature_lists.append(
+                            torch.zeros(
+                                (0, self.language_model.config.hidden_size),
+                                device=vision_data.device,
+                                dtype=torch.bfloat16,
+                            ))
+                if cp_size > 1:
+                    vision_embeds = AllGatherVisionEmbeddings.apply(
+                        vision_embeds,
+                        seqlen_on_cp_ranks,
+                    )
+                    for i in range(len(deepstack_feature_lists)):
+                        deepstack_feature_lists[i] = AllGatherVisionEmbeddings.apply(
+                            deepstack_feature_lists[i],
+                            seqlen_on_cp_ranks,
+                        )
 
             combined_embeddings = self.language_model.embedding(
                 input_ids=input_ids,
@@ -286,6 +338,9 @@ class Qwen3VLModel(MegatronModule):
                     combined_embeddings = combined_embeddings.transpose(
                         0, 1
                     ).contiguous()
+
+            if combined_embeddings is not None and cp_size > 1:
+                combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0)
             if self.config.sequence_parallel:
                 combined_embeddings = (
                     tensor_parallel.scatter_to_sequence_parallel_region(
@@ -310,12 +365,14 @@ class Qwen3VLModel(MegatronModule):
 
         visual_pos_masks = image_mask
         deepstack_visual_embeds = deepstack_feature_lists
-        if self.config.sequence_parallel:
+        if self.config.sequence_parallel or cp_size > 1:
             visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
                 visual_pos_masks,
                 deepstack_visual_embeds,
                 tp_size=mpu.get_tensor_model_parallel_world_size(),
                 tp_rank=mpu.get_tensor_model_parallel_rank(),
+                cp_size=cp_size,
+                cp_rank=mpu.get_context_parallel_rank(),
             )
 
         output = self.language_model(
