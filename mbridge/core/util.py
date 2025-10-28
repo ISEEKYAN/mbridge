@@ -395,6 +395,39 @@ def split_data_cp_rank(
     return val
 
 
+def expand_thw(thw: torch.Tensor) -> torch.Tensor:
+    assert thw.dim() == 2
+    repeats = thw[:, 0].to(torch.long)
+    assert torch.all(repeats > 0), "thw[:,0] must be > 0"
+
+    idx = torch.arange(thw.size(0), device=thw.device).repeat_interleave(repeats)
+    out = thw[idx].clone()
+    out[:, 0] = 1
+    return out
+
+
+def collapse_thw(expanded: torch.Tensor) -> torch.Tensor:
+    assert expanded.dim() == 2
+    assert expanded.size(1) >= 2
+
+    # find the diff
+    other = expanded[:, 1:]
+    prev = torch.cat([other[:1], other[:-1]], dim=0)
+    change = (other != prev).any(dim=1)
+    # the index0 must be now row
+    change[0] = True  
+
+    # find the diff
+    starts = torch.nonzero(change, as_tuple=False).squeeze(1)
+    ends = torch.cat([starts[1:], torch.tensor([other.size(0)], device=other.device)]) - 1
+    counts = ends - starts + 1
+
+    rows_other = other[starts]
+    result_first_col = counts.to(expanded.dtype).unsqueeze(1)
+    result = torch.cat([result_first_col, rows_other], dim=1)
+    return result
+
+
 # also can use in qwen2vl/qwen2.5vl
 def qwen2vl_pad_and_split(
     cp_size: int,
@@ -479,6 +512,8 @@ def qwen3vl_cp_split(
 
     assert not pixel_values.requires_grad
     assert not image_grid_thw.requires_grad
+    # expand video thw
+    image_grid_thw = expand_thw(image_grid_thw)
 
     hw_factor = 4
     new_pixel_values, new_image_grid_thws, cp_img_num, images_padded = qwen2vl_pad_and_split(
