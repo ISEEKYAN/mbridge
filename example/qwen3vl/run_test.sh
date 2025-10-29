@@ -83,7 +83,8 @@ torchrun $DISTRIBUTED_ARGS \
     --pp $PP_SIZE \
     --cp $CP_SIZE \
     --model_path ../hf-hub/Qwen/Qwen3-VL-4B-Instruct \
-    --sample_type $SAMPLE_TYPE
+    --sample_type $SAMPLE_TYPE \
+    --check_export
 
 torchrun $DISTRIBUTED_ARGS \
     example/qwen3vl/load_model_and_inference.py \

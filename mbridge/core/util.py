@@ -409,13 +409,15 @@ def expand_thw(thw: torch.Tensor) -> torch.Tensor:
 def collapse_thw(expanded: torch.Tensor) -> torch.Tensor:
     assert expanded.dim() == 2
     assert expanded.size(1) >= 2
+    if expanded.shape[0] < 2:
+        return expanded
 
     # find the diff
     other = expanded[:, 1:]
     prev = torch.cat([other[:1], other[:-1]], dim=0)
     change = (other != prev).any(dim=1)
     # the index0 must be now row
-    change[0] = True  
+    change[0] = True
 
     # find the diff
     starts = torch.nonzero(change, as_tuple=False).squeeze(1)
