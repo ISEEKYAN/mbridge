@@ -143,8 +143,8 @@ class Bridge(ABC):
             self.load_weights(model, self._get_actual_hf_path(weight_path))
         return model
 
-    def _get_safetensor_io(self, weights_path: str):
-        return SafeTensorIO(self._get_actual_hf_path(weights_path))
+    def _get_safetensor_io(self, weights_path: str, ignore_mtp: bool = False):
+        return SafeTensorIO(self._get_actual_hf_path(weights_path), ignore_mtp=ignore_mtp)
 
     def _get_mcore_config_by_name(self, mcore_weights_name: str):
         return self.config
@@ -163,6 +163,7 @@ class Bridge(ABC):
             weights_path: Path to the weights file or Hugging Face model identifier
         """
         self.safetensor_io = self._get_safetensor_io(weights_path)
+        self_attn_output_gate = getattr(self.config, "attention_output_gate", False)
 
         for i, model in enumerate(models):
             # map local weight names to global weight names
@@ -173,6 +174,7 @@ class Bridge(ABC):
                 for k, v in local_to_global_map.items()
                 if "_extra_state" not in k
             }
+
             # only tp_rank0/etp_rank0 load from disk, others load from tp_rank0/etp_rank0
             to_load_from_disk = []
             for local_name, hf_names in local_to_hf_map.items():
@@ -205,7 +207,8 @@ class Bridge(ABC):
                         hf_weights = [
                             self.safetensor_io.load_one_hf_weight(x) for x in hf_names
                         ]
-                    mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
+                    mcore_weight = self._weight_to_mcore_format(local_name, hf_weights,
+                                                                self_attn_output_gate=self_attn_output_gate)
                 else:
                     mcore_weight = None
                 if hf_names[0] in {"lm_head.weight", "model.embed_tokens.weight"}:
@@ -214,6 +217,10 @@ class Bridge(ABC):
                     ):
                         # skip lm_head.weight when the model is a value model
                         continue
+                
+                mcore_weight_shape = None
+                if mcore_weight is not None:
+                    mcore_weight_shape = mcore_weight.shape
 
                 param_to_load = torch.empty_like(param)
                 if ".mlp.experts.linear_fc" in local_name:
@@ -351,6 +358,8 @@ class Bridge(ABC):
         ), f"should be empty {self.export_weights_buff=}"
         models = [unwrap_model(model) for model in models]
 
+        self_attn_output_gate = getattr(self.config, "attention_output_gate", False)
+
         def get_model_chunk_generator():
             for model in models:
                 existing_keys = set()
@@ -457,7 +466,7 @@ class Bridge(ABC):
                         name, params, broad_pp_param
                     )
                     converted_names, converted_params = self._weight_to_hf_format(
-                        name, merge_params
+                        name, merge_params, self_attn_output_gate=self_attn_output_gate
                     )
                     # Some moe models require multiple weights to be merge into one, such as qwen3vl
                     if len(converted_names) == 0:
@@ -489,7 +498,7 @@ class Bridge(ABC):
                 infer_params = broad_pp_param
 
             converted_names, converted_params = self._weight_to_hf_format(
-                name, infer_params
+                name, infer_params, self_attn_output_gate=self_attn_output_gate
             )
             # Some moe models require multiple weights to be merge into one, such as qwen3vl
             if len(converted_names) == 0:
@@ -736,7 +745,7 @@ class Bridge(ABC):
             return self._weight_name_mapping_other(mcore_weights_name)
 
     def _weight_to_hf_format(
-        self, mcore_weights_name: str, mcore_weights: torch.Tensor
+        self, mcore_weights_name: str, mcore_weights: torch.Tensor, self_attn_output_gate: bool = False
     ) -> tuple[list[str], list[torch.Tensor]]:
         """
         Export MCore weights to Hugging Face format.
@@ -793,9 +802,25 @@ class Bridge(ABC):
             single_out_shape = (
                 [-1, hidden_dim] if ".bias" not in mcore_weights_name else [-1]
             )
+
             q = qkv[:, :q_len].reshape(*single_out_shape)
+            g = None
+            if self_attn_output_gate:
+                g = qkv[:, q_len : q_len + q_len].reshape(*single_out_shape)
+                q_len += q_len
+
             k = qkv[:, q_len : q_len + k_len].reshape(*single_out_shape)
             v = qkv[:, q_len + k_len :].reshape(*single_out_shape)
+
+            if self_attn_output_gate:
+                _out_shape = (
+                    [num_attention_heads, -1, hidden_dim]
+                    if ".bias" not in mcore_weights_name
+                    else [num_attention_heads, -1]
+                )
+                q = q.view(_out_shape)
+                g = g.view(_out_shape)
+                q = torch.cat([q, g], dim=1).view(*single_out_shape).contiguous()
             return hf_names, [q, k, v]
 
         elif (
@@ -806,10 +831,46 @@ class Bridge(ABC):
             assert len(hf_names) == 2
             gate, up = mcore_weights.chunk(2)
             return hf_names, [gate, up]
+        elif "self_attention.in_proj.weight" in mcore_weights_name:
+            assert len(hf_names) == 2
+            hidden_size = self.hf_config.hidden_size
+            linear_num_key_heads = self.hf_config.linear_num_key_heads
+            linear_key_head_dim = self.hf_config.linear_key_head_dim
+            linear_num_value_heads = self.hf_config.linear_num_value_heads
+            linear_value_head_dim = self.hf_config.linear_value_head_dim
+
+            k_dim = linear_num_key_heads * linear_key_head_dim
+            v_dim = linear_num_value_heads * linear_value_head_dim
+            split_shape = [
+                k_dim,
+                k_dim,
+                v_dim,
+                v_dim,
+                linear_num_value_heads,
+                linear_num_value_heads,
+            ]
+            weight_lst = mcore_weights.split(split_shape, dim=0)
+            # weight_lst: [wq, wk, wv, wz, wb, wa]
+            assert len(weight_lst) == 6
+            wq, wk, wv, wz, wb, wa = weight_lst
+
+            qk_shape = [linear_num_key_heads, linear_key_head_dim, -1]
+            vz_shape = [linear_num_key_heads, v_dim // linear_num_key_heads, -1]
+            ba_shape = [linear_num_key_heads, linear_num_value_heads // linear_num_key_heads, -1]
+            wq = wq.view(qk_shape)
+            wk = wk.view(qk_shape)
+            wv = wv.view(vz_shape)
+            wz = wz.view(vz_shape)
+            wb = wb.view(ba_shape)
+            wa = wa.view(ba_shape)
+
+            qkvz_weight = torch.cat([wq, wk, wv, wz], dim=1).view([-1, hidden_size]).contiguous()
+            ba_weight = torch.cat([wb, wa], dim=1).view([-1, hidden_size]).contiguous()
+            return hf_names, [qkvz_weight, ba_weight]
         raise NotImplementedError(f"Unsupported parameter name: {mcore_weights_name}")
 
     def _weight_to_mcore_format(
-        self, mcore_weights_name: str, hf_weights: list[torch.Tensor]
+        self, mcore_weights_name: str, hf_weights: list[torch.Tensor], self_attn_output_gate: bool=False
     ) -> torch.Tensor:
         """
         Import Hugging Face weights to MCore format.
@@ -872,19 +933,44 @@ class Bridge(ABC):
             group_dim = head_dim * num_attention_heads // num_key_value_heads
             q, k, v = hf_weights
             # q k v might be tp split
-            real_num_key_value_heads = q.shape[0] // group_dim
-            q = q.view(
-                [
-                    real_num_key_value_heads,
-                    group_dim,
-                    -1,
-                ]
-            )
+            if self_attn_output_gate:
+                real_num_key_value_heads = q.shape[0] // 2 // group_dim
+
+                combined_w = q.reshape((num_attention_heads, 2 * head_dim, -1))
+                q_w = combined_w.narrow(1, 0, head_dim).reshape((num_attention_heads * head_dim, -1))
+                g_w = combined_w.narrow(1, head_dim, head_dim).reshape((num_attention_heads * head_dim, -1))
+
+                q = q_w.view(
+                    [
+                        real_num_key_value_heads,
+                        group_dim,
+                        -1,
+                    ]
+                )
+                g = g_w.view(
+                    [
+                        real_num_key_value_heads,
+                        group_dim,
+                        -1,
+                    ]
+                )
+            else:
+                real_num_key_value_heads = q.shape[0] // group_dim
+                q = q.view(
+                    [
+                        real_num_key_value_heads,
+                        group_dim,
+                        -1,
+                    ]
+                )
             k = k.view([real_num_key_value_heads, head_dim, -1])
             v = v.view([real_num_key_value_heads, head_dim, -1])
             out_shape = [-1, hidden_dim] if ".bias" not in mcore_weights_name else [-1]
 
-            qkv = torch.cat([q, k, v], dim=1).view(*out_shape).contiguous()
+            if self_attn_output_gate:
+                qkv = torch.cat([q, g, k, v], dim=1).view(*out_shape).contiguous()
+            else:
+                qkv = torch.cat([q, k, v], dim=1).view(*out_shape).contiguous()
             return qkv
         elif (
             "linear_fc1.weight" in mcore_weights_name
@@ -894,6 +980,33 @@ class Bridge(ABC):
             assert len(hf_weights) == 2
             gate, up = hf_weights
             return torch.cat([gate, up], dim=0)
+        elif "self_attention.in_proj.weight" in mcore_weights_name:
+            assert len(hf_weights) == 2
+            qkvz_weight, ba_weight = hf_weights
+            linear_num_key_heads = self.hf_config.linear_num_key_heads
+            linear_key_head_dim = self.hf_config.linear_key_head_dim
+            linear_num_value_heads = self.hf_config.linear_num_value_heads
+            linear_value_head_dim = self.hf_config.linear_value_head_dim
+            key_dim = linear_key_head_dim * linear_num_key_heads
+            value_dim = linear_value_head_dim * linear_num_value_heads
+
+            qkvz_dim_per_partition = 2 * linear_key_head_dim + 2 *  value_dim // linear_num_key_heads
+            qkvz_weight_ = qkvz_weight.reshape((linear_num_key_heads, qkvz_dim_per_partition, -1))
+            wq = qkvz_weight_.narrow(1, 0, linear_key_head_dim).reshape(key_dim, -1)
+            wk = qkvz_weight_.narrow(1, linear_key_head_dim, linear_key_head_dim).reshape(key_dim, -1)
+            wv = qkvz_weight_.narrow(1, 2 * linear_key_head_dim,
+                                     value_dim // linear_num_key_heads).reshape(value_dim, -1)
+            wz = qkvz_weight_.narrow(1, 2 * linear_key_head_dim + value_dim // linear_num_key_heads,
+                                     value_dim // linear_num_key_heads).reshape(value_dim, -1)
+
+            ba_weight_ = ba_weight.reshape((linear_num_key_heads, 2 * (linear_num_value_heads // linear_num_key_heads), -1))
+            wb = ba_weight_.narrow(1, 0, linear_num_value_heads // linear_num_key_heads).reshape((linear_num_value_heads, -1))
+            wa = ba_weight_.narrow(1, linear_num_value_heads // linear_num_key_heads,
+                                   linear_num_value_heads // linear_num_key_heads).reshape((linear_num_value_heads, -1))
+            return torch.cat([wq, wk, wv, wz, wb, wa], dim=0)
+        else:
+            print(f"others weights {len(hf_weights)} {[hf_w.shape for hf_w in hf_weights]}")
+
         raise NotImplementedError(f"Unsupported parameter name: {mcore_weights_name}")
 
     def _weight_merge_across_tp(
@@ -947,6 +1060,36 @@ class Bridge(ABC):
 
         elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
             ret = torch.cat(mcore_weights, dim=1)
+        elif "self_attention.in_proj.weight" in mcore_weights_name:
+            mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
+            tp_size = len(mcore_weights)
+            k_dim = mcore_config.linear_num_key_heads * mcore_config.linear_key_head_dim
+            v_dim = mcore_config.linear_num_value_heads * mcore_config.linear_value_head_dim
+            split_shape = [
+                k_dim // tp_size,
+                k_dim // tp_size,
+                v_dim // tp_size,
+                v_dim // tp_size,
+                mcore_config.linear_num_value_heads // tp_size,
+                mcore_config.linear_num_value_heads // tp_size,
+            ]
+            # split_shape for [wq, wk, wv, wz, wb, wa]
+            ret = self._split_weight_by_size_and_merge_across_tp(mcore_weights, split_shape)
+        elif "self_attention.conv1d" in mcore_weights_name:
+            if "weight" in mcore_weights_name:
+                mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
+                tp_size = len(mcore_weights)
+                k_dim = mcore_config.linear_num_key_heads * mcore_config.linear_key_head_dim
+                v_dim = mcore_config.linear_num_value_heads * mcore_config.linear_value_head_dim
+                split_shape = [
+                    k_dim // tp_size,
+                    k_dim // tp_size,
+                    v_dim // tp_size,
+                ]
+                # split_shape for [X, B, C]
+                ret = self._split_weight_by_size_and_merge_across_tp(mcore_weights, split_shape)
+            else:
+                raise NotImplementedError(f"{mcore_weights_name} not supported yet")
         else:
             assert (
                 hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel
@@ -995,6 +1138,50 @@ class Bridge(ABC):
             ret = [torch.cat([g, u], dim=0) for g, u in zip(gates, ups)]
         elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
             ret = mcore_weights.chunk(tp_split_size, dim=1)
+        elif "self_attention.in_proj.weight" in mcore_weights_name:
+            mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
+            k_dim = mcore_config.linear_num_key_heads * mcore_config.linear_key_head_dim
+            v_dim = mcore_config.linear_num_value_heads * mcore_config.linear_value_head_dim
+            split_shape = [
+                k_dim,
+                k_dim,
+                v_dim,
+                v_dim,
+                mcore_config.linear_num_value_heads,
+                mcore_config.linear_num_value_heads,
+            ]
+            split_w_lst = mcore_weights.split(split_shape, dim=0)
+            # split_w_lst: [wq, wk, wv, wz, wb, wa]
+            assert len(split_w_lst) == 6, f"split_shape {split_shape} not supported"
+            weight_list = []
+            for weight in split_w_lst:
+                weight_list.append(weight.chunk(tp_split_size))
+            ret = [
+                torch.cat([wq_slice, wk_slice, wv_slice, wz_slice, wb_slice, wa_slice], dim=0)
+                for wq_slice, wk_slice, wv_slice, wz_slice, wb_slice, wa_slice in zip(*weight_list)
+            ]
+        elif "self_attention.conv1d" in mcore_weights_name:
+            if "weight" in mcore_weights_name:
+                mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
+                k_dim = mcore_config.linear_num_key_heads * mcore_config.linear_key_head_dim
+                v_dim = mcore_config.linear_num_value_heads * mcore_config.linear_value_head_dim
+                split_shape = [
+                    k_dim,
+                    k_dim,
+                    v_dim,
+                ]
+                split_w_lst = mcore_weights.split(split_shape, dim=0)
+                # split_w_lst: [X, B, C]
+                assert len(split_w_lst) == 3, f"split_shape {split_shape} not supported"
+                weight_list = []
+                for weight in split_w_lst:
+                    weight_list.append(weight.chunk(tp_split_size))
+                ret = [
+                    torch.cat([x_slice, b_slice, c_slice], dim=0)
+                    for x_slice, b_slice, c_slice in zip(*weight_list)
+                ]
+            else:
+                raise NotImplementedError(f"{mcore_weights_name} not supported yet")
         else:
             if param.shape == mcore_weights.shape:
                 return [mcore_weights for _ in range(tp_split_size)]
@@ -1020,6 +1207,29 @@ class Bridge(ABC):
         """
 
         return os.path.dirname(cached_file(weight_path, "config.json"))
+
+    def _split_weight_by_size_and_merge_across_tp(
+        self,
+        mcore_weights: list[torch.Tensor],
+        split_shape: list[int],
+    ) -> torch.Tensor:
+        '''
+        First split weight by splist_shape and then merge across tensor parallel ranks
+
+        use for linear attn in_proj and linear attn conv1d layer weight
+        '''
+        tp_size = len(mcore_weights)
+
+        weight_lst = [[] for _ in range(len(split_shape))]
+        for mcore_weight in mcore_weights:
+            split_w_lst = mcore_weight.split(split_shape, dim=0)
+            assert len(split_w_lst) == len(weight_lst)
+            for wi, split_w in enumerate(split_w_lst):
+                weight_lst[wi].append(split_w)
+        for weight in weight_lst:
+            assert len(weight) == tp_size
+        ret = torch.cat([torch.cat(w_split, dim=0) for w_split in weight_lst], dim=0)
+        return ret
 
 
 # Model registry
