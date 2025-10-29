@@ -21,6 +21,14 @@ class SafeTensorIO:
                 origin_index = json.load(f)
                 self.index = origin_index["weight_map"]
                 self.origin_index = origin_index
+        else:
+            src_files = glob(os.path.join(hf_dir, '*.safetensors'))
+            if len(src_files) == 1:
+                for file in src_files:
+                    with safe_open(file, framework="pt", device="cpu") as f:
+                        filename = os.path.basename(file)
+                        for key in f.keys():
+                            self.index[key] = filename
 
         self.hf_dir = hf_dir
 
