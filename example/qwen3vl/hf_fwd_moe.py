@@ -15,6 +15,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model_path", type=str, required=True, help="HuggingFace model path"
     )
+    parser.add_argument('--sample_type',
+                        type=str,
+                        default='image',
+                        choices=['image', "video", "mix"],
+                        help='sample type')
     args = parser.parse_args()
 
     # default: Load the model on the available device(s)
@@ -27,7 +32,7 @@ if __name__ == "__main__":
     )
 
     # Preparation for inference
-    inputs = get_sample_for_forward(args.model_path)
+    inputs = get_sample_for_forward(args.model_path, args.sample_type)
 
     # Inference: Generation of the output
     hf_output = model.forward(**inputs)
