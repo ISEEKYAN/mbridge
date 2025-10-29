@@ -146,14 +146,6 @@ def get_mix_sample_for_forward(hf_model_path):
                 },
                 {
                     "type": "video",
-                    "video": "../red-panda.mp4",
-                },
-                {
-                    "type": "image",
-                    "image": "../two_tiger.jpg",
-                },
-                {
-                    "type": "video",
                     "video": video_file,
                 },
                 {"type": "text", "text": "Describe those videos and images in shortly and respectively"},

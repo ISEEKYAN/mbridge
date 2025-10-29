@@ -44,7 +44,7 @@ DISTRIBUTED_ARGS="
     --master_port $MASTER_PORT \
 "
 
-readonly SAMPLE_TYPE=mix
+readonly SAMPLE_TYPE="mix"
 # run the huggingface fwd
 python example/qwen3vl/hf_fwd_moe.py \
     --model_path ../hf-hub/Qwen/Qwen3-VL-30B-A3B-Instruct \
