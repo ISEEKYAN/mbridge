@@ -408,7 +408,7 @@ class Bridge(ABC):
             if (
                 hasattr(broad_pp_param, "tensor_model_parallel")
                 and broad_pp_param.tensor_model_parallel
-            ):
+            ) or "core_attention.softmax_offset" in name:
                 # allocate a new tensor with proper size
                 if self.mpu.tp_size <= 1:
                     infer_params = [broad_pp_param]
@@ -513,11 +513,12 @@ class Bridge(ABC):
             for k in ret.keys():
                 v = ret[k]
                 if ".mlp.experts.linear_fc" in v:
-                    name_prefix, local_expert_id = v.split(".weight")
+                    weight_or_bias = "weight" if "weight" in v else "bias"
+                    name_prefix, local_expert_id = v.split(f".{weight_or_bias}")
                     global_expert_idx = local_expert_to_global_expert[
                         int(local_expert_id)
                     ]
-                    ret[k] = f"{name_prefix}.weight{global_expert_idx}"
+                    ret[k] = f"{name_prefix}.{weight_or_bias}{global_expert_idx}"
 
         return ret
 
