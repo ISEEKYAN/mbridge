@@ -38,13 +38,27 @@ def download_img(filename):
         raise e
 
 
-def get_sample_for_forward(hf_model_path):
+def download_video(filename):
+    video_url = "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen2-VL/space_woaudio.mp4"
+    try:
+        response = requests.get(video_url, stream=True)
+        response.raise_for_status()
+
+        with open(filename, "wb") as file:
+            for chunk in response.iter_content(chunk_size=8192):
+                file.write(chunk)
+    except requests.exceptions.RequestException as e:
+        print(f"downlaod fail: {e}")
+        raise e
+
+
+def get_image_sample_for_forward(hf_model_path):
     processor = Qwen3VLProcessor.from_pretrained(hf_model_path)
     # text = "Please describe this picture completely and in detail, including the details, characters, scenes, etc."
     text = "Describe this image in shortly."
     filename = "../australia.jpg"
     if True:
-        if not os.path.exists("../australia.jpg"):
+        if not os.path.exists(filename):
             download_img(filename)
         messages = [
             {
@@ -72,6 +86,97 @@ def get_sample_for_forward(hf_model_path):
         inputs["pixel_values"] = inputs["pixel_values"].to(torch.bfloat16)
 
     return inputs
+
+
+def get_video_sample_for_forward(hf_model_path):
+    processor = Qwen3VLProcessor.from_pretrained(hf_model_path)
+    video_file = "../space_woaudio.mp4"
+    if not os.path.exists(video_file):
+        download_video(video_file)
+
+    processor = Qwen3VLProcessor.from_pretrained(hf_model_path)
+    # Messages containing a video url(or a local path) and a text query
+    messages = [{
+        "role":
+        "user",
+        "content": [
+            {
+                "type": "video",
+                "video": video_file,
+            },
+            {
+                "type": "text",
+                "text": "Describe those videos in shortly."
+            },
+        ],
+    }]
+    # Preparation for inference
+    inputs = processor.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=True,
+        return_tensors="pt",
+    )
+    inputs.pop("token_type_ids", None)
+    assert "pixel_values" not in inputs
+    inputs["pixel_values_videos"] = inputs["pixel_values_videos"].to(torch.bfloat16)
+
+    return inputs
+
+
+def get_mix_sample_for_forward(hf_model_path):
+    processor = Qwen3VLProcessor.from_pretrained(hf_model_path)
+    video_file = "../space_woaudio.mp4"
+    if not os.path.exists(video_file):
+        download_video(video_file)
+    image_file = "../australia.jpg"
+    if not os.path.exists(image_file):
+        download_img(image_file)
+
+    processor = Qwen3VLProcessor.from_pretrained(hf_model_path)
+    # Messages containing a video url(or a local path) and a text query
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "image": image_file,
+                },
+                {
+                    "type": "video",
+                    "video": video_file,
+                },
+                {"type": "text", "text": "Describe those videos and images in shortly and respectively"},
+            ],
+        }
+    ]
+    # Preparation for inference
+    inputs = processor.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=True,
+        return_tensors="pt",
+        add_vision_id=True, # have better to add this
+    )
+    inputs.pop("token_type_ids", None)
+    inputs["pixel_values"] = inputs["pixel_values"].to(torch.bfloat16)
+    inputs["pixel_values_videos"] = inputs["pixel_values_videos"].to(torch.bfloat16)
+
+    return inputs
+
+
+def get_sample_for_forward(hf_model_path, sample_type="image"):
+    if sample_type == "image":
+        return get_image_sample_for_forward(hf_model_path)
+    elif sample_type == "video":
+        return get_video_sample_for_forward(hf_model_path)
+    elif sample_type == "mix":
+        return get_mix_sample_for_forward(hf_model_path)
+    else:
+        assert False
 
 
 def gather_output_from_cp(input_: torch.Tensor, seq_dim, cp_size, cp_group):
@@ -164,6 +269,12 @@ def get_args():
         "--etp", type=int, default=None, help="Expert tensor parallel size"
     )
     parser.add_argument("--check_export", action="store_true", help="Trust remote code")
+
+    parser.add_argument('--sample_type',
+                        type=str,
+                        default='image',
+                        choices=['image', "video", "mix"],
+                        help='sample type')
     args = parser.parse_args()
     return args
 
@@ -180,6 +291,12 @@ def mcore_fwd_fn(data_iterator, model):
         ),
         image_grid_thw=(
             sample["image_grid_thw"].cuda() if "image_grid_thw" in sample else None
+        ),
+        pixel_values_videos=(
+            sample["pixel_values_videos"].cuda() if "pixel_values_videos" in sample else None
+        ),
+        video_grid_thw=(
+            sample["video_grid_thw"].cuda() if "video_grid_thw" in sample else None
         ),
     )
     if isinstance(output_tensor, tuple):
@@ -251,7 +368,7 @@ def main():
 
     print(f"rank{torch.distributed.get_rank()}: end load weight, start forward ...")
 
-    sample = get_sample_for_forward(hf_model_path)
+    sample = get_sample_for_forward(hf_model_path, args.sample_type)
     real_seq_length = sample["input_ids"].shape[-1]
     torch.distributed.barrier()
     seq_length_factor = args.tp

@@ -44,9 +44,11 @@ DISTRIBUTED_ARGS="
     --master_port $MASTER_PORT \
 "
 
+readonly SAMPLE_TYPE="mix"
 # run the huggingface fwd
 python example/qwen3vl/hf_fwd_moe.py \
-    --model_path ../hf-hub/Qwen/Qwen3-VL-30B-A3B-Instruct
+    --model_path ../hf-hub/Qwen/Qwen3-VL-30B-A3B-Instruct \
+    --sample_type $SAMPLE_TYPE
 
 torchrun $DISTRIBUTED_ARGS \
     example/qwen3vl/load_model_and_forward.py \
@@ -56,6 +58,7 @@ torchrun $DISTRIBUTED_ARGS \
     --etp 1 \
     --cp $CP_SIZE \
     --model_path ../hf-hub/Qwen/Qwen3-VL-30B-A3B-Instruct \
+    --sample_type $SAMPLE_TYPE \
     --check_export
 
 torchrun $DISTRIBUTED_ARGS \
@@ -65,12 +68,14 @@ torchrun $DISTRIBUTED_ARGS \
     --ep $EP_SIZE \
     --etp 1 \
     --cp $CP_SIZE \
-    --model_path ../hf-hub/Qwen/Qwen3-VL-30B-A3B-Instruct
+    --model_path ../hf-hub/Qwen/Qwen3-VL-30B-A3B-Instruct \
+    --sample_type $SAMPLE_TYPE
 
 
 # run the huggingface fwd
 python example/qwen3vl/hf_fwd.py \
-    --model_path ../hf-hub/Qwen/Qwen3-VL-4B-Instruct
+    --model_path ../hf-hub/Qwen/Qwen3-VL-4B-Instruct \
+    --sample_type $SAMPLE_TYPE
 
 torchrun $DISTRIBUTED_ARGS \
     example/qwen3vl/load_model_and_forward.py \
@@ -78,6 +83,7 @@ torchrun $DISTRIBUTED_ARGS \
     --pp $PP_SIZE \
     --cp $CP_SIZE \
     --model_path ../hf-hub/Qwen/Qwen3-VL-4B-Instruct \
+    --sample_type $SAMPLE_TYPE \
     --check_export
 
 torchrun $DISTRIBUTED_ARGS \
@@ -85,4 +91,5 @@ torchrun $DISTRIBUTED_ARGS \
     --tp $TP_SIZE \
     --pp $PP_SIZE \
     --cp $CP_SIZE \
-    --model_path ../hf-hub/Qwen/Qwen3-VL-4B-Instruct
+    --model_path ../hf-hub/Qwen/Qwen3-VL-4B-Instruct \
+    --sample_type $SAMPLE_TYPE

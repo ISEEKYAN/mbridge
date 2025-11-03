@@ -10,7 +10,7 @@ from mbridge.models.qwen3_vl.attention import Qwen3VLSelfAttention
 from mbridge.models.qwen3_vl.gpt_model import Qwen3VLGPTModel
 from mbridge.models.qwen3_vl.rope_utils import get_rope_index
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-from mbridge.models.qwen3_vl.utils import split_deepstack_embs
+from mbridge.models.qwen3_vl.utils import split_deepstack_embs, reorganize_inputs
 from mbridge.models.qwen3_vl.vision_model import Qwen3VLVisionModel
 
 from mbridge.core.util import (
@@ -18,6 +18,7 @@ from mbridge.core.util import (
     get_vision_cp_data,
     AllGatherVisionEmbeddings,
     split_data_cp_rank,
+    collapse_thw,
 )
 
 
@@ -215,6 +216,7 @@ class Qwen3VLModel(MegatronModule):
         video_grid_thw: torch.Tensor = None,
         # can set at dataset
         image_input_mask: torch.Tensor = None,
+        video_input_mask: torch.Tensor = None,
         cp_img_num: list[int] = None,
         images_padded: list[bool] = None,
         **kwargs,
@@ -230,36 +232,32 @@ class Qwen3VLModel(MegatronModule):
             labels (torch.Tensor): Optional target text labels [batch, combined_seq_len].
             inference_params (InferenceParams): Inference-time parameters including KV cache.
 
-            video_start_index:
-                0 -- all video
-                len(video_seq) -- all image
-                others -- mixture
-            *_input_mask: should not be None in the first PP stage
         Returns:
             output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
                 [b, s, vocab_size].
         """
-        assert (
-            pixel_values_videos is None and video_grid_thw is None
-        ), "not support video now"
         assert inference_params is None, "not support inference"
 
-        video_start_index = 0
         vision_grid_thw = None
         vision_data = None
-        image_mask = None
+        vision_mask = None
         deepstack_feature_lists = None
         cp_size = mpu.get_context_parallel_world_size()
 
         if self.pre_process:
-            if image_grid_thw is not None:
-                image_mask = image_input_mask
-                if image_mask is None:
-                    image_mask = (input_ids == self.image_token_id).contiguous()
-                vision_grid_thw = image_grid_thw
-                vision_data = pixel_values
-                video_start_index = image_mask.sum().item()
-                assert video_start_index > 0
+            # can reorganize_inputs at dataset
+            vision_data, vision_grid_thw, vision_mask = reorganize_inputs(
+                input_ids=input_ids,
+                pixel_values=pixel_values,
+                pixel_values_videos=pixel_values_videos,
+                image_grid_thw=image_grid_thw,
+                video_grid_thw=video_grid_thw,
+                image_input_mask=image_input_mask,
+                video_input_mask=video_input_mask,
+                image_token_id=self.image_token_id,
+                video_token_id=self.video_token_id,
+                square_merge_size=self.square_merge_size,
+            )
 
             vision_embeds = None
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
@@ -278,6 +276,7 @@ class Qwen3VLModel(MegatronModule):
                         cp_img_num,
                         images_padded,
                     )
+                    vision_grid_thw = collapse_thw(vision_grid_thw)
                 if vision_data.shape[0] > 0:
                     vision_embeds, deepstack_feature_lists = self.vision_model(
                         hidden_states=vision_data,
@@ -314,30 +313,13 @@ class Qwen3VLModel(MegatronModule):
             ).clone()  # [text_seq_len, b, h_language]
 
             if vision_embeds is not None:
-                if video_start_index == 0:
-                    image_embeds = None
-                    video_embeds = vision_embeds
-                elif video_start_index == vision_embeds.shape[0]:
-                    image_embeds = vision_embeds
-                    video_embeds = None
-                elif 0 < video_start_index < vision_embeds.shape[0]:
-                    image_embeds = vision_embeds[:video_start_index]
-                    video_embeds = vision_embeds[video_start_index:]
-                else:
-                    raise ValueError(
-                        f"Expect video token start index in range [0, {vision_embeds.shape[0]}], but got "
-                        f"{video_start_index}"
-                    )
-                assert video_embeds is None, "not support video now"
-
-                if image_embeds is not None:
-                    combined_embeddings = combined_embeddings.transpose(
-                        0, 1
-                    ).contiguous()
-                    combined_embeddings[image_mask] = image_embeds
-                    combined_embeddings = combined_embeddings.transpose(
-                        0, 1
-                    ).contiguous()
+                combined_embeddings = combined_embeddings.transpose(
+                    0, 1
+                ).contiguous()
+                combined_embeddings[vision_mask] = vision_embeds
+                combined_embeddings = combined_embeddings.transpose(
+                    0, 1
+                ).contiguous()
 
             if combined_embeddings is not None and cp_size > 1:
                 combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0)
@@ -363,7 +345,7 @@ class Qwen3VLModel(MegatronModule):
                 attention_mask=attention_mask,
             )
 
-        visual_pos_masks = image_mask
+        visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
         if self.config.sequence_parallel or cp_size > 1:
             visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
