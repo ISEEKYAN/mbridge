@@ -305,3 +305,50 @@ def apply_rotary_pos_emb_absolute(
             return apply_rotary_pos_emb_thd_absolute(
                 t, cu_seqlens, freqs, rotary_interleaved=config.rotary_interleaved
             )
+
+
+
+def mrope_forward_thd_cp(self, position_ids: torch.Tensor, mrope_section: list[int]):
+    """Forward pass of multimodal RoPE embedding.
+
+    Args:
+        position_ids (torch.Tensor): A postion_id tensor with shape [3, batchsize, seqlens]
+        mrope_section (list[int]): Multimodal rope section is for channel dimension of temporal,
+            height and width in rope calculation.
+
+    Returns:
+        Tensor: Embeddings after applying RoPE.
+    """
+    seq = position_ids.to(device=self.inv_freq.device, dtype=self.inv_freq.dtype)
+
+    if self.seq_len_interpolation_factor is not None:
+        seq *= 1 / self.seq_len_interpolation_factor
+
+    # shape (3, bs, dim, 1)
+    inv_freq_expanded = self.inv_freq[None, None, :, None].expand(3, seq.shape[1], -1, 1)
+    # shape (3, bs, 1, seq_length)
+    seq_expanded = seq[:, :, None, :].float()
+    # shape (3, bs, seq_length, dim)
+    freqs = (inv_freq_expanded @ seq_expanded).transpose(2, 3)
+    # first part even vector components, second part odd vector components,
+    #  2 * dim in dimension size
+    if not self.rotary_interleaved:
+        emb = torch.cat((freqs, freqs), dim=-1)  # shape (3, bs, seq_length, 2 * dim)
+    else:
+        bs = freqs.shape[1]
+        emb = torch.stack((freqs.view(3, bs, -1, 1), freqs.view(3, bs, -1, 1)), dim=-1).view(
+            3, bs, freqs.shape[0], -1
+        )
+
+    # generate freqs with mrope_section
+    # shape (bs, seq_length, 2 * dim)
+    mrope_section = mrope_section * 2
+    emb = torch.cat([m[i % 3] for i, m in enumerate(emb.split(mrope_section, dim=-1))], dim=-1)
+
+    # shape (seq_length, bs, 1, 2 * dim)
+    emb = emb[..., None, :].transpose(0, 1).contiguous()
+    # if self.cp_group is not None and self.cp_group.size() > 1:
+    #     # slice rotary_pos_emb along sequence dimension and select the parition of the current
+    #     # CP rank
+    #     emb = get_pos_emb_on_this_cp_rank(emb, 0, self.cp_group)
+    return emb
