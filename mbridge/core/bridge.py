@@ -784,7 +784,7 @@ class Bridge(ABC):
             num_attention_heads = self.hf_config.num_attention_heads
             head_dim = getattr(
                 self.hf_config, "head_dim", hidden_dim // num_attention_heads
-            )
+            ) or hidden_dim // num_attention_heads
             out_shape = (
                 [num_key_value_heads, -1, hidden_dim]
                 if ".bias" not in mcore_weights_name
@@ -872,7 +872,7 @@ class Bridge(ABC):
             num_attention_heads = self.hf_config.num_attention_heads
             head_dim = getattr(
                 self.hf_config, "head_dim", hidden_dim // num_attention_heads
-            )
+            ) or hidden_dim // num_attention_heads
             group_dim = head_dim * num_attention_heads // num_key_value_heads
             q, k, v = hf_weights
             # q k v might be tp split
