@@ -3,6 +3,8 @@ from typing import Optional, Union
 
 import torch
 from megatron.core import parallel_state, tensor_parallel
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.dist_checkpointing.utils import replace_prefix_for_sharding
 from megatron.core.enums import Fp8Recipe
 from megatron.core.fp8_utils import get_fp8_context
 from megatron.core.inference.contexts import BaseInferenceContext
@@ -12,8 +14,6 @@ from megatron.core.transformer.transformer_block import (
     TransformerBlock,
     TransformerBlockSubmodules,
 )
-from megatron.core.dist_checkpointing.mapping import ShardedStateDict
-from megatron.core.dist_checkpointing.utils import replace_prefix_for_sharding
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
 
 # from megatron.core.process_groups_config import ModelCommProcessGroups
@@ -153,10 +153,12 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             # the input activation of each divided chunk.
             # A method to further reduce memory usage reducing checkpoints.
             layer_idx = 0
-            
+
             while layer_idx < self.num_layers_per_pipeline_rank:
-                hidden_states, layer_deepstack_feature_lists, context = checkpoint_handler(
-                    custom(layer_idx, layer_idx + self.config.recompute_num_layers)
+                hidden_states, layer_deepstack_feature_lists, context = (
+                    checkpoint_handler(
+                        custom(layer_idx, layer_idx + self.config.recompute_num_layers)
+                    )
                 )
 
                 layer_idx += self.config.recompute_num_layers
@@ -364,7 +366,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
         return hidden_states, deepstack_feature_lists
 
     def sharded_state_dict(
-        self, prefix: str = '', sharded_offsets: tuple = (), metadata: dict = None
+        self, prefix: str = "", sharded_offsets: tuple = (), metadata: dict = None
     ) -> ShardedStateDict:
         """
         Generate a sharded state dictionary for the transformer block.
@@ -381,7 +383,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
         """
         assert not sharded_offsets, "Unexpected sharded offsets"
         non_homogeneous_layers = metadata is not None and metadata.get(
-            'non_homogeneous_layers', False
+            "non_homogeneous_layers", False
         )
         if self.config.hetereogenous_dist_checkpoint:
             non_homogeneous_layers = True
@@ -397,15 +399,17 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
 
         sharded_state_dict = {}
 
-        layer_prefix = f'{prefix}layers.'
+        layer_prefix = f"{prefix}layers."
         num_layers = self.config.num_layers
         for layer in self.layers:
             offset = get_transformer_layer_offset(self.config, self.vp_stage)
 
-            global_layer_offset = layer.layer_number - 1  # self.layer_number starts at 1
-            state_dict_prefix = f'{layer_prefix}{global_layer_offset - offset}.'  # module list index in TransformerBlock # pylint: disable=line-too-long
+            global_layer_offset = (
+                layer.layer_number - 1
+            )  # self.layer_number starts at 1
+            state_dict_prefix = f"{layer_prefix}{global_layer_offset - offset}."  # module list index in TransformerBlock # pylint: disable=line-too-long
             if non_homogeneous_layers:
-                sharded_prefix = f'{layer_prefix}{global_layer_offset}.'
+                sharded_prefix = f"{layer_prefix}{global_layer_offset}."
                 sharded_pp_offset = []
             else:
                 sharded_prefix = layer_prefix
@@ -415,15 +419,17 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             layer_sharded_state_dict = layer.sharded_state_dict(
                 state_dict_prefix, sharded_pp_offset, metadata
             )
-            replace_prefix_for_sharding(layer_sharded_state_dict, state_dict_prefix, sharded_prefix)
+            replace_prefix_for_sharding(
+                layer_sharded_state_dict, state_dict_prefix, sharded_prefix
+            )
 
             sharded_state_dict.update(layer_sharded_state_dict)
-        
+
         len_deepstack = len(self.deepstack_merger_list)
         for global_layer_offset, layer in enumerate(self.deepstack_merger_list):
-            state_dict_prefix = f'{layer_prefix}{global_layer_offset}.'  # module list index in TransformerBlock # pylint: disable=line-too-long
+            state_dict_prefix = f"{layer_prefix}{global_layer_offset}."  # module list index in TransformerBlock # pylint: disable=line-too-long
             if non_homogeneous_layers:
-                sharded_prefix = f'{layer_prefix}{global_layer_offset}.'
+                sharded_prefix = f"{layer_prefix}{global_layer_offset}."
                 sharded_pp_offset = []
             else:
                 sharded_prefix = layer_prefix
@@ -433,16 +439,20 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             layer_sharded_state_dict = layer.sharded_state_dict(
                 state_dict_prefix, sharded_pp_offset, metadata
             )
-            replace_prefix_for_sharding(layer_sharded_state_dict, state_dict_prefix, sharded_prefix)
+            replace_prefix_for_sharding(
+                layer_sharded_state_dict, state_dict_prefix, sharded_prefix
+            )
 
             sharded_state_dict.update(layer_sharded_state_dict)
 
         # Add modules other than self.layers
         for name, module in self.named_children():
-            if (not module is self.layers) and (not module is self.deepstack_merger_list):
+            if (not module is self.layers) and (
+                not module is self.deepstack_merger_list
+            ):
                 sharded_state_dict.update(
                     sharded_state_dict_default(
-                        module, f'{prefix}{name}.', sharded_offsets, metadata
+                        module, f"{prefix}{name}.", sharded_offsets, metadata
                     )
                 )
 
@@ -574,7 +584,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                         context_mask,
                         rotary_pos_emb,
                     )
-                
+
                 if self.pre_process and deepstack_visual_embeds is not None:
                     layer = self._get_layer(layer_idx)
                     assert layer_idx == layer.layer_number - 1

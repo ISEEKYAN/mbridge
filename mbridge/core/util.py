@@ -422,7 +422,9 @@ def collapse_thw(expanded: torch.Tensor) -> torch.Tensor:
 
     # find the diff
     starts = torch.nonzero(change, as_tuple=False).squeeze(1)
-    ends = torch.cat([starts[1:], torch.tensor([other.size(0)], device=other.device)]) - 1
+    ends = (
+        torch.cat([starts[1:], torch.tensor([other.size(0)], device=other.device)]) - 1
+    )
     counts = ends - starts + 1
 
     rows_other = other[starts]
@@ -519,11 +521,13 @@ def qwen3vl_cp_split(
     image_grid_thw = expand_thw(image_grid_thw)
 
     hw_factor = 4
-    new_pixel_values, new_image_grid_thws, cp_img_num, images_padded = qwen2vl_pad_and_split(
-        cp_size,
-        hw_factor,
-        [pixel_values],
-        [image_grid_thw],
+    new_pixel_values, new_image_grid_thws, cp_img_num, images_padded = (
+        qwen2vl_pad_and_split(
+            cp_size,
+            hw_factor,
+            [pixel_values],
+            [image_grid_thw],
+        )
     )
     for image_padded in images_padded:
         assert not image_padded, "qwen3vl vit not support sp now, no need to paded"
@@ -567,7 +571,7 @@ def get_vision_cp_data(
 
         vision_grid_thw_list.append(vision_grid_thw[start_idx:end_idx])
         if images_padded[i]:
-            seqlens_list.append(seqlens[start_idx:end_idx - 1])
+            seqlens_list.append(seqlens[start_idx : end_idx - 1])
         else:
             seqlens_list.append(seqlens[start_idx:end_idx])
         data_start_idx = seqlens[:start_idx].sum()
@@ -605,7 +609,9 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
     def backward(ctx, grad_output):
         cp_rank = ctx.cp_rank
         seqlens_on_cp_ranks = ctx.saved_tensors
-        start_idx = torch.cat(seqlens_on_cp_ranks[:cp_rank]).sum() if cp_rank != 0 else 0
+        start_idx = (
+            torch.cat(seqlens_on_cp_ranks[:cp_rank]).sum() if cp_rank != 0 else 0
+        )
         end_idx = start_idx + seqlens_on_cp_ranks[cp_rank].sum()
         grad_output = grad_output[start_idx:end_idx]
         return grad_output, None
@@ -633,16 +639,24 @@ def preprocess_packed_seqs(
 
     cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=input_ids.device)
     cu_seqlens[1:] = torch.cumsum(seqlens_in_batch, dim=0)
-    cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=input_ids.device)
+    cu_seqlens_padded = torch.zeros(
+        batch_size + 1, dtype=torch.int32, device=input_ids.device
+    )
     cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
 
     # ----------------------------------------------------------------------------
     # Move the index information needed in the subsequent loop to the CPU at once,
     # to avoid frequent .item() calls in the loop that cause D2H synchronization
     # ----------------------------------------------------------------------------
-    seqlens_in_batch_cpu: list[int] = seqlens_in_batch.tolist()  # original valid lengths
-    seqlens_in_batch_padded_cpu: list[int] = seqlens_in_batch_padded.tolist()  # lengths after padding
-    cu_seqlens_padded_cpu: list[int] = cu_seqlens_padded.tolist()  # start positions (after padding)
+    seqlens_in_batch_cpu: list[int] = (
+        seqlens_in_batch.tolist()
+    )  # original valid lengths
+    seqlens_in_batch_padded_cpu: list[int] = (
+        seqlens_in_batch_padded.tolist()
+    )  # lengths after padding
+    cu_seqlens_padded_cpu: list[int] = (
+        cu_seqlens_padded.tolist()
+    )  # start positions (after padding)
 
     # Pure Python int calculation to avoid further synchronization
     max_seqlen_in_batch = max(seqlens_in_batch_padded_cpu)
@@ -650,13 +664,17 @@ def preprocess_packed_seqs(
     shape = list(input_ids.shape[1:])
     shape[0] = sum(seqlens_in_batch_padded_cpu) // cp_size
     if pre_process:
-        input_ids_rmpad = torch.zeros(shape, dtype=input_ids.dtype, device=input_ids.device)
+        input_ids_rmpad = torch.zeros(
+            shape, dtype=input_ids.dtype, device=input_ids.device
+        )
         for i in range(batch_size):
             # Use Python int, so no GPU→CPU sync in the loop
             if cp_size <= 1:
                 seqlen = seqlens_in_batch_cpu[i]
                 start_idx = cu_seqlens_padded_cpu[i]
-                input_ids_rmpad[start_idx : start_idx + seqlen] = input_ids[i, attention_mask[i]]
+                input_ids_rmpad[start_idx : start_idx + seqlen] = input_ids[
+                    i, attention_mask[i]
+                ]
                 continue
 
             seqlen_padded_i = seqlens_in_batch_padded_cpu[i]
@@ -674,9 +692,9 @@ def preprocess_packed_seqs(
             remain_end = min(remain_end, d.shape[0])
             remain_len = remain_end - remain_start
             if remain_len > 0:
-                input_ids_rmpad[start_idx + half_seqlen : start_idx + half_seqlen + remain_len] = d[
-                    remain_start:remain_end
-                ]
+                input_ids_rmpad[
+                    start_idx + half_seqlen : start_idx + half_seqlen + remain_len
+                ] = d[remain_start:remain_end]
 
     packed_seq_params = PackedSeqParams(
         qkv_format="thd",
@@ -713,9 +731,13 @@ def postprocess_packed_seqs(
     # to avoid a large number of .item() calls in the loop
     # -------------------------------------------------------------------------
     cu_padded_cpu: list[int] = packed_seq_params.cu_seqlens_q_padded.tolist()
-    seq_lens_cpu: list[int] = attention_mask.sum(dim=1, dtype=torch.int32).cpu().tolist()
+    seq_lens_cpu: list[int] = (
+        attention_mask.sum(dim=1, dtype=torch.int32).cpu().tolist()
+    )
 
-    shape = [batch_size, seq_len] + list(output.shape[2:])  # 1,packed, dim -> batch_size, seq_len, dim
+    shape = [batch_size, seq_len] + list(
+        output.shape[2:]
+    )  # 1,packed, dim -> batch_size, seq_len, dim
     output_new = torch.zeros(shape, dtype=output.dtype, device=output.device)
 
     cp_size = mpu.get_context_parallel_world_size()
@@ -724,7 +746,9 @@ def postprocess_packed_seqs(
         # output shape: [1, packed_len, hidden_dim]
         # need to gather across cp group and concatenate in sequence dimension
         output_list = [torch.empty_like(output) for _ in range(cp_size)]
-        torch.distributed.all_gather(output_list, output.detach(), group=mpu.get_context_parallel_group())
+        torch.distributed.all_gather(
+            output_list, output.detach(), group=mpu.get_context_parallel_group()
+        )
         output_list[mpu.get_context_parallel_rank()] = output
     else:
         output_list = [output]
@@ -745,11 +769,16 @@ def postprocess_packed_seqs(
             packed_start_idx = cu_padded_cpu[i] // cp_size
             o0, o1 = (
                 o[packed_start_idx : packed_start_idx + half_seqlen],
-                o[packed_start_idx + half_seqlen : packed_start_idx + s_len_padded_chunk],
+                o[
+                    packed_start_idx
+                    + half_seqlen : packed_start_idx
+                    + s_len_padded_chunk
+                ],
             )
             tmp[j * half_seqlen : (j + 1) * half_seqlen] = o0
-            tmp[s_len_padded - (j + 1) * half_seqlen : s_len_padded - j * half_seqlen] = o1
+            tmp[
+                s_len_padded - (j + 1) * half_seqlen : s_len_padded - j * half_seqlen
+            ] = o1
         output_new[i, attention_mask[i]] = tmp[:s_len]
 
     return output_new
-

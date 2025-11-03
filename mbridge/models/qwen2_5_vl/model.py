@@ -12,11 +12,13 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+from mbridge.core.util import preprocess_packed_seqs
+
 from .attention import Qwen2_5VLSelfAttention
 from .transformer_config import Qwen2VLTransformerConfig
 from .vision_model import Qwen2_5VisionModel
 
-from mbridge.core.util import preprocess_packed_seqs
+
 # Note: This is under development and may be missing features.
 class Qwen2_5VLModel(MegatronModule):
     """Qwen2.5VL multi-modal model.
@@ -147,7 +149,10 @@ class Qwen2_5VLModel(MegatronModule):
             # patch the rotary_pos_emb.forward to support THD format with CP
             from .rope_utils import mrope_forward_thd_cp
 
-            self.language_model.rotary_pos_emb.forward = mrope_forward_thd_cp.__get__(self.language_model.rotary_pos_emb, self.language_model.rotary_pos_emb.__class__)
+            self.language_model.rotary_pos_emb.forward = mrope_forward_thd_cp.__get__(
+                self.language_model.rotary_pos_emb,
+                self.language_model.rotary_pos_emb.__class__,
+            )
 
         self.share_embeddings_and_output_weights = (
             self.language_model.share_embeddings_and_output_weights
@@ -218,7 +223,7 @@ class Qwen2_5VLModel(MegatronModule):
     ) -> torch.Tensor:
         """Forward function of the Qwen2VL model.
         ### there is a workaround for supporting sequence packing with context parallelism
-        # cp split with sequence packing will make model lose vision token information, so we need to keep 
+        # cp split with sequence packing will make model lose vision token information, so we need to keep
         # the original input_ids and pack them after vision embedding is calculated,
         # cooporate with verl's models/mcore/model_forward.py
         # pack the combined_embeddings to thd here, we check if packed_seq_params is None to determine if we need to pack the combined_embeddings to thd
@@ -342,7 +347,15 @@ class Qwen2_5VLModel(MegatronModule):
                 )  # [text_seq_len, b, h_language]
 
             if packed_seq_params is not None:
-                combined_embeddings = preprocess_packed_seqs(combined_embeddings.transpose(0, 1).contiguous(), attention_mask, pre_process=True)[0].transpose(0, 1).contiguous()
+                combined_embeddings = (
+                    preprocess_packed_seqs(
+                        combined_embeddings.transpose(0, 1).contiguous(),
+                        attention_mask,
+                        pre_process=True,
+                    )[0]
+                    .transpose(0, 1)
+                    .contiguous()
+                )
             if self.config.sequence_parallel:
                 combined_embeddings = (
                     tensor_parallel.scatter_to_sequence_parallel_region(
@@ -364,7 +377,13 @@ class Qwen2_5VLModel(MegatronModule):
         )
         # THD
         if packed_seq_params is not None:
-            position_ids = preprocess_packed_seqs(position_ids.permute(1, 2, 0), attention_mask, pre_process=True)[0].permute(2, 0, 1).contiguous()
+            position_ids = (
+                preprocess_packed_seqs(
+                    position_ids.permute(1, 2, 0), attention_mask, pre_process=True
+                )[0]
+                .permute(2, 0, 1)
+                .contiguous()
+            )
             attention_mask = None
 
         output = self.language_model(

@@ -307,7 +307,6 @@ def apply_rotary_pos_emb_absolute(
             )
 
 
-
 def mrope_forward_thd_cp(self, position_ids: torch.Tensor, mrope_section: list[int]):
     """Forward pass of multimodal RoPE embedding.
 
@@ -325,7 +324,9 @@ def mrope_forward_thd_cp(self, position_ids: torch.Tensor, mrope_section: list[i
         seq *= 1 / self.seq_len_interpolation_factor
 
     # shape (3, bs, dim, 1)
-    inv_freq_expanded = self.inv_freq[None, None, :, None].expand(3, seq.shape[1], -1, 1)
+    inv_freq_expanded = self.inv_freq[None, None, :, None].expand(
+        3, seq.shape[1], -1, 1
+    )
     # shape (3, bs, 1, seq_length)
     seq_expanded = seq[:, :, None, :].float()
     # shape (3, bs, seq_length, dim)
@@ -336,14 +337,16 @@ def mrope_forward_thd_cp(self, position_ids: torch.Tensor, mrope_section: list[i
         emb = torch.cat((freqs, freqs), dim=-1)  # shape (3, bs, seq_length, 2 * dim)
     else:
         bs = freqs.shape[1]
-        emb = torch.stack((freqs.view(3, bs, -1, 1), freqs.view(3, bs, -1, 1)), dim=-1).view(
-            3, bs, freqs.shape[0], -1
-        )
+        emb = torch.stack(
+            (freqs.view(3, bs, -1, 1), freqs.view(3, bs, -1, 1)), dim=-1
+        ).view(3, bs, freqs.shape[0], -1)
 
     # generate freqs with mrope_section
     # shape (bs, seq_length, 2 * dim)
     mrope_section = mrope_section * 2
-    emb = torch.cat([m[i % 3] for i, m in enumerate(emb.split(mrope_section, dim=-1))], dim=-1)
+    emb = torch.cat(
+        [m[i % 3] for i, m in enumerate(emb.split(mrope_section, dim=-1))], dim=-1
+    )
 
     # shape (seq_length, bs, 1, 2 * dim)
     emb = emb[..., None, :].transpose(0, 1).contiguous()

@@ -70,15 +70,15 @@ class DequantFP8SafeTensorIO(SafeTensorIO):
                 continue
             filename_to_keys_map[filename].add(key)
         return filename_to_keys_map
-    
+
     def save_index(self, new_hf_dir: str):
         if self.origin_index:
             weight_map = {}
-            for key, filename in self.origin_index['weight_map'].items():
+            for key, filename in self.origin_index["weight_map"].items():
                 if key.endswith("_scale_inv"):
                     continue
                 weight_map[key] = filename
-            self.origin_index['weight_map'] = weight_map
+            self.origin_index["weight_map"] = weight_map
             with open(
                 os.path.join(new_hf_dir, "model.safetensors.index.json"), "w"
             ) as f:
