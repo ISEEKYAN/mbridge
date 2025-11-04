@@ -488,7 +488,8 @@ class InternVL3Bridge(VLMBridge):
             self.hf_config.llm_config, "tie_word_embeddings", False
         )
         assert (
-            self.hf_config.llm_config.model_type == "qwen2" or self.hf_config.llm_config.model_type == "qwen3"
+            self.hf_config.llm_config.model_type == "qwen2"
+            or self.hf_config.llm_config.model_type == "qwen3"
         ), f"only support the qwen2 and qwen3 llm, now is {self.hf_config.llm_config.model_type}"
         assert (
             self.hf_config.vision_config.num_hidden_layers == 24
@@ -566,13 +567,13 @@ class InternVL3Bridge(VLMBridge):
         Returns:
             TransformerConfig: Configuration object for LLaMA2 models
         """
-        if self.hf_config.llm_config.model_type == 'qwen2':
+        if self.hf_config.llm_config.model_type == "qwen2":
             return self._build_base_config(
                 text_config_key="llm_config",
                 add_qkv_bias=True,
                 qk_layernorm=False,
             )
-        elif self.hf_config.llm_config.model_type == 'qwen3':
+        elif self.hf_config.llm_config.model_type == "qwen3":
             return self._build_base_config(
                 # qwen3
                 text_config_key="llm_config",
@@ -580,5 +581,6 @@ class InternVL3Bridge(VLMBridge):
             )
         else:
             assert (
-                self.hf_config.llm_config.model_type == "qwen2" or self.hf_config.llm_config.model_type == "qwen3"
+                self.hf_config.llm_config.model_type == "qwen2"
+                or self.hf_config.llm_config.model_type == "qwen3"
             ), f"only support the qwen2 and qwen3 llm, now is {self.hf_config.llm_config.model_type}"

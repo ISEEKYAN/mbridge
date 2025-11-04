@@ -4,8 +4,8 @@ from abc import ABC
 from typing import Callable, Generator
 
 import torch
-from megatron.core.models.gpt.gpt_model import ModelType
 from megatron.core import parallel_state
+from megatron.core.models.gpt.gpt_model import ModelType
 from transformers import AutoConfig
 from transformers.utils.hub import cached_file
 
@@ -271,7 +271,9 @@ class Bridge(ABC):
         for hf_weight_name, tensor in per_tensor_generator:
             # only tp_rank 0 should write
             if param_cnt % dp_cp_size == save_rank and self.mpu.tp_rank == 0:
-                self.safetensor_io.save_tmp_hf_weight(hf_weight_name, tensor, weights_path)
+                self.safetensor_io.save_tmp_hf_weight(
+                    hf_weight_name, tensor, weights_path
+                )
             param_cnt += 1
         torch.distributed.barrier()
 
@@ -310,7 +312,9 @@ class Bridge(ABC):
         per_tensor_generator = self.export_weights(models, distributed_filesystem)
 
         if distributed_filesystem:
-            assert memory_efficient, f"distributed_filesystem should use with memory_efficient"
+            assert (
+                memory_efficient
+            ), f"distributed_filesystem should use with memory_efficient"
             assert is_distributed, f"distributed_filesystem should use in distributed"
             return self._save_weights_fast(per_tensor_generator, weights_path)
 

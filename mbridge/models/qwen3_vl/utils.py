@@ -159,12 +159,14 @@ def split_part_by_cp_tp(cp_size, cp_rank, tp_size, tp_rank, split_size):
     part_list = list(range(split_size))
 
     cp_rank2 = 2 * cp_size - cp_rank - 1
-    cp_part_list = part_list[cp_rank * tp_size:(cp_rank + 1) *
-                             tp_size] + part_list[cp_rank2 * tp_size:(cp_rank2 + 1) * tp_size]
+    cp_part_list = (
+        part_list[cp_rank * tp_size : (cp_rank + 1) * tp_size]
+        + part_list[cp_rank2 * tp_size : (cp_rank2 + 1) * tp_size]
+    )
 
     assert len(cp_part_list) % tp_size == 0
     echo_tp_len = len(cp_part_list) // tp_size
-    cp_tp_part_list = cp_part_list[tp_rank * echo_tp_len:(tp_rank + 1) * echo_tp_len]
+    cp_tp_part_list = cp_part_list[tp_rank * echo_tp_len : (tp_rank + 1) * echo_tp_len]
     return cp_tp_part_list
 
 
@@ -178,7 +180,7 @@ def split_deepstack_embs(
 ):
     split_size = tp_size
     if cp_size > 1:
-        split_size *= (cp_size * 2)
+        split_size *= cp_size * 2
     if split_size == 1 or visual_pos_masks is None:
         return visual_pos_masks, deepstack_visual_embeds
 
@@ -199,7 +201,9 @@ def split_deepstack_embs(
     # ...
     # cp_rank1/tp_rank2 = [8, 9]
     # cp_rank1/tp_rank3 = [10, 11]
-    cp_tp_part_list = split_part_by_cp_tp(cp_size, cp_rank, tp_size, tp_rank, split_size)
+    cp_tp_part_list = split_part_by_cp_tp(
+        cp_size, cp_rank, tp_size, tp_rank, split_size
+    )
     visual_pos_masks_list = visual_pos_masks.chunk(split_size, dim=-1)
     embed_lens = [ele.sum(-1) for ele in visual_pos_masks_list]
 
@@ -221,7 +225,9 @@ def split_deepstack_embs(
             tmp_slice_tensor.append(deepstack_visual_embed[tp_slice])
         deepstack_visual_embeds_ret.append(torch.cat(tmp_slice_tensor, dim=0))
 
-    visual_pos_masks_ret = torch.cat([visual_pos_masks_list[i] for i in cp_tp_part_list], dim=-1)
+    visual_pos_masks_ret = torch.cat(
+        [visual_pos_masks_list[i] for i in cp_tp_part_list], dim=-1
+    )
 
     return visual_pos_masks_ret, deepstack_visual_embeds_ret
 
@@ -256,10 +262,12 @@ def find_vision_id_index(
     starts = change_idx[keep]
 
     # last change position is input_ids.numel()
-    next_change = torch.cat([
-        change_idx[1:],
-        torch.tensor([input_ids.numel()], device=device, dtype=change_idx.dtype),
-    ])
+    next_change = torch.cat(
+        [
+            change_idx[1:],
+            torch.tensor([input_ids.numel()], device=device, dtype=change_idx.dtype),
+        ]
+    )
     ends = next_change[keep]
 
     vals = code[starts]
@@ -293,7 +301,9 @@ def reorganize_inputs(
 
     image_thw_cpu = image_grid_thw.tolist()
     video_thw_cpu = video_grid_thw.tolist()
-    vision_indexs = find_vision_id_index(input_ids.view(-1), image_token_id, video_token_id)
+    vision_indexs = find_vision_id_index(
+        input_ids.view(-1), image_token_id, video_token_id
+    )
     len_split = sum([thw[0] for thw in image_thw_cpu])
     len_split += sum([thw[0] for thw in video_thw_cpu])
     assert len_split == len(vision_indexs)
@@ -315,7 +325,7 @@ def reorganize_inputs(
                 assert token_id == image_token_id
                 seqlen += (end - start) * square_merge_size
             assert seqlen == thw[0] * thw[1] * thw[2]
-            vision_values.append(pixel_values[image_seqlen:(image_seqlen + seqlen)])
+            vision_values.append(pixel_values[image_seqlen : (image_seqlen + seqlen)])
             vision_grid_thw.append(thw)
 
             image_idx += 1
@@ -329,7 +339,9 @@ def reorganize_inputs(
                 assert token_id == video_token_id
                 seqlen += (end - start) * square_merge_size
             assert seqlen == thw[0] * thw[1] * thw[2]
-            vision_values.append(pixel_values_videos[video_seqlen:(video_seqlen + seqlen)])
+            vision_values.append(
+                pixel_values_videos[video_seqlen : (video_seqlen + seqlen)]
+            )
             vision_grid_thw.append(thw)
 
             video_idx += 1
@@ -345,9 +357,9 @@ def reorganize_inputs(
         image_input_mask = input_ids == image_token_id
 
     vision_values = torch.cat(vision_values)
-    vision_grid_thw = torch.tensor(vision_grid_thw,
-                                   device=image_grid_thw.device,
-                                   dtype=image_grid_thw.dtype)
-    vision_input_mask = (video_input_mask | image_input_mask)
+    vision_grid_thw = torch.tensor(
+        vision_grid_thw, device=image_grid_thw.device, dtype=image_grid_thw.dtype
+    )
+    vision_input_mask = video_input_mask | image_input_mask
 
     return vision_values, vision_grid_thw, vision_input_mask

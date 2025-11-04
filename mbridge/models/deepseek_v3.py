@@ -125,7 +125,7 @@ class DeepseekV3Bridge(LLMBridge):
             mtp_args["mtp_num_layers"] = hf_config.num_nextn_predict_layers
             mtp_args["mtp_loss_scaling_factor"] = 0.1
 
-        base_config={
+        base_config = {
             "attention_backend": AttnBackend.fused,
             "layernorm_epsilon": hf_config.rms_norm_eps,
             "ffn_hidden_size": hf_config.intermediate_size,
@@ -137,7 +137,8 @@ class DeepseekV3Bridge(LLMBridge):
             "moe_router_enable_expert_bias": True,
             "moe_router_topk": hf_config.num_experts_per_tok,
             "num_moe_experts": hf_config.n_routed_experts,
-            "moe_shared_expert_intermediate_size": hf_config.moe_intermediate_size * hf_config.n_shared_experts,
+            "moe_shared_expert_intermediate_size": hf_config.moe_intermediate_size
+            * hf_config.n_shared_experts,
             "moe_aux_loss_coeff": getattr(hf_config, "aux_loss_alpha", 0.001),
             # moe_router_load_balancing_type="seq_aux_loss",
             "moe_router_load_balancing_type": "none",  # default None for RL
@@ -168,16 +169,21 @@ class DeepseekV3Bridge(LLMBridge):
             "bias_activation_fusion": True,
             "bias_dropout_fusion": True,
         }
-        
+
         import megatron.core
-        megatron_version = getattr(megatron.core, '__version__')
+
+        megatron_version = getattr(megatron.core, "__version__")
         if megatron_version >= "0.14":
-            base_config["original_max_position_embeddings"] = mla_rope_config["original_max_position_embeddings"]
+            base_config["original_max_position_embeddings"] = mla_rope_config[
+                "original_max_position_embeddings"
+            ]
         else:
-            base_config["max_position_embeddings"] = mla_rope_config["original_max_position_embeddings"]
+            base_config["max_position_embeddings"] = mla_rope_config[
+                "original_max_position_embeddings"
+            ]
 
         base_config.update(mtp_args)
-        return self._build_base_config(**base_config) 
+        return self._build_base_config(**base_config)
 
     def _get_gptmodel_args(self) -> dict:
         """
