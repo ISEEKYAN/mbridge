@@ -22,7 +22,7 @@ class SafeTensorIO:
                 self.index = origin_index["weight_map"]
                 self.origin_index = origin_index
         else:
-            src_files = glob(os.path.join(hf_dir, '*.safetensors'))
+            src_files = glob(os.path.join(hf_dir, "*.safetensors"))
             if len(src_files) == 1:
                 for file in src_files:
                     with safe_open(file, framework="pt", device="cpu") as f:

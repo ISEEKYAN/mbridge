@@ -354,12 +354,16 @@ class Qwen3VLModel(MegatronModule):
                 )
 
                 if deepstack_feature_lists is not None:
-                    tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
+                    tmp_embeddings = torch.zeros_like(
+                        combined_embeddings.transpose(0, 1)
+                    )
                     new_deepstack_feature_lists = []
                     for deepstack_visual_embed in deepstack_feature_lists:
                         tmp_embeddings[vision_mask] = deepstack_visual_embed
                         tmp_embeddings_thd = preprocess_packed_seqs(
-                            tmp_embeddings.contiguous(), attention_mask, pre_process=True
+                            tmp_embeddings.contiguous(),
+                            attention_mask,
+                            pre_process=True,
                         )[0]
                         new_deepstack_feature_lists.append(
                             tmp_embeddings_thd[vision_mask_thd].contiguous()
