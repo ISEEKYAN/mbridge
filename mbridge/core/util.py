@@ -238,7 +238,10 @@ def get_model(
         ]
 
         # Broadcast params from data parallel src rank to other data parallel ranks.
-        if data_parallel_random_init:
+        dp_ws = mpu.get_data_parallel_world_size(with_context_parallel=True)
+        if data_parallel_random_init and dp_ws > 1:
+            dp_group = mpu.get_data_parallel_group(with_context_parallel=True)
+            torch.distributed.barrier(group=dp_group)
             for model_module in model:
                 model_module.broadcast_params()
     # maintain router bias dtype
