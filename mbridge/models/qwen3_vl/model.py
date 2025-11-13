@@ -365,19 +365,19 @@ class Qwen3VLModel(MegatronModule):
                             tmp_embeddings_thd[vision_mask_thd].contiguous()
                         )
 
-                    combined_embeddings_thd = (
-                        preprocess_packed_seqs(
-                            combined_embeddings.transpose(0, 1).contiguous(),
-                            attention_mask,
-                            pre_process=True,
-                        )[0]
-                        .transpose(0, 1)
-                        .contiguous()
-                    )
-
                     deepstack_feature_lists = new_deepstack_feature_lists
-                    combined_embeddings = combined_embeddings_thd
+
                 vision_mask = vision_mask_thd
+                combined_embeddings_thd = (
+                    preprocess_packed_seqs(
+                        combined_embeddings.transpose(0, 1).contiguous(),
+                        attention_mask,
+                        pre_process=True,
+                    )[0]
+                    .transpose(0, 1)
+                    .contiguous()
+                )
+                combined_embeddings = combined_embeddings_thd
 
             if self.config.sequence_parallel:
                 combined_embeddings = (
