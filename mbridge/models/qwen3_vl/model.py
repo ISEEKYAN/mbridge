@@ -353,17 +353,25 @@ class Qwen3VLModel(MegatronModule):
                     square_merge_size=self.square_merge_size,
                 )
 
-                tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
-                new_deepstack_feature_lists = []
-                for deepstack_visual_embed in deepstack_feature_lists:
-                    tmp_embeddings[vision_mask] = deepstack_visual_embed
-                    tmp_embeddings_thd = preprocess_packed_seqs(
-                        tmp_embeddings.contiguous(), attention_mask, pre_process=True
-                    )[0]
-                    new_deepstack_feature_lists.append(
-                        tmp_embeddings_thd[vision_mask_thd].contiguous()
+                if deepstack_feature_lists is not None:
+                    tmp_embeddings = torch.zeros_like(
+                        combined_embeddings.transpose(0, 1)
                     )
+                    new_deepstack_feature_lists = []
+                    for deepstack_visual_embed in deepstack_feature_lists:
+                        tmp_embeddings[vision_mask] = deepstack_visual_embed
+                        tmp_embeddings_thd = preprocess_packed_seqs(
+                            tmp_embeddings.contiguous(),
+                            attention_mask,
+                            pre_process=True,
+                        )[0]
+                        new_deepstack_feature_lists.append(
+                            tmp_embeddings_thd[vision_mask_thd].contiguous()
+                        )
 
+                    deepstack_feature_lists = new_deepstack_feature_lists
+
+                vision_mask = vision_mask_thd
                 combined_embeddings_thd = (
                     preprocess_packed_seqs(
                         combined_embeddings.transpose(0, 1).contiguous(),
@@ -373,9 +381,6 @@ class Qwen3VLModel(MegatronModule):
                     .transpose(0, 1)
                     .contiguous()
                 )
-
-                deepstack_feature_lists = new_deepstack_feature_lists
-                vision_mask = vision_mask_thd
                 combined_embeddings = combined_embeddings_thd
 
             if self.config.sequence_parallel:
