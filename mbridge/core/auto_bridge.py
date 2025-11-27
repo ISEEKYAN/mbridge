@@ -1,5 +1,6 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
+import torch
 from transformers import AutoConfig
 
 from .bridge import _MODEL_REGISTRY, Bridge
@@ -28,7 +29,7 @@ class AutoBridge:
         return cls.from_config(config)
 
     @classmethod
-    def from_config(cls, hf_config: AutoConfig) -> Bridge:
+    def from_config(cls, hf_config: AutoConfig, dtype=torch.bfloat16) -> Bridge:
         """
         Loads the appropriate bridge class from a Hugging Face configuration.
 
@@ -43,7 +44,7 @@ class AutoBridge:
         """
         model_type = hf_config.model_type
         if model_type in _MODEL_REGISTRY:
-            return _MODEL_REGISTRY[model_type](hf_config)
+            return _MODEL_REGISTRY[model_type](hf_config, dtype=dtype)
         else:
             raise ValueError(
                 f"Unregistered model type: {model_type}, now only support {_MODEL_REGISTRY.keys()}"

@@ -70,10 +70,13 @@ class GPTOSSConfig(TransformerConfig):
     position_embedding_type: str = "yarn"
     rotary_base: int = 150000
     rotary_scaling_factor: float = 32.0
+    yarn_rotary_scaling_factor: float = 32.0
     yarn_original_max_position_embeddings: int = 131072
     yarn_beta_fast: float = 32.0
     yarn_beta_slow: float = 1.0
     yarn_correction_range_round_to_int: bool = False
+    yarn_mscale = 1.0
+    yarn_mscale_all_dim = 0.0
 
     moe_router_topk: int = 4
     moe_router_pre_softmax: bool = False
@@ -389,7 +392,8 @@ class GPTOSSBridge(LLMBridge):
             for model in models
         ]
 
-        all_experts = {}
+        all_experts_weight = {}
+        all_experts_bias = {}
         for iter_pp_rank, iter_vpp_rank, iter_name in weights_names_all_pp:
             local_to_global_map = local_to_global_maps[iter_vpp_rank]
             if iter_pp_rank == self.mpu.pp_rank:
@@ -405,7 +409,7 @@ class GPTOSSBridge(LLMBridge):
             broad_pp_param = broadcast_from_megatron_pp(param)
 
             # EP
-            if ".mlp.experts.linear_fc" in name and self.mpu.ep_size > 1:
+            if ".mlp.experts.linear_fc" in name:
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size
                 infer_params = [
@@ -415,6 +419,10 @@ class GPTOSSBridge(LLMBridge):
                     infer_params, broad_pp_param, group=self.mpu.ep_group
                 )
                 weight_or_bias = "weight" if "weight" in name else "bias"
+                if weight_or_bias == "weight":
+                    all_experts = all_experts_weight
+                else:
+                    all_experts = all_experts_bias
                 name_prefix, local_expert_id = name.split(f".{weight_or_bias}")
                 local_expert_id = int(local_expert_id)
                 global_expert_ids = [
@@ -425,7 +433,8 @@ class GPTOSSBridge(LLMBridge):
                     f"{name_prefix}.{weight_or_bias}{expert_id}"
                     for expert_id in global_expert_ids
                 ]
-                for name, param in zip(global_expert_names, infer_params):
+
+                for origin_name, param in zip(global_expert_names, infer_params):
                     if self.mpu.etp_size > 1:
                         # gather etp
                         etp_params = [
@@ -439,11 +448,17 @@ class GPTOSSBridge(LLMBridge):
                         params = [param]
 
                     merge_params = self._weight_merge_across_tp(
-                        name, params, broad_pp_param
+                        origin_name, params, broad_pp_param
                     )
                     converted_names, converted_params = self._weight_to_hf_format(
-                        name, merge_params
+                        origin_name, merge_params
                     )
+                    if (
+                        "linear_fc1.weight" in origin_name
+                        or "linear_fc2.weight" in origin_name
+                    ):
+                        converted_params[0] = converted_params[0].T
+
                     name, expert_id = converted_names[0]
                     all_experts[expert_id] = converted_params[0]
                 if all_experts.__len__() == num_experts:
@@ -458,6 +473,7 @@ class GPTOSSBridge(LLMBridge):
             if (
                 hasattr(broad_pp_param, "tensor_model_parallel")
                 and broad_pp_param.tensor_model_parallel
+                or "self_attention.core_attention.softmax_offset" in name
             ):
                 # allocate a new tensor with proper size
                 if self.mpu.tp_size <= 1:
@@ -549,7 +565,14 @@ class GPTOSSBridge(LLMBridge):
             def interleave(elem):
                 return torch.cat((elem[::2, ...], elem[1::2, ...]), dim=0)
 
-            return interleave(hf_weights[0])
+            if "weight" in mcore_weights_name:
+                weight = hf_weights[0].T  # make gate_up the first dimension
+            else:
+                weight = hf_weights[0]
+            return interleave(weight)
+        elif "linear_fc2.weight" in mcore_weights_name:
+            weight = hf_weights[0].T  # make down_proj the first dimension
+            return weight
         if len(hf_weights) == 1:
             return hf_weights[0]
         raise NotImplementedError(f"Unsupported parameter name: {mcore_weights_name}")

@@ -43,7 +43,13 @@ class DequantMXFP4SafeTensorIO(SafeTensorIO):
             if isinstance(name, tuple):
                 name = name[0]
             if is_mxfp4_weight(name):
-                filename = weight_to_file_map[f"{name}_blocks"]
+                if f"{name}_blocks" in weight_to_file_map:
+                    filename = weight_to_file_map[f"{name}_blocks"]
+                else:
+                    # load fp16
+                    is_mxfp4_weight = lambda name: False
+                    filename = weight_to_file_map[name]
+
             else:
                 filename = weight_to_file_map[name]
             file_to_weight_map[filename].add(name)
@@ -70,6 +76,10 @@ class DequantMXFP4SafeTensorIO(SafeTensorIO):
                         scales = get_another_tensor(scale_name)
                         scales = scales.to(torch.int32) - 127
                         weight = self._dequantize_mxfp4(blocks, scales)
+                        if "gate_up_proj" in name or "down_proj" in name:
+                            weight = weight.permute(
+                                0, 2, 1
+                            ).contiguous()  # make gate_up the last dimension
                     else:
                         weight = f.get_tensor(name)
                     ret[name] = weight

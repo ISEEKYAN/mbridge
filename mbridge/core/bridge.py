@@ -513,11 +513,12 @@ class Bridge(ABC):
             for k in ret.keys():
                 v = ret[k]
                 if ".mlp.experts.linear_fc" in v:
-                    name_prefix, local_expert_id = v.split(".weight")
+                    weight_or_bias = "weight" if "weight" in v else "bias"
+                    name_prefix, local_expert_id = v.split(f".{weight_or_bias}")
                     global_expert_idx = local_expert_to_global_expert[
                         int(local_expert_id)
                     ]
-                    ret[k] = f"{name_prefix}.weight{global_expert_idx}"
+                    ret[k] = f"{name_prefix}.{weight_or_bias}{global_expert_idx}"
 
         return ret
 
@@ -808,10 +809,12 @@ class Bridge(ABC):
 
         elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
             ret = torch.cat(mcore_weights, dim=1)
+        elif "self_attention.core_attention.softmax_offset" in mcore_weights_name:
+            ret = torch.cat(mcore_weights, dim=0)
         else:
-            assert (
-                hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel
-            )
+            # assert (
+            #     hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel
+            # )
             ret = torch.cat(mcore_weights, dim=param.partition_dim)
 
         return ret
