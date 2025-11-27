@@ -6,6 +6,7 @@ from glob import glob
 from typing import Generator
 
 import torch
+from transformers import AutoConfig
 from safetensors import safe_open
 from safetensors.torch import save_file
 
@@ -13,6 +14,7 @@ from safetensors.torch import save_file
 class SafeTensorIO:
     def __init__(self, hf_dir: str):
         index_file = os.path.join(hf_dir, "model.safetensors.index.json")
+        config = AutoConfig.from_pretrained(hf_dir)
 
         self.index = {}
         self.origin_index = {}
@@ -20,6 +22,9 @@ class SafeTensorIO:
             with open(index_file, "r") as f:
                 origin_index = json.load(f)
                 self.index = origin_index["weight_map"]
+                if getattr(config, "tie_word_embeddings", False):
+                    if "lm_head.weight" in self.index.keys():
+                        self.index.pop("lm_head.weight")
                 self.origin_index = origin_index
         else:
             src_files = glob(os.path.join(hf_dir, "*.safetensors"))
