@@ -245,9 +245,13 @@ def get_model(
 
 
 from megatron.core import DistributedDataParallel as DDP
-from megatron.core.distributed.custom_fsdp import (
-    FullyShardedDataParallel as custom_FSDP,
-)
+
+try:
+    from megatron.core.distributed.custom_fsdp import (
+        FullyShardedDataParallel as custom_FSDP,
+    )
+except ImportError:
+    custom_FSDP = DDP
 
 try:
     from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
