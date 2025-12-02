@@ -377,3 +377,55 @@ class DeepseekV3Bridge(LLMBridge):
         else:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names
+
+    def _weight_merge_across_tp(
+        self,
+        mcore_weights_name: str,
+        mcore_weights: list[torch.Tensor],
+        param: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.mpu.tp_size == 1:
+            assert len(mcore_weights) == 1
+            return mcore_weights[0]
+        if "mlp.experts.linear_fc" in mcore_weights_name:
+            assert len(mcore_weights) == self.mpu.etp_size
+        else:
+            assert len(mcore_weights) == self.mpu.tp_size
+        if (
+            "self_attention.linear_qkv." in mcore_weights_name
+            and "layer_norm" not in mcore_weights_name
+        ):
+            return torch.cat(mcore_weights, dim=0)
+        elif (
+            "linear_fc1.weight" in mcore_weights_name
+            or "linear_fc1.bias" in mcore_weights_name
+        ):
+            mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
+            if not mcore_config.gated_linear_unit:
+                return torch.cat(mcore_weights, dim=0)
+
+            # if the tensor is gate and proj
+            gate_lst = []
+            up_lst = []
+            for mcore_weight in mcore_weights:
+                gate, up = mcore_weight.chunk(2)
+                gate_lst.append(gate)
+                up_lst.append(up)
+            gate = torch.cat(gate_lst, dim=0)
+            up = torch.cat(up_lst, dim=0)
+            ret = torch.cat((gate, up), dim=0)
+
+        elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
+            ret = torch.cat(mcore_weights, dim=1)
+        else:
+            if (
+                "self_attention.linear_kv_down_proj.weight" in mcore_weights_name
+                or "self_attention.linear_q_down_proj.weight" in mcore_weights_name
+            ):
+                return mcore_weights[0]
+            assert (
+                hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel
+            )
+            ret = torch.cat(mcore_weights, dim=param.partition_dim)
+
+        return ret
