@@ -953,6 +953,12 @@ class Bridge(ABC):
 
         elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
             ret = torch.cat(mcore_weights, dim=1)
+        elif (
+            "self_attention.linear_kv_down_proj.weight" in mcore_weights_name
+            or "self_attention.linear_q_down_proj.weight" in mcore_weights_name
+        ):
+            # self_attention.linear_kv_down_proj.weight and self_attention.linear_q_down_proj.weight are copied
+            return mcore_weights[0]
         else:
             assert (
                 hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel
