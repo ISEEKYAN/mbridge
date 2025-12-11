@@ -18,6 +18,7 @@ from .util import (
     unwrap_model,
 )
 
+import copy
 
 class Bridge(ABC):
     """
@@ -61,6 +62,9 @@ class Bridge(ABC):
         # Some moe models require multiple weights to be combined into one,
         # such as qwen3vl. It will cache it into this buff until all weights are collected.
         self.export_weights_buff = {}
+        self._attention_mapping = copy.deepcopy(self._ATTENTION_MAPPING)
+        self._mlp_mapping = copy.deepcopy(self._MLP_MAPPING)
+        self._other_mapping = copy.deepcopy(self._OTHER_MAPPING)
 
     def get_model(
         self,
@@ -630,7 +634,7 @@ class Bridge(ABC):
         """
         layer_number = name.split(".")[2]
         convert_names = []
-        for keyword, mapping_names in self._ATTENTION_MAPPING.items():
+        for keyword, mapping_names in self._attention_mapping.items():
             if keyword in name:
                 convert_names.extend(
                     [x.format(layer_number=layer_number) for x in mapping_names]
@@ -680,7 +684,7 @@ class Bridge(ABC):
         """
         layer_number = name.split(".")[2]
         convert_names = []
-        for keyword, mapping_names in self._MLP_MAPPING.items():
+        for keyword, mapping_names in self._mlp_mapping.items():
             if keyword in name:
                 convert_names.extend(
                     [x.format(layer_number=layer_number) for x in mapping_names]
@@ -705,7 +709,7 @@ class Bridge(ABC):
         """
         layer_number = name.split(".")[2]
         convert_names = []
-        for keyword, mapping_names in self._OTHER_MAPPING.items():
+        for keyword, mapping_names in self._other_mapping.items():
             if keyword in name:
                 convert_names.extend(
                     [x.format(layer_number=layer_number) for x in mapping_names]

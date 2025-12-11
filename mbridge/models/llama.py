@@ -53,6 +53,14 @@ class LLaMABridge(LLMBridge):
         ],
         "mlp.linear_fc2.weight": ["model.layers.{layer_number}.mlp.down_proj.weight"],
     }
+    
+    def __init__(self, hf_config,**kwargs):
+        super().__init__(hf_config,**kwargs)
+        if hf_config.architectures[0].endswith("ForSequenceClassification") or hf_config.architectures[0].endswith("ForTokenClassification"):
+            self._direct_mapping["output_layer.weight"] = "score.weight"
+            self._direct_mapping["output_layer.bias"] = "score.bias"
+        
+
 
     def _build_config(self):
         """
