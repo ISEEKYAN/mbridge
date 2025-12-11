@@ -33,6 +33,8 @@ class Bridge(ABC):
         dtype: torch.dtype = torch.bfloat16,
         parallel_states: ParallelStates = None,
         make_vocab_size_divisible_by: int = None,
+        use_mtp=False,
+        mtp_loss_scaling_factor=0.1,
     ):
         """
         Initialize a bridge instance.
@@ -46,6 +48,11 @@ class Bridge(ABC):
         self.extra_args = {}
         self.dtype = dtype
         self.mpu = parallel_states
+
+        # mtp support, for deepseek, Mimo or other model with mtp
+        self.use_mtp = use_mtp
+        self.mtp_loss_scaling_factor = mtp_loss_scaling_factor
+
         if self.mpu is None:
             self.mpu = ParallelStates.get_parallel_state()
         self.config = self._build_config()
