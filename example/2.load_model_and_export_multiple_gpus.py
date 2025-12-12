@@ -126,6 +126,9 @@ def main():
     parser.add_argument(
         "--trust_remote_code", action="store_true", help="Trust remote code"
     )
+    parser.add_argument(
+        "--value_model", action="store_true", help="Make value model"
+    )
     args = parser.parse_args()
 
     # Initialize distributed environment
@@ -142,7 +145,7 @@ def main():
     hf_model_path = args.model_path
     print(f"rank{torch.distributed.get_rank()}: start loading model")
     bridge = AutoBridge.from_pretrained(hf_model_path)
-    model = bridge.get_model(post_model_creation_callbacks=[])
+    model = bridge.get_model(post_model_creation_callbacks=[make_value_model] if args.value_model else [])
     print(
         f"rank{torch.distributed.get_rank()}: start loading weights from {hf_model_path}"
     )

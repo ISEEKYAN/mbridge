@@ -64,6 +64,7 @@ class Bridge(ABC):
         self.export_weights_buff = {}
         self._attention_mapping = copy.deepcopy(self._ATTENTION_MAPPING)
         self._mlp_mapping = copy.deepcopy(self._MLP_MAPPING)
+        self._direct_mapping = copy.deepcopy(self._DIRECT_MAPPING)
         self._other_mapping = copy.deepcopy(self._OTHER_MAPPING)
 
     def get_model(
@@ -733,8 +734,8 @@ class Bridge(ABC):
             "_extra_state" not in mcore_weights_name
         ), "extra_state should not be loaded"
 
-        if mcore_weights_name in self._DIRECT_MAPPING:
-            return [self._DIRECT_MAPPING[mcore_weights_name]]
+        if mcore_weights_name in self._direct_mapping:
+            return [self._direct_mapping[mcore_weights_name]]
 
         if ".self_attention." in mcore_weights_name:
             return self._weight_name_mapping_attention(mcore_weights_name)
