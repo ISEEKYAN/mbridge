@@ -423,15 +423,19 @@ class Bridge(ABC):
                 broad_pp_param = broadcast_from_megatron_pp(param)
 
             # EP
-            if ".mlp.experts.linear_fc" in name and self.mpu.ep_size > 1:
+            if ".mlp.experts.linear_fc" in name:
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size
-                infer_params = [
-                    torch.empty_like(broad_pp_param) for _ in range(self.mpu.ep_size)
-                ]
-                torch.distributed.all_gather(
-                    infer_params, broad_pp_param, group=self.mpu.ep_group
-                )
+
+                if self.mpu.ep_size > 1:
+                    infer_params = [
+                        torch.empty_like(broad_pp_param) for _ in range(self.mpu.ep_size)
+                    ]
+                    torch.distributed.all_gather(
+                        infer_params, broad_pp_param, group=self.mpu.ep_group
+                    )
+                else:
+                    infer_params = [broad_pp_param]
 
                 name_prefix, local_expert_id = name.split(".weight")
                 local_expert_id = int(local_expert_id)
