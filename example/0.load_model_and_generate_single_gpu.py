@@ -4,7 +4,7 @@ import os
 import torch
 from megatron.core import parallel_state as mpu
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoConfig
 
 from mbridge import AutoBridge
 
@@ -27,9 +27,17 @@ def init_distributed():
 
 def load_model(hf_model_path, trust_remote_code=False):
     """Load model"""
-    bridge = AutoBridge.from_pretrained(
+
+    # use AutoConfig to change hf config
+    config = AutoConfig.from_pretrained(
         hf_model_path, trust_remote_code=trust_remote_code
     )
+
+    if hasattr(config, "num_nextn_predict_layers"):
+        config.num_nextn_predict_layers = 0
+
+    bridge = AutoBridge.from_config(config)
+
     model = bridge.get_model()
     bridge.load_weights(model, hf_model_path)
     return model
