@@ -230,7 +230,8 @@ class DeepseekV3Bridge(LLMBridge):
             if vp_stage is not None and self.has_vp_stage:
                 gptmodel_args["vp_stage"] = vp_stage
 
-            if (self.config.mtp_num_layers is not None
+            if (
+                self.config.mtp_num_layers is not None
                 and self.config.mtp_num_layers > 0
             ):
                 if (

@@ -46,7 +46,6 @@ class Bridge(ABC):
         self.extra_args = {}
         self.dtype = dtype
         self.mpu = parallel_states
-
         if self.mpu is None:
             self.mpu = ParallelStates.get_parallel_state()
         self.config = self._build_config()
