@@ -28,7 +28,7 @@ class MimoBridge(Qwen2Bridge):
         mtp_args = {}
         if "num_nextn_predict_layers" in hf_config:
             mtp_args["mtp_num_layers"] = hf_config.num_nextn_predict_layers
-            mtp_args["mtp_loss_scaling_factor"] = self.mtp_loss_scaling_factor
+            mtp_args["mtp_loss_scaling_factor"] = 0.1
 
         return self._build_base_config(
             add_qkv_bias=True,
@@ -41,7 +41,7 @@ class MimoBridge(Qwen2Bridge):
         ret = super()._get_gptmodel_args()
 
         # Add MTP block spec if MTP layers are present
-        if self.use_mtp and self.config.mtp_num_layers is not None:
+        if self.config.mtp_num_layers is not None:
             transformer_layer_spec = get_gpt_decoder_block_spec(config=self.config,
                                                                 use_transformer_engine=True)
             mtp_block_spec = get_gpt_mtp_block_spec(self.config,

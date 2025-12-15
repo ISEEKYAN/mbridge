@@ -121,9 +121,9 @@ class DeepseekV3Bridge(LLMBridge):
             moe_layer_freq[i] = 0
 
         mtp_args = {}
-        if self.use_mtp and "num_nextn_predict_layers" in hf_config:
+        if "num_nextn_predict_layers" in hf_config:
             mtp_args["mtp_num_layers"] = hf_config.num_nextn_predict_layers
-            mtp_args["mtp_loss_scaling_factor"] = self.mtp_loss_scaling_factor
+            mtp_args["mtp_loss_scaling_factor"] = 0.1
 
         base_config = {
             "attention_backend": AttnBackend.fused,
@@ -230,8 +230,7 @@ class DeepseekV3Bridge(LLMBridge):
             if vp_stage is not None and self.has_vp_stage:
                 gptmodel_args["vp_stage"] = vp_stage
 
-            if (self.use_mtp
-                and self.config.mtp_num_layers is not None
+            if (self.config.mtp_num_layers is not None
                 and self.config.mtp_num_layers > 0
             ):
                 if (
