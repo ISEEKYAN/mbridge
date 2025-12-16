@@ -28,7 +28,7 @@ class MimoBridge(Qwen2Bridge):
         mtp_args = {}
         if "num_nextn_predict_layers" in hf_config:
             mtp_args["mtp_num_layers"] = hf_config.num_nextn_predict_layers
-            mtp_args["mtp_loss_scaling_factor"] = 0.1
+            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get("mtp_loss_scaling_factor", 0.1)
 
         return self._build_base_config(
             add_qkv_bias=True,
