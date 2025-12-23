@@ -160,7 +160,7 @@ class SafeTensorIO:
             )
         return
 
-    def save_tmp_hf_weight(
+    def save_tmp_weight(
         self,
         hf_weight_name: str,
         tensor: torch.tensor,
