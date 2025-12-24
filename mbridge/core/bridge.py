@@ -526,7 +526,7 @@ class Bridge(ABC):
             broad_pp_param = broadcast_from_megatron_pp(param)
 
             # EP
-            if ".mlp.experts.linear_fc" in name and self.mpu.ep_size > 1:
+            if ".mlp.experts.linear_fc" in name and self.mpu.ep_size >= 1:
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size
                 infer_params = [
@@ -676,7 +676,7 @@ class Bridge(ABC):
             assert iter_pp_rank == self.mpu.pp_rank
 
             # EP
-            if ".mlp.experts.linear_fc" in name and self.mpu.ep_size > 1:
+            if ".mlp.experts.linear_fc" in name and self.mpu.ep_size >= 1:
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size
 
