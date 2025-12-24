@@ -283,7 +283,8 @@ class Bridge(ABC):
         ep_dp_group = mpu.get_expert_data_parallel_group()
         ep_save_size = torch.distributed.get_world_size(ep_dp_group)
         if self.config.num_moe_experts:
-            assert ep_save_size == world_size // (self.mpu.ep_size * self.mpu.etp_size)
+            assert ep_save_size == world_size // (self.mpu.ep_size * self.mpu.etp_size *
+                                                  self.mpu.pp_size)
         ep_save_rank = torch.distributed.get_rank(ep_dp_group)
         ep_save_cnt = 0
 
@@ -424,7 +425,7 @@ class Bridge(ABC):
             return self._save_weights_fast(models, weights_path)
 
         rank = torch.distributed.get_rank() if is_distributed else 0
-        per_tensor_generator = self.export_weights(models, distributed_filesystem)
+        per_tensor_generator = self.export_weights(models)
 
         if rank != 0:
             for _, _ in per_tensor_generator:
@@ -456,7 +457,7 @@ class Bridge(ABC):
         self.config = self._build_config()
 
     def export_weights(
-        self, models: list[torch.nn.Module], distributed_filesystem: bool = False
+        self, models: list[torch.nn.Module],
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
         assert (
             len(self.export_weights_buff) == 0
@@ -520,15 +521,9 @@ class Bridge(ABC):
                 name = local_to_global_map[iter_name]
             else:
                 name, param = None, None
-                if distributed_filesystem:
-                    continue
 
-            if distributed_filesystem:
-                assert iter_pp_rank == self.mpu.pp_rank
-                broad_pp_param = param
-            else:
-                name = broadcast_str_from_megatron_pp(name)
-                broad_pp_param = broadcast_from_megatron_pp(param)
+            name = broadcast_str_from_megatron_pp(name)
+            broad_pp_param = broadcast_from_megatron_pp(param)
 
             # EP
             if ".mlp.experts.linear_fc" in name and self.mpu.ep_size > 1:
