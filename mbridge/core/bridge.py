@@ -267,6 +267,7 @@ class Bridge(ABC):
     ) -> None:
         if len(glob(os.path.join(weights_path, "*.safetensors"))) > 0:
             raise ValueError(f"The path:{weights_path} should not has safetensors files")
+        torch.distributed.barrier()
 
         def encode_filename(mcore_weight_name, *values):
             return mcore_weight_name + '--' + '--'.join(
