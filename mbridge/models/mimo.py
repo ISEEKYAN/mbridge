@@ -129,7 +129,6 @@ class MimoBridge(Qwen2Bridge):
     def _weight_to_mcore_format(self, mcore_weights_name: str, hf_weights: list[torch.Tensor]) -> torch.Tensor:
         """Swap halves of eh_proj weights before handing off to Megatron-Core."""
         weight = super()._weight_to_mcore_format(mcore_weights_name, hf_weights)
-        print(mcore_weights_name)
         if mcore_weights_name.endswith("eh_proj.weight"):
             first_half, second_half = weight.chunk(2, dim=1)
             weight = torch.cat([second_half, first_half], dim=1)
