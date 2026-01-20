@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set the path to your Megatron-LM directory
-export MEGATRON_PATH="/PATH/TO/Megatron-LM"
+export MEGATRON_PATH="/root/autodl-tmp/Megatron-LM"
 
 # Get the absolute path of the directory containing this script.
 # This makes the script runnable from any location.

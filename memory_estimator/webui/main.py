@@ -244,8 +244,22 @@ async def estimate_with_mbridge(config: MBridgeEstimateConfig):
     args.moe_grouped_gemm = True  # Default
     args.qk_layernorm = tf_config.qk_layernorm
     args.multi_latent_attention = "deepseek" in getattr(hf_config, "model_type", "")
-    args.padded_vocab_size = getattr(hf_config, "vocab_size")
-    args.max_position_embeddings = getattr(hf_config, "max_position_embeddings")
+    if hasattr(hf_config, "vocab_size"):
+        args.padded_vocab_size = hf_config.vocab_size
+    elif hasattr(hf_config, "text_config") and hasattr(hf_config.text_config, "vocab_size"):
+        args.padded_vocab_size = hf_config.text_config.vocab_size
+    else:
+        raise ValueError(f"Vocab size attribute not found for the current model configuration {type(hf_config).__name__}. "
+                         f"It should be either `vocab_size` (for text-only models) or `text_config.vocab_size` (for multimodal models).")
+
+    if hasattr(hf_config, "max_position_embeddings"):
+        args.max_position_embeddings = hf_config.max_position_embeddings
+    elif hasattr(hf_config, "text_config") and hasattr(hf_config.text_config, "max_position_embeddings"):
+        args.max_position_embeddings = hf_config.text_config.max_position_embeddings
+    else:
+        raise ValueError(f"Max position embeddings attribute not found for the current model configuration {type(hf_config).__name__}. "
+                         f"It should be either `max_position_embeddings` (for text-only models) or `text_config.max_position_embeddings` (for multimodal models).")
+    
     args.tie_word_embeddings = getattr(hf_config, "tie_word_embeddings", False)
     args.world_size = config.num_gpus
 
