@@ -459,6 +459,7 @@ class Bridge(ABC):
         self.extra_args.update(kwargs)
         self.config = self._build_config()
 
+    @torch.no_grad()
     def export_weights(
         self, models: list[torch.nn.Module],
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
@@ -573,7 +574,7 @@ class Bridge(ABC):
                     if len(converted_names) == 0:
                         continue
 
-                    yield from zip(converted_names, converted_params)
+                    yield from zip(converted_names, [p.detach() for p in converted_params])
                 continue
 
             # TP
@@ -605,7 +606,7 @@ class Bridge(ABC):
             if len(converted_names) == 0:
                 continue
 
-            yield from zip(converted_names, converted_params)
+            yield from zip(converted_names, [p.detach() for p in converted_params])
 
     def export_weights_without_gather(
         self, models: list[torch.nn.Module],
