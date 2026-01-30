@@ -177,7 +177,11 @@ def split_deepstack_embs(
     tp_rank: int = 0,
     cp_size: int = 1,
     cp_rank: int = 0,
+    sequence_parallel: bool = True,
 ):
+    if not sequence_parallel:
+        tp_size = 1
+        tp_rank = 0
     split_size = tp_size
     if cp_size > 1:
         split_size *= cp_size * 2
