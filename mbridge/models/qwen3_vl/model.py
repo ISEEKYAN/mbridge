@@ -394,6 +394,7 @@ class Qwen3VLModel(MegatronModule):
                     tp_rank=mpu.get_tensor_model_parallel_rank(),
                     cp_size=cp_size,
                     cp_rank=mpu.get_context_parallel_rank(),
+                    sequence_parallel=self.config.sequence_parallel,
                 )
             elif self.config.sequence_parallel:  # THD and SP
                 visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
@@ -403,6 +404,7 @@ class Qwen3VLModel(MegatronModule):
                     tp_rank=mpu.get_tensor_model_parallel_rank(),
                     cp_size=1,
                     cp_rank=0,
+                    sequence_parallel=self.config.sequence_parallel,
                 )
 
         if position_ids is None:
