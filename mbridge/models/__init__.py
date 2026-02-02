@@ -22,6 +22,7 @@ from .mimo import MimoBridge
 from .mixtral import MixtralBridge
 from .qwen2 import Qwen2Bridge
 from .qwen2_5_vl import Qwen2_5VLBridge
+from .qwen2_5_omni import Qwen2_5OmniBridge
 from .qwen2moe import Qwen2MoEBridge
 from .qwen3 import Qwen3Bridge
 from .qwen3moe import Qwen3MoEBridge
