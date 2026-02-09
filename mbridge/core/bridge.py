@@ -380,7 +380,7 @@ class Bridge(ABC):
                         self.safetensor_io.save_tmp_weight(hf_name, hf_param, weights_path)
             else:
                 # gather tp
-                if w_files[0][4] > 0:
+                if w_files[0][4] is not None and w_files[0][4] > 0:
                     assert len(w_files) == w_files[0][3]
                     params = [load_file(w_file) for w_file in w_files]
                     infer_params = self._weight_merge_across_tp(w_name, params, params[0])
