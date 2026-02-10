@@ -237,3 +237,73 @@ class SafeTensorIO:
         else:
             warnings.warn("No index file found, saving index file failed")
         return
+
+    def save_batch_weights(
+        self,
+        tensors: dict[str, torch.Tensor],
+        filepath: str,
+    ):
+        """
+        Save multiple tensors into a single safetensors file.
+        This reduces IO overhead by batching multiple tensors together.
+
+        Args:
+            tensors: Dict mapping tensor names to tensor data
+            filepath: Path to save the safetensors file
+        """
+        if not tensors:
+            return
+        assert self.index, "index file is required for memory efficient saving"
+        save_file({k: v.cpu() if v.is_cuda else v for k, v in tensors.items()}, filepath)
+
+    def save_hf_weight_merge_from_batches(
+        self,
+        new_hf_dir: str,
+        rank: int = 0,
+        world_size: int = 1,
+        batch_file_pattern: str = "hf_batch_*.safetensors",
+    ):
+        """
+        Merge HF weights from batch files (each containing multiple tensors)
+        into final safetensors shards matching the original index layout.
+
+        Args:
+            new_hf_dir: Directory containing batch files and where final files will be saved
+            rank: Current rank
+            world_size: Total number of ranks
+            batch_file_pattern: Glob pattern to find batch files
+        """
+        assert self.index, "index file is required for memory efficient saving"
+
+        filename_to_keys_map = defaultdict(set)
+        for key, filename in self.index.items():
+            filename_to_keys_map[filename].add(key)
+
+        # Build reverse index: key -> which batch file contains it
+        batch_files = glob(os.path.join(new_hf_dir, batch_file_pattern))
+        key_to_batch_file = {}
+        for bf in batch_files:
+            with safe_open(bf, framework="pt", device="cpu") as f:
+                for key in f.keys():
+                    key_to_batch_file[key] = bf
+
+        filename_list = sorted(list(filename_to_keys_map.keys()))
+        if world_size > 1:
+            num_files = len(filename_list)
+            num_files_rank = (num_files + world_size - 1) // world_size
+            begin_idx = min(num_files, rank * num_files_rank)
+            end_idx = min(num_files, (rank + 1) * num_files_rank)
+            filename_list = filename_list[begin_idx:end_idx]
+
+        # For each final shard, collect tensors from batch files and write
+        for filename in filename_list:
+            keys_for_file = filename_to_keys_map[filename]
+            states = {}
+            old_keys_for_file, _ = self._mapping_weight_names_new2old(keys_for_file)
+            for old_key, key in zip(old_keys_for_file, keys_for_file):
+                bf = key_to_batch_file[old_key]
+                with safe_open(bf, framework="pt", device="cpu") as f:
+                    states[key] = f.get_tensor(old_key)
+            save_file(states, os.path.join(new_hf_dir, filename))
+
+        return batch_files
