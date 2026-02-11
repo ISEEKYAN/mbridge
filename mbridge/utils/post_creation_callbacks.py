@@ -13,12 +13,14 @@ def make_value_model(model, pre_process, post_process, config, hf_config):
 def freeze_moe_router(model, pre_process, post_process, config, hf_config):
     for layer in model.decoder.layers:
         if hasattr(layer.mlp, "router"):
-            if hasattr(layer.mlp.router, "weight"):
-                layer.mlp.router.weight.requires_grad = False
-            if hasattr(layer.mlp.router, "bias"):
-                layer.mlp.router.bias.requires_grad = False
+            router = layer.mlp.router
+            for attr in ["weight", "bias", "expert_bias"]:
+                param = getattr(router, attr, None)
+                if param is not None:
+                    param.requires_grad = False
         if hasattr(layer.mlp, "shared_experts"):
-            if hasattr(layer.mlp.shared_experts, "gate_weight"):
-                layer.mlp.shared_experts.gate_weight.requires_grad = False
-            if hasattr(layer.mlp.shared_experts, "gate_bias"):
-                layer.mlp.shared_experts.gate_bias.requires_grad = False
+            shared_experts = layer.mlp.shared_experts
+            for attr in ["gate_weight", "gate_bias"]:
+                param = getattr(shared_experts, attr, None)
+                if param is not None:
+                    param.requires_grad = False
