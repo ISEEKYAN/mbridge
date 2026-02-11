@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import warnings
 from collections import defaultdict
@@ -8,6 +9,9 @@ from typing import Generator
 import torch
 from safetensors import safe_open
 from safetensors.torch import save_file
+
+
+logger = logging.getLogger(__name__)
 
 
 class SafeTensorIO:
@@ -127,16 +131,49 @@ class SafeTensorIO:
         filename_to_keys_map = defaultdict(set)
         for key, filename in self.index.items():
             filename_to_keys_map[filename].add(key)
+
         states = {}
+        saved_files = []
+        collected_weights_count = 0
+
         for hf_weight_name, tensor in per_tensor_generator:
             states[hf_weight_name] = tensor.cpu()
+            collected_weights_count += 1
+
+            # Check if any file can be saved now
             for filename, keys_for_file in filename_to_keys_map.items():
                 if keys_for_file.issubset(states.keys()):
                     to_save = {k: states[k] for k in keys_for_file}
                     safetensor_file = os.path.join(new_hf_dir, filename)
+                    logger.info(f"[SafeTensorIO] ✓ All {len(keys_for_file)} weights collected for '{filename}', saving...")
                     save_file(to_save, safetensor_file)
+                    saved_files.append(filename)
+
+                    # Remove saved weights from states
                     for k in keys_for_file:
                         del states[k]
+                    logger.info(f"[SafeTensorIO] ✓ Saved '{filename}', remaining weights in buffer: {len(states)}")
+
+        logger.info(f"\n[SafeTensorIO] === Save Summary ===")
+        logger.info(f"[SafeTensorIO] Total weights collected: {collected_weights_count}")
+        logger.info(f"[SafeTensorIO] Files saved: {len(saved_files)}/{len(filename_to_keys_map)}")
+        logger.info(f"[SafeTensorIO] Weights remaining in buffer: {len(states)}")
+
+        if states:
+            logger.info(f"[SafeTensorIO] Remaining weights: {list(states.keys())}")
+
+            # Diagnose why these weights weren't saved
+            for weight_name in states.keys():
+                if weight_name in self.index:
+                    expected_file = self.index[weight_name]
+                    expected_weights = filename_to_keys_map[expected_file]
+                    missing_weights = expected_weights - states.keys()
+                    logger.warning(f"[SafeTensorIO] ⚠️  '{weight_name}' belongs to '{expected_file}'")
+                    logger.warning(f"[SafeTensorIO]     This file expects {len(expected_weights)} weights")
+                    logger.warning(f"[SafeTensorIO]     Missing {len(missing_weights)} weights: {list(missing_weights)[:5]}{'...' if len(missing_weights) > 5 else ''}")
+                else:
+                    logger.warning(f"[SafeTensorIO] ⚠️  '{weight_name}' is NOT in the index file!")
+
         if not set(states.keys()) == set(hf_shared_weight_keys):
             warnings.warn(
                 f"Some weights are not saved: {states.keys()} {hf_shared_weight_keys=}"
@@ -189,10 +226,17 @@ class SafeTensorIO:
             old_keys_for_file, _ = self._mapping_weight_names_new2old(keys_for_file)
             for old_key, key in zip(old_keys_for_file, keys_for_file):
                 tmp_filename = f"{new_hf_dir}/{old_key}.safetensors"
+                if not os.path.exists(tmp_filename):
+                    logger.warning(f"[SafeTensorIO] ERROR: 文件 '{tmp_filename}' 不存在，跳过该文件")
+                    continue
                 with safe_open(tmp_filename, framework="pt", device="cpu") as f:
-                    states[key] = f.get_tensor(old_key)
-                    os.remove(tmp_filename)
-            save_file(states, os.path.join(new_hf_dir, filename))
+                    tensor = f.get_tensor(old_key)
+                    states[key] = tensor.clone()
+                os.remove(tmp_filename)
+
+            if states:
+                save_file(states, os.path.join(new_hf_dir, filename))
+                logger.info(f"[SafeTensorIO] Successfully saved {filename} with {len(states)} tensors")
         return
 
     def save_hf_weight_memory_efficient(

@@ -56,6 +56,7 @@ def get_model(
             model = []
             for i in range(virtual_pipeline_model_parallel_size):
                 # Set pre_process and post_process only after virtual rank is set.
+                mpu.set_virtual_pipeline_model_parallel_rank(i)
                 if (
                     "vp_stage"
                     in inspect.signature(mpu.is_pipeline_first_stage).parameters
@@ -254,6 +255,14 @@ def get_model(
                 ):
                     # print(f"maintain router bias dtype for {l.mlp.router}")
                     l.mlp.router._maintain_float32_expert_bias()
+        if hasattr(m, "decoder"):
+            for l in m.decoder.layers:
+                if (
+                    hasattr(l, "moe")
+                    and hasattr(l.moe, "router")
+                    and hasattr(l.moe.router, "_maintain_float32_expert_bias")
+                ):
+                    l.moe.router._maintain_float32_expert_bias()
     return model
 
 
