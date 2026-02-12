@@ -7,13 +7,14 @@ from collections import defaultdict
 from functools import lru_cache
 
 import torch
+from typing import List, Optional, Tuple
 from megatron.core import mpu
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.fp8_utils import correct_amax_history_if_needed
 from megatron.core.models.gpt.gpt_model import ModelType
 from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.transformer.module import Float16Module
+from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import (
     StragglerDetector,
     check_param_hashes_across_dp_replicas,
@@ -30,6 +31,7 @@ def get_model(
     bf16: bool = True,
     virtual_pipeline_model_parallel_size: int = None,
     encoder_pipeline_model_parallel_size: int = 0,
+    use_megatron_fsdp: bool = False,
     use_torch_fsdp2: bool = False,
     use_custom_fsdp: bool = False,
     use_precision_aware_optimizer: bool = False,
@@ -164,9 +166,12 @@ def get_model(
     correct_amax_history_if_needed(model)
 
     if wrap_with_ddp:
-        from megatron.core.distributed import DistributedDataParallelConfig
-
-        if use_torch_fsdp2:
+        from megatron.core.distributed import DistributedDataParallelConfig, FullyShardedDataParallel
+        if use_megatron_fsdp:
+            DP = FullyShardedDataParallel
+            if use_torch_fsdp2:
+                raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
+        elif use_torch_fsdp2:
             try:
                 from megatron.core.distributed import (
                     TorchFullyShardedDataParallel as torch_FSDP,
@@ -193,7 +198,7 @@ def get_model(
         # default
         kwargs = {"grad_reduce_in_fp32": True, "use_distributed_optimizer": True}
         if ddp_config is not None:
-            kwargs.update(ddp_config)
+            kwargs.update(ddp_config) # 这里可能报错，因为这里ddep_config 是个字典
         if optimizer_config is not None:
             import warnings
 
@@ -205,9 +210,9 @@ def get_model(
         if use_custom_fsdp and use_precision_aware_optimizer:
             kwargs["preserve_fp32_weights"] = False
 
-        ddp_config = DistributedDataParallelConfig(**kwargs)
+        ddp_config = DistributedDataParallelConfig(**kwargs) # 它在这里才实例化
 
-        if not use_torch_fsdp2:
+        if not use_torch_fsdp2 and not use_megatron_fsdp:
             # In the custom FSDP and DDP use path, we need to initialize the bucket size.
 
             # If bucket_size is not provided as an input, use sane default.
@@ -273,7 +278,11 @@ try:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, torch_FSDP, custom_FSDP, Float16Module)
 except ImportError:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, custom_FSDP, Float16Module)
-
+try:
+    from megatron.core.distributed.fsdp.src.megatron_fsdp.megatron_fsdp import MegatronFSDP
+    ALL_MODULE_WRAPPER_CLASSNAMES = ALL_MODULE_WRAPPER_CLASSNAMES + (MegatronFSDP,)
+except ImportError:
+    pass
 
 def unwrap_model(model, module_instances=ALL_MODULE_WRAPPER_CLASSNAMES):
     return_list = True
@@ -782,3 +791,105 @@ def postprocess_packed_seqs(
         output_new[i, attention_mask[i]] = tmp[:s_len]
 
     return output_new
+
+
+def get_module_and_param_from_name(
+    models: MegatronModule | List[MegatronModule],
+    param_name: str,
+    vp_stage: Optional[int] = None,
+) -> Tuple[torch.nn.Module, torch.Tensor] | Tuple[torch.nn.Module, torch.Tensor, Tuple]:
+    """
+    Get parameter from specific VP stage, ensuring that parameter
+    attributes are preserved. Supports both absolute and relative parameter names.
+
+    Args:
+        models: List of Megatron model instances or a submodule
+        param_name: Dot-separated parameter name (can be absolute or relative to models)
+        vp_stage: Virtual pipeline stage index (None for single stage)
+
+    Returns:
+        Tuple of (module, parameter) where module owns the parameter
+
+    Raises:
+        ValueError: If vp_stage is out of range or parameter doesn't exist
+
+    Examples:
+        Basic usage with full model:
+        >>> module, param = get_module_and_param_from_name(
+        ...     models=full_model,
+        ...     param_name="transformer.layers.0.attention.query.weight"
+        ... )
+
+        Usage with model list and VP stage:
+        >>> module, param = get_module_and_param_from_name(
+        ...     models=[model1, model2, model3],
+        ...     param_name="layers.0.mlp.dense.bias",
+        ...     vp_stage=1
+        ... )
+
+        Usage with submodule and relative path:
+        >>> linear_module = model.transformer.layers[0].mlp.dense
+        >>> module, param = get_module_and_param_from_name(
+        ...     models=linear_module,
+        ...     param_name="weight"
+        ... )
+
+        Usage with submodule and absolute path (automatic suffix matching):
+        >>> linear_module = model.transformer.layers[0].mlp.dense
+        >>> module, param = get_module_and_param_from_name(
+        ...     models=linear_module,
+        ...     param_name="transformer.layers.0.mlp.dense.weight"
+        ... )
+        # Automatically matches "weight" suffix and returns the parameter
+
+        Edge case with partial path matching:
+        >>> attention_module = model.transformer.layers[0].attention
+        >>> module, param = get_module_and_param_from_name(
+        ...     models=attention_module,
+        ...     param_name="layers.0.attention.query.weight"
+        ... )
+        # Matches "query.weight" suffix within the attention module
+    """
+
+    if isinstance(models, list):
+        if vp_stage is None:
+            model = models[0]
+        else:
+            if vp_stage >= len(models):
+                raise ValueError(f"VP stage {vp_stage} out of range (max: {len(models) - 1})")
+            model = models[vp_stage]
+    else:
+        model = models
+
+    module = unwrap_model(model)
+    splitted_name = param_name.split(".")
+
+    # Try to find the parameter using the given parts
+    def try_get_param(parts):
+        param = module
+        temp_module = module
+
+        for i, part in enumerate(parts):
+            if not hasattr(param, part):
+                return None
+            param = getattr(param, part)
+            if i < len(parts) - 1:
+                temp_module = getattr(temp_module, part)
+
+        return temp_module, param
+
+    # First try the full parameter name (current behavior)
+    result = try_get_param(splitted_name)
+    if result is not None:
+        return result
+
+    # If full name doesn't work, try suffixes of the parameter name
+    # This handles cases where models is a submodule but param_name is absolute
+    for start_idx in range(1, len(splitted_name)):
+        suffix_parts = splitted_name[start_idx:]
+        result = try_get_param(suffix_parts)
+        if result is not None:
+            return result
+
+    # If no approach works, raise an error
+    raise ValueError(f"Parameter '{param_name}' not found in model at VP stage {vp_stage}")

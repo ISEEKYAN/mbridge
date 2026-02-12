@@ -7,11 +7,12 @@ from collections import defaultdict
 
 import torch
 from megatron.core import parallel_state as mpu
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
 from megatron.core.models.gpt.gpt_model import ModelType
 from transformers import AutoConfig
 from transformers.utils.hub import cached_file
 from safetensors import safe_open
-
+from torch.distributed._tensor import DTensor
 from .parallel_states import ParallelStates
 from .safetensor_io import SafeTensorIO
 from .util import (
@@ -19,6 +20,7 @@ from .util import (
     broadcast_str_from_megatron_pp,
     get_model,
     unwrap_model,
+    get_module_and_param_from_name,
 )
 
 
@@ -73,6 +75,7 @@ class Bridge(ABC):
         fp16: bool = False,
         bf16: bool = True,
         encoder_pipeline_model_parallel_size: int = 0,
+        use_megatron_fsdp: bool = False,
         use_torch_fsdp2: bool = False,
         use_custom_fsdp: bool = False,
         use_precision_aware_optimizer: bool = False,
@@ -131,6 +134,7 @@ class Bridge(ABC):
             bf16=bf16,
             virtual_pipeline_model_parallel_size=self.mpu.vpp_size,
             encoder_pipeline_model_parallel_size=encoder_pipeline_model_parallel_size,
+            use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
             use_custom_fsdp=use_custom_fsdp,
             use_precision_aware_optimizer=use_precision_aware_optimizer,
@@ -198,8 +202,10 @@ class Bridge(ABC):
                 )
 
             # import mcore weights
+            use_megatron_fsdp = isinstance(model, FullyShardedDataParallel)
+            unwrapped_model = unwrap_model(model)
             for local_name, hf_names in local_to_hf_map.items():
-                param = model.state_dict()[local_name]
+                param = unwrapped_model.state_dict()[local_name]
                 # hf format to mcore format
                 if set(to_load_from_disk) & set(hf_names):
                     if not memory_efficient:
@@ -218,7 +224,7 @@ class Bridge(ABC):
                         # skip lm_head.weight when the model is a value model
                         continue
 
-                param_to_load = torch.empty_like(param)
+                param_to_load = torch.empty(param.shape, device=param.device, dtype=param.dtype)
                 if ".mlp.experts.linear_fc" in local_name:
                     # split mcore weights across etp
                     if self.mpu.etp_rank == 0:
@@ -258,7 +264,14 @@ class Bridge(ABC):
                         group=self.mpu.tp_group,
                     )
                 # load
+                if isinstance(param, DTensor):
+                    _, local_weights = get_module_and_param_from_name(unwrapped_model, local_name)
+                    sliced_converted_weights = param_to_load.reshape(-1)[local_weights.megatron_fsdp_slice]
+                    param._local_tensor.reshape(-1).copy_(sliced_converted_weights)
+                    continue
                 param.copy_(param_to_load)
+            if use_megatron_fsdp:
+                model.module.install_optimized_model_weights()
 
     def _save_weights_fast(
         self,
@@ -527,7 +540,16 @@ class Bridge(ABC):
                 name, param = None, None
 
             name = broadcast_str_from_megatron_pp(name)
-            broad_pp_param = broadcast_from_megatron_pp(param)
+            broad_pp_param = None
+            if isinstance(param, DTensor):
+                from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
+                    gather_uneven_dtensor_to_full_tensor,
+                )
+                _, local_weights = get_module_and_param_from_name(models, iter_name, iter_vpp_rank)
+                full_tensor = gather_uneven_dtensor_to_full_tensor(local_weights)            
+                broad_pp_param = full_tensor.to_local()                 
+            else:
+                broad_pp_param = broadcast_from_megatron_pp(param)
 
             # EP
             if ".mlp.experts.linear_fc" in name and self.mpu.ep_size >= 1:
