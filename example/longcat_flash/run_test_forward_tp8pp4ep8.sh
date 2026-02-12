@@ -41,11 +41,12 @@ export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 WORKDIR=${WORKDIR:-"/workdir"}
 
-export MEGATRON_PATH=${MEGATRON_PATH:-"${WORKDIR}/megatron-lm"}
-export PYTHONPATH=${MEGATRON_PATH}:${WORKDIR}/mbridge:${WORKDIR}:${PYTHONPATH:-}
+#export MEGATRON_PATH=${MEGATRON_PATH:-"${WORKDIR}/megatron-lm"}
+#export PYTHONPATH=${MEGATRON_PATH}:${WORKDIR}/mbridge:${WORKDIR}:${PYTHONPATH:-}
+export PYTHONPATH=${WORKDIR}/mbridge:${WORKDIR}:${PYTHONPATH:-}
 
 # ==================== Model Path ====================
-MODEL_PATH=${MODEL_PATH:-"/mnt/dolphinfs/ssd_pool/docker/user/hadoop-nlp-sh02/RPG/yanhaonan/models/longcat-flash"}
+MODEL_PATH=${MODEL_PATH:-"/mnt/dolphinfs/ssd_pool/docker/user/hadoop-nlp-sh02/RPG/yanhaonan/models/LongCatFlashChat"}
 
 # ==================== NCCL/IB Configuration ====================
 SCRIPTS_DIR="/workdir/scripts"
@@ -156,6 +157,9 @@ if [ "${NODE_RANK}" -eq 0 ]; then
     echo "Generating HF reference output on rank 0 ..."
     python3 mbridge/example/longcat_flash/hf_fwd.py \
         --model_path ${MODEL_PATH} || echo "HF forward skipped (may need more memory)"
+else
+    echo "Node ${NODE_RANK} waiting for Rank 0 to initialize..."
+    sleep 900
 fi
 
 # ==================== Step 2: Launch Megatron Forward ====================
@@ -167,6 +171,7 @@ torchrun \
     --master_port=${MASTER_PORT} \
     --rdzv_backend=c10d \
     --rdzv_endpoint=${MASTER_ADDR}:${MASTER_PORT} \
+    --rdzv_conf timeout=1800,read_timeout=900 \
     mbridge/example/longcat_flash/load_model_and_forward.py \
     --model_path ${MODEL_PATH} \
     --tp 8 --pp 4 --ep 8

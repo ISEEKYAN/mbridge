@@ -139,7 +139,7 @@ if [ -z "${MASTER_ADDR:-}" ] || [ "${MASTER_ADDR}" = "localhost" ]; then
 fi
 
 echo "=========================================="
-echo "MBridge Export Test Configuration:"
+echo "MBridge Launch Test Configuration:"
 echo "  Total Nodes: ${NNODES}"
 echo "  GPUs per Node: ${N_GPUS_PER_NODE}"
 echo "  Total GPUs: $((NNODES * N_GPUS_PER_NODE))"
@@ -159,10 +159,9 @@ torchrun \
     --master_port=${MASTER_PORT} \
     --rdzv_backend=c10d \
     --rdzv_endpoint=${MASTER_ADDR}:${MASTER_PORT} \
-    mbridge/example/longcat_flash/load_model_and_export.py \
+    mbridge/example/longcat_flash/launch_with_ray.py \
     --model_path ${MODEL_PATH} \
-    --save_path /mnt/dolphinfs/ssd_pool/docker/user/hadoop-nlp-sh02/RPG/yanhaonan/ckpts/agent/tmp \
-    --tp 8 --pp 4 --ep 8 --check_export
+    --tp 8 --pp 4 --ep 8
 
 echo ""
 echo "=========================================="

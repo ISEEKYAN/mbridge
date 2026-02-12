@@ -92,7 +92,7 @@ def get_args():
     )
     parser.add_argument("--ep", type=int, default=8, help="Expert model parallel size")
     parser.add_argument(
-        "--etp", type=int, default=None, help="Expert tensor parallel size"
+        "--etp", type=int, default=1, help="Expert tensor parallel size"
     )
     parser.add_argument(
         "--check_export", action="store_true", help="Also check weight export"
@@ -160,7 +160,7 @@ def main():
     print(f"rank{rank}: start loading model ...")
 
     # Load megatron model
-    bridge = AutoBridge.from_pretrained(hf_model_path)
+    bridge = AutoBridge.from_pretrained(hf_model_path, trust_remote_code=True)
     bridge.config.sequence_parallel = True
 
     # Configure uneven pipeline stages if specified

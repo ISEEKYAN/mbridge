@@ -59,7 +59,7 @@ def get_args():
     )
     parser.add_argument("--ep", type=int, default=8, help="Expert model parallel size")
     parser.add_argument(
-        "--etp", type=int, default=None, help="Expert tensor parallel size"
+        "--etp", type=int, default=1, help="Expert tensor parallel size"
     )
     parser.add_argument(
         "--max_new_tokens", type=int, default=100, help="Maximum new tokens to generate"
@@ -142,7 +142,7 @@ def main():
     print(f"rank{rank}: start loading model ...")
 
     # Load megatron model
-    bridge = AutoBridge.from_pretrained(hf_model_path)
+    bridge = AutoBridge.from_pretrained(hf_model_path, trust_remote_code=True)
     bridge.config.sequence_parallel = True
 
     # Configure uneven pipeline stages
@@ -162,10 +162,10 @@ def main():
         )
 
     model = bridge.get_model(
-        post_model_creation_callbacks=[freeze_moe_router], wrap_with_ddp=False
+        post_model_creation_callbacks=[freeze_moe_router], wrap_with_ddp=True
     )
     assert len(model) == 1
-    bridge.load_weights(model, hf_model_path, memory_efficient=True)
+    bridge.load_weights(model, hf_model_path)
     print(f"rank{rank}: end load weight, start inference ...")
 
     # Get EOS token id

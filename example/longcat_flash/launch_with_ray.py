@@ -194,11 +194,11 @@ def main():
     parser.add_argument("--pp", type=int, default=4, help="Pipeline parallel size")
     parser.add_argument("--cp", type=int, default=1, help="Context parallel size")
     parser.add_argument(
-        "--vpp", type=int, default=1, help="Virtual pipeline parallel size"
+        "--vpp", type=int, default=None, help="Virtual pipeline parallel size"
     )
     parser.add_argument("--ep", type=int, default=8, help="Expert parallel size")
     parser.add_argument(
-        "--etp", type=int, default=None, help="Expert tensor parallel size"
+        "--etp", type=int, default=1, help="Expert tensor parallel size"
     )
     parser.add_argument(
         "--num_layers_in_first_pipeline_stage",

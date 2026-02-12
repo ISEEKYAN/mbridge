@@ -104,6 +104,9 @@ def main():
         "--save_path", type=str, default=None, help="Path to save exported weights"
     )
     parser.add_argument(
+        "--check_export", action="store_true", help="Also check weight export"
+    )
+    parser.add_argument(
         "--num_layers_in_first_pipeline_stage",
         type=int,
         default=None,
@@ -156,6 +159,25 @@ def main():
     print(f"rank{rank}: start loading weights from {hf_model_path}")
     bridge.load_weights(model, hf_model_path)
     print(f"rank{rank}: end load weight")
+
+    # Optionally check export
+    if args.check_export:
+        print(f"rank{rank}: checking weight export ...")
+        keys = bridge.safetensor_io.load_hf_weight_names()
+        loaded_keys = set()
+        for k, v in bridge.export_weights(model):
+            gt = bridge.safetensor_io.load_one_hf_weight(k).cuda()
+            assert v.shape == gt.shape, f"mismatch of {k}"
+            if not torch.allclose(v.float(), gt.float()):
+                diff = (v - gt).abs()
+                print(
+                    f"mismatch of {k}: max_diff={diff.max().item()}, "
+                    f"mean_diff={diff.mean().item()}"
+                )
+            loaded_keys.add(k)
+        missing_keys = set(keys) - loaded_keys
+        if rank == 0:
+            print(f"missing keys: {sorted(missing_keys)}")
 
     # Export weights and compare values
     parameter_list = []

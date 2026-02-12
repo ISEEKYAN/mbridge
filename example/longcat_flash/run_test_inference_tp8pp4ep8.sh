@@ -41,11 +41,12 @@ export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 WORKDIR=${WORKDIR:-"/workdir"}
 
-export MEGATRON_PATH=${MEGATRON_PATH:-"${WORKDIR}/megatron-lm"}
-export PYTHONPATH=${MEGATRON_PATH}:${WORKDIR}/mbridge:${WORKDIR}:${PYTHONPATH:-}
+#export MEGATRON_PATH=${MEGATRON_PATH:-"${WORKDIR}/megatron-lm"}
+#export PYTHONPATH=${MEGATRON_PATH}:${WORKDIR}/mbridge:${WORKDIR}:${PYTHONPATH:-}
+export PYTHONPATH=${WORKDIR}/mbridge:${WORKDIR}:${PYTHONPATH:-}
 
 # ==================== Model Path ====================
-MODEL_PATH=${MODEL_PATH:-"/mnt/dolphinfs/ssd_pool/docker/user/hadoop-nlp-sh02/RPG/yanhaonan/models/longcat-flash"}
+MODEL_PATH=${MODEL_PATH:-"/mnt/dolphinfs/ssd_pool/docker/user/hadoop-nlp-sh02/RPG/yanhaonan/models/LongCatFlashChat"}
 
 # ==================== NCCL/IB Configuration ====================
 SCRIPTS_DIR="/workdir/scripts"
