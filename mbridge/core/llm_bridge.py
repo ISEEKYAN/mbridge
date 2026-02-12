@@ -117,11 +117,18 @@ class LLMBridge(Bridge):
         Returns:
             dict: A dictionary of arguments for GPTModel initialization
         """
+        if hasattr(self.hf_config, 'rope_parameters') and 'rope_theta' in self.hf_config.rope_parameters:
+            # for transformer >= 5.0.0
+            rotary_base = self.hf_config.rope_parameters['rope_theta']
+        else:
+            # for transformer ~= 4.57.3
+            rotary_base = self.hf_config.rope_theta
+
         return dict(
             vocab_size=self.hf_config.vocab_size,
             max_sequence_length=self.hf_config.max_position_embeddings,
             position_embedding_type="rope",
-            rotary_base=self.hf_config.rope_theta,
+            rotary_base=rotary_base,
         )
 
     def _get_transformer_layer_spec(self, vp_stage: Optional[int] = None):

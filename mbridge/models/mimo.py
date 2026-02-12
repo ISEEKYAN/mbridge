@@ -1,7 +1,8 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+from typing import Callable, Optional
 
-
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
+import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec, get_gpt_decoder_block_spec
 
 from ..core import register_model
 from .qwen2 import Qwen2Bridge
@@ -27,7 +28,7 @@ class MimoBridge(Qwen2Bridge):
         mtp_args = {}
         if "num_nextn_predict_layers" in hf_config:
             mtp_args["mtp_num_layers"] = hf_config.num_nextn_predict_layers
-            mtp_args["mtp_loss_scaling_factor"] = 0.1
+            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get("mtp_loss_scaling_factor", 0.1)
 
         return self._build_base_config(
             add_qkv_bias=True,
@@ -41,10 +42,11 @@ class MimoBridge(Qwen2Bridge):
 
         # Add MTP block spec if MTP layers are present
         if self.config.mtp_num_layers is not None:
-            transformer_layer_spec = self.config
-            mtp_block_spec = get_gpt_mtp_block_spec(
-                self.config, transformer_layer_spec, use_transformer_engine=True
-            )
+            transformer_layer_spec = get_gpt_decoder_block_spec(config=self.config,
+                                                                use_transformer_engine=True)
+            mtp_block_spec = get_gpt_mtp_block_spec(self.config,
+                                                    transformer_layer_spec.layer_specs[-1],
+                                                    True)
             ret["mtp_block_spec"] = mtp_block_spec
 
         return ret
@@ -109,3 +111,34 @@ class MimoBridge(Qwen2Bridge):
         else:
             raise NotImplementedError(f"Unsupported MTP parameter name: {name}")
         return convert_names
+
+
+    # The default MTP input concatenation order in Megatron is [target_token_embed, hidden_state],
+    # which is applicable to DeepSeek and GLM models;
+    # The MTP input format of the Mimo-7B-RL model is [hidden_state, target_token_embed],
+    # with the order completely reversed;
+    # It is necessary to swap the parameter values of the first half and the second half of eh_proj here.
+    #
+    # mimo mtp sglang code:
+    #   https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/models/mimo_mtp.py#L61-L69
+    # mimo mtp vllm code:
+    #   https://github.com/XiaomiMiMo/vllm/blob/feat_mimo_mtp_stable_073/vllm/model_executor/models/mimo_mtp.py#L84-L85
+    # megatron code:
+    #   https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/multi_token_prediction.py#L636
+
+    def _weight_to_mcore_format(self, mcore_weights_name: str, hf_weights: list[torch.Tensor]) -> torch.Tensor:
+        """Swap halves of eh_proj weights before handing off to Megatron-Core."""
+        weight = super()._weight_to_mcore_format(mcore_weights_name, hf_weights)
+        if mcore_weights_name.endswith("eh_proj.weight"):
+            first_half, second_half = weight.chunk(2, dim=1)
+            weight = torch.cat([second_half, first_half], dim=1)
+        return weight
+
+    def _weight_to_hf_format(
+        self, mcore_weights_name: str, mcore_weights: torch.Tensor
+    ) -> tuple[list[str], list[torch.Tensor]]:
+        """Swap halves back when exporting eh_proj weights to HuggingFace format."""
+        if mcore_weights_name.endswith("eh_proj.weight"):
+            first_half, second_half = mcore_weights.chunk(2, dim=1)
+            mcore_weights = torch.cat([second_half, first_half], dim=1)
+        return super()._weight_to_hf_format(mcore_weights_name, mcore_weights)
