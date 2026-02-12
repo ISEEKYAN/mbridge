@@ -1,0 +1,364 @@
+import logging
+from typing import Optional
+
+import torch
+from transformers import AutoConfig
+
+from megatron.core.inference.contexts import BaseInferenceContext
+from megatron.core import InferenceParams, mpu, tensor_parallel
+from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer import MegatronModule
+from megatron.core.transformer.spec_utils import ModuleSpec
+
+from mbridge.core.util import (
+    AllGatherVisionEmbeddings,
+    collapse_thw,
+    get_vision_cp_data,
+    preprocess_packed_seqs,
+    qwen3vl_cp_split,
+    split_data_cp_rank,
+)
+from mbridge.models.qwen3_5.transformer_config import Qwen3p5VLTransformerConfig
+from mbridge.models.qwen3_5.utils import reorganize_inputs
+from mbridge.models.qwen3_vl.rope_utils import get_rope_index, Qwen3VLMultimodalRotaryEmbedding
+from mbridge.models.qwen3_5.attention import Qwen3p5VLSelfAttention, SelfAttention
+
+
+class Qwen3p5GPTModel(GPTModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # rebuild rope
+        self.rotary_pos_emb = Qwen3VLMultimodalRotaryEmbedding(
+            kv_channels=self.config.kv_channels,
+            rotary_percent=kwargs["rotary_percent"],
+            rotary_interleaved=self.config.rotary_interleaved,
+            seq_len_interpolation_factor=kwargs.get("seq_len_interpolation_factor", None),
+            rotary_base=kwargs.get("rotary_base", 10000),
+        )
+
+
+class Qwen3p5VLModel(MegatronModule):
+    """Qwen3p5VLModel model
+
+    """
+    def __init__(
+        self,
+        language_transformer_config: Qwen3p5VLTransformerConfig,
+        language_transformer_layer_spec: ModuleSpec,
+        language_mtp_block_spec: ModuleSpec,
+        language_vocab_size: int,
+        language_max_sequence_length: int,
+        hf_config: AutoConfig,
+        hf_vision_cls: type,
+        parallel_output: bool = True,
+        language_rotary_percent: float = 1.0,
+        pre_process: bool = True,
+        post_process: bool = True,
+        add_encoder: bool = True,
+        add_decoder: bool = True,
+        language_rotary_base: int = 10000,
+        position_embedding_type: str = "mrope",
+        fp16_lm_cross_entropy: bool = False,
+        language_share_embeddings_and_output_weights: bool = False,
+        image_token_id: int = 151655,
+        video_token_id: int = 151656,
+        vision_start_token_id: int = 151652,
+        rope_scaling: bool = False
+    ) -> None:
+        super().__init__(config=language_transformer_config)
+
+        for layer_spec in language_transformer_layer_spec.layer_specs:
+            # only replace SelfAttention
+            if isinstance(layer_spec.submodules.self_attention.module, SelfAttention):
+                layer_spec.submodules.self_attention.module = Qwen3p5VLSelfAttention
+
+        self.pre_process = pre_process
+        self.post_process = post_process
+        self.add_encoder = add_encoder
+        self.add_decoder = add_decoder
+
+        self.hf_config = hf_config
+        self.encoder_hidden_state = None
+        self.vision_model = None
+        self.language_model = None
+        self.image_token_id = image_token_id
+        self.video_token_id = video_token_id
+        self.vision_start_token_id = vision_start_token_id
+        self.spatial_merge_size = self.hf_config.vision_config.spatial_merge_size
+        self.square_merge_size = self.spatial_merge_size**2
+
+        if self.pre_process:
+            self.vision_model = hf_vision_cls._from_config(hf_config.vision_config)
+            self._cast_rotary_emb_to_fp32(self.vision_model)
+            self._mark_vision_params_sequence_parallel(self.vision_model)
+
+        self.language_model = Qwen3p5GPTModel(
+            config=language_transformer_config,
+            transformer_layer_spec=language_transformer_layer_spec,
+            vocab_size=language_vocab_size,
+            max_sequence_length=language_max_sequence_length,
+            pre_process=pre_process,
+            post_process=post_process,
+            fp16_lm_cross_entropy=fp16_lm_cross_entropy,
+            parallel_output=parallel_output,
+            share_embeddings_and_output_weights=language_share_embeddings_and_output_weights,
+            position_embedding_type=position_embedding_type,
+            rotary_percent=language_rotary_percent,
+            rotary_base=language_rotary_base,
+            rope_scaling=rope_scaling,
+            mtp_block_spec=language_mtp_block_spec,
+            scatter_embedding_sequence_parallel=False,
+        )
+
+    @staticmethod
+    def _cast_rotary_emb_to_fp32(module: torch.nn.Module):
+        """Force all RotaryEmbedding inv_freq buffers to stay at original float32 precision.
+        """
+        for submodule in module.modules():
+            if hasattr(submodule, "inv_freq") and submodule.inv_freq is not None:
+                # Save the original float32 inv_freq (this runs BEFORE Float16Module)
+                submodule._inv_freq_fp32_original = submodule.inv_freq.detach().clone().float()
+
+                def _hook(mod, args):
+                    if hasattr(mod, "_inv_freq_fp32_original"):
+                        # Restore inv_freq from the saved fp32_copied
+                        mod.inv_freq = mod._inv_freq_fp32_original.to(
+                            device=mod.inv_freq.device
+                        )
+                submodule.register_forward_pre_hook(_hook)
+
+    def _mark_vision_params_sequence_parallel(self, module: torch.nn.Module):
+        """Mark all vision model parameters with sequence_parallel=True.
+        """
+        for param in module.parameters():
+            setattr(param, "sequence_parallel", self.config.sequence_parallel)
+
+    @property
+    def share_embeddings_and_output_weights(self):
+        return self.language_model.share_embeddings_and_output_weights
+
+    @property
+    def decoder(self):
+        return self.language_model.decoder
+
+    def shared_embedding_or_output_weight(self):
+        return self.language_model.shared_embedding_or_output_weight()
+
+    def set_input_tensor(self, input_tensor) -> None:
+        if not isinstance(input_tensor, list):
+            input_tensor = [input_tensor]
+        assert (
+            len(input_tensor) == 1
+        ), "input_tensor should only be length 1"
+
+        self.language_model.set_input_tensor(input_tensor[0])
+
+    def freeze(
+        self,
+        freeze_language_model: bool,
+        freeze_vision_model: bool,
+        freeze_vision_projection: bool,
+    ):
+        """Freeze model modules.
+
+        Make specific modules non-trainable by setting requires_grad to False for the module's parameters.
+
+        Args:
+            freeze_language_model (bool): Freeze the language model module.
+            freeze_vision_model (bool): Freeze the vision model module.
+            freeze_vision_projection (bool): Freeze the vision projection module.
+        """
+        modules = []
+        if freeze_language_model and self.language_model is not None:
+            modules.append(self.language_model)
+        if freeze_vision_model and self.vision_model is not None:
+            modules.append(self.vision_model)
+        if freeze_vision_projection and self.vision_model is not None:
+            modules.append(self.vision_model.merger)
+
+        for module in modules:
+            for param in module.parameters():
+                param.requires_grad = False
+
+        if freeze_vision_model and not freeze_vision_projection:
+            if self.vision_model is not None:
+                for param in self.vision_model.merger.parameters():
+                    param.requires_grad = True
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        position_ids: torch.Tensor = None,
+        attention_mask: torch.Tensor = None,
+        labels: torch.Tensor = None,
+        inference_context: BaseInferenceContext = None,
+        packed_seq_params: PackedSeqParams = None,
+        extra_block_kwargs: dict = None,
+        runtime_gather_output: Optional[bool] = None,
+        inference_params: Optional[BaseInferenceContext] = None,
+        pixel_values: torch.Tensor = None,
+        pixel_values_videos: torch.Tensor = None,
+        image_grid_thw: torch.Tensor = None,
+        video_grid_thw: torch.Tensor = None,
+        # can set at dataset
+        image_input_mask: torch.Tensor = None,
+        video_input_mask: torch.Tensor = None,
+        cp_img_num: list[int] = None,
+        images_padded: list[bool] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        assert inference_context is None, "not support inference yet"
+
+        vision_grid_thw = None
+        vision_data = None
+        vision_mask = None
+        # TDOO: 似乎不好这样写了
+        cp_size = mpu.get_context_parallel_world_size()
+
+        if self.pre_process:
+            # can reorganize_inputs at dataset
+            vision_data, vision_grid_thw, vision_mask = reorganize_inputs(
+                input_ids=input_ids,
+                pixel_values=pixel_values,
+                pixel_values_videos=pixel_values_videos,
+                image_grid_thw=image_grid_thw,
+                video_grid_thw=video_grid_thw,
+                image_input_mask=image_input_mask,
+                video_input_mask=video_input_mask,
+                image_token_id=self.image_token_id,
+                video_token_id=self.video_token_id,
+                square_merge_size=self.square_merge_size,
+            )
+
+            vision_embeds = None
+            if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
+                if cp_size > 1:
+                    if cp_img_num is None:
+                        assert images_padded is None
+                        vision_data, vision_grid_thw, cp_img_num, images_padded = (
+                            qwen3vl_cp_split(
+                                cp_size,
+                                vision_data,
+                                vision_grid_thw,
+                            )
+                        )
+                    vision_data, vision_grid_thw, seqlen_on_cp_ranks = (
+                        get_vision_cp_data(
+                            vision_data,
+                            vision_grid_thw,
+                            self.square_merge_size,
+                            cp_img_num,
+                            images_padded,
+                        )
+                    )
+                    vision_grid_thw = collapse_thw(vision_grid_thw)
+                if vision_data.shape[0] > 0:
+                    vision_embeds = self.vision_model(
+                        hidden_states=vision_data,
+                        grid_thw=vision_grid_thw,
+                    ).pooler_output
+                    # Encodes images into continuous embeddings that can be forwarded to the language model.
+                    split_sizes = (vision_grid_thw.prod(-1) // self.spatial_merge_size**2).tolist()
+                    vision_embeds = torch.split(vision_embeds, split_sizes)
+                    vision_embeds = torch.cat(vision_embeds, dim=0)
+                else:
+                    vision_embeds = torch.zeros(
+                        (0, self.language_model.config.hidden_size),
+                        device=vision_data.device,
+                        dtype=torch.bfloat16,
+                    )
+                if cp_size > 1:
+                    vision_embeds = AllGatherVisionEmbeddings.apply(
+                        vision_embeds,
+                        seqlen_on_cp_ranks,
+                    )
+
+            combined_embeddings = self.language_model.embedding(
+                input_ids=input_ids,
+                position_ids=None,  # NOTE: disable
+            ).clone()  # [text_seq_len, b, h_language]
+
+            if vision_embeds is not None:
+                combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+                combined_embeddings[vision_mask] = vision_embeds
+                combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+
+            if (
+                combined_embeddings is not None
+                and cp_size > 1
+                and packed_seq_params is None
+            ):
+                combined_embeddings = split_data_cp_rank(
+                    combined_embeddings, cp_size, 0
+                )
+            if packed_seq_params is not None:
+                input_ids_thd, _ = preprocess_packed_seqs(
+                    input_ids, attention_mask, pre_process=True
+                )
+                vision_mask_thd = (input_ids_thd == self.image_token_id) \
+                                | (input_ids_thd == self.video_token_id)
+
+                vision_mask = vision_mask_thd
+                combined_embeddings_thd = (
+                    preprocess_packed_seqs(
+                        combined_embeddings.transpose(0, 1).contiguous(),
+                        attention_mask,
+                        pre_process=True,
+                    )[0]
+                    .transpose(0, 1)
+                    .contiguous()
+                )
+                combined_embeddings = combined_embeddings_thd
+
+            if self.config.sequence_parallel:
+                combined_embeddings = (
+                    tensor_parallel.scatter_to_sequence_parallel_region(
+                        combined_embeddings
+                    )
+                )
+                combined_embeddings = combined_embeddings.contiguous()
+
+        else:
+            combined_embeddings = None
+
+        if position_ids is None:
+            # BSHD
+            position_ids, _ = get_rope_index(
+                self.config.spatial_merge_size,
+                self.image_token_id,
+                self.video_token_id,
+                self.vision_start_token_id,
+                input_ids,
+                image_grid_thw=image_grid_thw,
+                video_grid_thw=video_grid_thw,
+                attention_mask=attention_mask,
+            )  #  [3*b*s]
+            if packed_seq_params is not None:
+                # convert position_ids to THD format
+                position_ids = (
+                    preprocess_packed_seqs(
+                        position_ids.permute(1, 2, 0), attention_mask, pre_process=True
+                    )[0]
+                    .permute(2, 0, 1)
+                    .contiguous()
+                )
+                attention_mask = None
+                self.language_model.rotary_pos_emb.is_thd_format = True
+
+        output = self.language_model(
+            input_ids=None,
+            position_ids=position_ids,  # None in encoder
+            attention_mask=attention_mask,  # None in encoder
+            decoder_input=combined_embeddings,  # only not None in the first decoder PP stage
+            labels=labels,  # only not None in the last decoder PP stage
+            inference_context=inference_context,
+            packed_seq_params=packed_seq_params,  # currently always None
+            runtime_gather_output=runtime_gather_output,
+            inference_params=inference_params,  # currently always None
+            **(extra_block_kwargs or {}),
+            **kwargs,
+        )
+
+        return output
