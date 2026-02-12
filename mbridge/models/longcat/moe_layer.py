@@ -6,12 +6,12 @@ from typing import Optional, Union
 
 import torch
 
-from mbridge.models.longcat_flash.zero_expert import zero_experts_compute_triton, reassign_invalid_expert_indices_triton
+from mbridge.models.longcat.zero_expert import zero_experts_compute_triton, reassign_invalid_expert_indices_triton
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.process_groups_config import ModelCommProcessGroups
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.transformer.moe.moe_utils import get_default_model_comm_pgs
-from megatron.core.transformer.moe.router import TopKRouter
+from mbridge.models.longcat.moe_utils import get_default_model_comm_pgs
+from mbridge.models.longcat.router import TopKRouter
 from megatron.core.transformer.moe.token_dispatcher import (
     MoEAllGatherTokenDispatcher,
     MoEAlltoAllTokenDispatcher,

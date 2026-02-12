@@ -1,11 +1,12 @@
 from typing import Optional
 
-from mbridge.models.longcat_flash.moe_layer import MoELayer, MoESubmodules
-from mbridge.models.longcat_flash.multi_latent_attention import MLASelfAttention
-from mbridge.models.longcat_flash.transformer_layer import ShortCutTransformerLayer
+from mbridge.models.longcat.moe_layer import MoELayer, MoESubmodules
+from mbridge.models.longcat.multi_latent_attention import MLASelfAttention
+from mbridge.models.longcat.transformer_layer import ShortCutTransformerLayer
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.models.backends import BackendSpecProvider
 from megatron.core.models.gpt.moe_module_specs import get_moe_module_spec_for_backend
+from megatron.core.transformer import TransformerLayer
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
@@ -16,8 +17,7 @@ from megatron.core.transformer.transformer_block import (
     get_num_layers_to_build,
 )
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.transformer.transformer_layer import (
-    TransformerLayer,
+from mbridge.models.longcat.transformer_layer import (
     TransformerLayerSubmodules,
     get_transformer_layer_offset,
 )

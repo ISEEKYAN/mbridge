@@ -931,6 +931,15 @@ class Bridge(ABC):
             assert len(hf_weights) == 2
             gate, up = hf_weights
             return torch.cat([gate, up], dim=0)
+        elif (
+            "self_attention." in mcore_weights_name
+            and "linear_qkv_down_proj." in mcore_weights_name
+        ):
+            # merge qkv latent
+            assert len(hf_weights) == 2
+            q_latent, kv_latent = hf_weights
+            qkv_latent = torch.cat([q_latent, kv_latent], dim=0).view(-1, self.hf_config.hidden_size).contiguous()
+            return qkv_latent
         raise NotImplementedError(f"Unsupported parameter name: {mcore_weights_name}")
 
     def _weight_merge_across_tp(

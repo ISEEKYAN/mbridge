@@ -4,12 +4,11 @@ from typing import Callable, Optional
 
 import torch
 
-from megatron.core.models.gpt.gpt_layer_specs import (
-    get_gpt_mtp_block_spec, get_shortcut_decoder_block_spec,
-)
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer import MLATransformerConfig
 from megatron.core.transformer.enums import AttnBackend
+from .longcat.gpt_layer_specs import get_shortcut_decoder_block_spec
+from .longcat.transformer_config import MLATransformerConfig
 
 from ..core import LLMBridge, register_model
 
@@ -88,6 +87,18 @@ class LongCatFlashBridge(LLMBridge):
             "model.layers.{layer_number}.self_attn.1.q_proj.weight"
         ],
 
+        # NOTE: linear_qkv_down_proj must appear BEFORE linear_kv_down_proj because
+        # "kv_down_proj" is a substring of "qkv_down_proj" and the mapping uses
+        # substring matching (keyword in name).
+        "self_attention.0.linear_qkv_down_proj.weight": [
+            "model.layers.{layer_number}.self_attn.0.q_a_proj.weight",
+            "model.layers.{layer_number}.self_attn.0.kv_a_proj_with_mqa.weight"
+        ],
+        "self_attention.1.linear_qkv_down_proj.weight": [
+            "model.layers.{layer_number}.self_attn.1.q_a_proj.weight",
+            "model.layers.{layer_number}.self_attn.1.kv_a_proj_with_mqa.weight"
+        ],
+
         "self_attention.0.linear_kv_down_proj.weight": [
             "model.layers.{layer_number}.self_attn.0.kv_a_proj_with_mqa.weight"
         ],
@@ -114,14 +125,6 @@ class LongCatFlashBridge(LLMBridge):
         ],
         "self_attention.1.linear_q_down_proj.weight": [
             "model.layers.{layer_number}.self_attn.1.q_a_proj.weight"
-        ],
-        "self_attention.0.linear_qkv_down_proj.weight": [
-            "model.layers.{layer_number}.self_attn.0.q_a_proj.weight",
-            "model.layers.{layer_number}.self_attn.0.kv_a_proj_with_mqa.weight"
-        ],
-        "self_attention.1.linear_qkv_down_proj.weight": [
-            "model.layers.{layer_number}.self_attn.1.q_a_proj.weight",
-            "model.layers.{layer_number}.self_attn.1.kv_a_proj_with_mqa.weight"
         ],
 
         "self_attention.0.linear_q_up_proj.weight": [
