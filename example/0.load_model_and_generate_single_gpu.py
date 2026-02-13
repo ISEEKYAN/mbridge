@@ -1,3 +1,5 @@
+# Use Megatron-FSDP: python example/0.load_model_and_generate_single_gpu.py --model_path /path/to/model --use_megatron_fsdp
+
 import argparse
 import os
 
@@ -25,12 +27,26 @@ def init_distributed():
     model_parallel_cuda_manual_seed(0)
 
 
-def load_model(hf_model_path, trust_remote_code=False):
+def load_model(hf_model_path, trust_remote_code=False, use_megatron_fsdp=False):
     """Load model"""
     bridge = AutoBridge.from_pretrained(
         hf_model_path, trust_remote_code=trust_remote_code
     )
-    model = bridge.get_model()
+    if use_megatron_fsdp:
+        ddp_config = {
+            "use_distributed_optimizer": True,
+            "check_for_nan_in_grad": True,
+            "use_megatron_fsdp": True,
+            "data_parallel_sharding_strategy": "optim_grads_params",
+        }
+        model = bridge.get_model(
+            wrap_with_ddp=True,
+            use_megatron_fsdp=True,
+            ddp_config=ddp_config,
+            data_parallel_random_init=False,
+        )
+    else:
+        model = bridge.get_model()
     bridge.load_weights(model, hf_model_path)
     return model
 
@@ -105,13 +121,18 @@ def main():
     parser.add_argument(
         "--trust_remote_code", action="store_true", help="Trust remote code"
     )
+    parser.add_argument(
+        "--use_megatron_fsdp",
+        action="store_true",
+        help="Use Megatron-FSDP",
+    )
     args = parser.parse_args()
 
     # Initialize distributed environment
     init_distributed()
 
     # Load model
-    model = load_model(args.model_path, args.trust_remote_code)
+    model = load_model(args.model_path, args.trust_remote_code, args.use_megatron_fsdp)
     print(f"Model loaded: {args.model_path}")
 
     # Generate text

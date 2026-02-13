@@ -7,7 +7,6 @@ from collections import defaultdict
 
 import torch
 from megatron.core import parallel_state as mpu
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
 from megatron.core.models.gpt.gpt_model import ModelType
 from transformers import AutoConfig
 from transformers.utils.hub import cached_file
@@ -62,6 +61,7 @@ class Bridge(ABC):
         self.make_vocab_size_divisible_by = make_vocab_size_divisible_by
         self.vocab_size = None
         self.padded_vocab_size = None
+        self.use_megatron_fsdp = False
 
         # Some moe models require multiple weights to be combined into one,
         # such as qwen3vl. It will cache it into this buff until all weights are collected.
@@ -123,6 +123,7 @@ class Bridge(ABC):
         #     and self.mpu.vpp_size > 1
         # ):
         #     raise ValueError("tie_word_embeddings is not supported for VPP > 1")
+        self.use_megatron_fsdp = use_megatron_fsdp
         model = get_model(
             self._model_provider(
                 post_model_creation_callbacks,
@@ -202,7 +203,6 @@ class Bridge(ABC):
                 )
 
             # import mcore weights
-            use_megatron_fsdp = isinstance(model, FullyShardedDataParallel)
             unwrapped_model = unwrap_model(model)
             for local_name, hf_names in local_to_hf_map.items():
                 param = unwrapped_model.state_dict()[local_name]
@@ -270,7 +270,7 @@ class Bridge(ABC):
                     param._local_tensor.reshape(-1).copy_(sliced_converted_weights)
                     continue
                 param.copy_(param_to_load)
-            if use_megatron_fsdp:
+            if self.use_megatron_fsdp:
                 model.module.install_optimized_model_weights()
 
     def _save_weights_fast(
@@ -596,7 +596,7 @@ class Bridge(ABC):
                     if len(converted_names) == 0:
                         continue
 
-                    yield from zip(converted_names, [p.detach() for p in converted_params])
+                    yield from zip(converted_names, [p.detach().to(self.dtype) for p in converted_params])
                 continue
 
             # TP
@@ -628,7 +628,7 @@ class Bridge(ABC):
             if len(converted_names) == 0:
                 continue
 
-            yield from zip(converted_names, [p.detach() for p in converted_params])
+            yield from zip(converted_names, [p.detach().to(self.dtype) for p in converted_params])
 
     def export_weights_without_gather(
         self, models: list[torch.nn.Module],

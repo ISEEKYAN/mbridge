@@ -101,6 +101,7 @@ def worker_fn(
     vpp: int,
     ep: int,
     etp: Optional[int],
+    use_megatron_fsdp: bool = False,
 ):
     """Worker that runs on a single GPU.
 
@@ -114,7 +115,22 @@ def worker_fn(
 
     # 2. Load model & weights
     bridge = AutoBridge.from_pretrained(hf_model_path)
-    model = bridge.get_model(post_model_creation_callbacks=[])
+    if use_megatron_fsdp:
+        ddp_config = {
+            "use_distributed_optimizer": True,
+            "check_for_nan_in_grad": True,
+            "use_megatron_fsdp": True,
+            "data_parallel_sharding_strategy": "optim_grads_params",
+        }
+        model = bridge.get_model(
+            wrap_with_ddp=True,
+            use_megatron_fsdp=True,
+            ddp_config=ddp_config,
+            data_parallel_random_init=False,
+            post_model_creation_callbacks=[],
+        )
+    else:
+        model = bridge.get_model(post_model_creation_callbacks=[])
 
     bridge.load_weights(model, hf_model_path)
 
@@ -175,6 +191,11 @@ def main():
     parser.add_argument(
         "--master_port", type=int, default=12355, help="NCCL master port"
     )
+    parser.add_argument(
+        "--use_megatron_fsdp",
+        action="store_true",
+        help="Use Megatron-FSDP",
+    )
     args = parser.parse_args()
 
     # Connect to the running Ray cluster
@@ -203,6 +224,7 @@ def main():
                     args.vpp,
                     args.ep,
                     args.etp,
+                    args.use_megatron_fsdp,
                 )
             )
             rank += 1

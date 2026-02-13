@@ -1,5 +1,6 @@
 # Example to use tp/pp/cp/vpp to test dense model
 # torchrun --nproc_per_node=8 2.load_model_and_export_multiple_gpus.py --model_path /path/to/model
+# Use Megatron-FSDP: torchrun --nproc_per_node=8 2.load_model_and_export_multiple_gpus.py --model_path /path/to/model --use_megatron_fsdp
 
 
 import argparse
@@ -126,6 +127,11 @@ def main():
     parser.add_argument(
         "--trust_remote_code", action="store_true", help="Trust remote code"
     )
+    parser.add_argument(
+        "--use_megatron_fsdp",
+        action="store_true",
+        help="Use Megatron-FSDP",
+    )
     args = parser.parse_args()
 
     # Initialize distributed environment
@@ -142,7 +148,22 @@ def main():
     hf_model_path = args.model_path
     print(f"rank{torch.distributed.get_rank()}: start loading model")
     bridge = AutoBridge.from_pretrained(hf_model_path)
-    model = bridge.get_model(post_model_creation_callbacks=[])
+    if args.use_megatron_fsdp:
+        ddp_config = {
+            "use_distributed_optimizer": True,
+            "check_for_nan_in_grad": True,
+            "use_megatron_fsdp": True,
+            "data_parallel_sharding_strategy": "optim_grads_params",
+        }
+        model = bridge.get_model(
+            wrap_with_ddp=True,
+            use_megatron_fsdp=True,
+            ddp_config=ddp_config,
+            data_parallel_random_init=False,
+            post_model_creation_callbacks=[],
+        )
+    else:
+        model = bridge.get_model(post_model_creation_callbacks=[])
     print(
         f"rank{torch.distributed.get_rank()}: start loading weights from {hf_model_path}"
     )

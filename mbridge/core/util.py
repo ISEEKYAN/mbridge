@@ -168,6 +168,7 @@ def get_model(
     if wrap_with_ddp:
         from megatron.core.distributed import DistributedDataParallelConfig, FullyShardedDataParallel
         if use_megatron_fsdp:
+            from megatron.core.distributed import FullyShardedDataParallel
             DP = FullyShardedDataParallel
             if use_torch_fsdp2:
                 raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
@@ -198,7 +199,7 @@ def get_model(
         # default
         kwargs = {"grad_reduce_in_fp32": True, "use_distributed_optimizer": True}
         if ddp_config is not None:
-            kwargs.update(ddp_config) # 这里可能报错，因为这里ddep_config 是个字典
+            kwargs.update(ddp_config)
         if optimizer_config is not None:
             import warnings
 
@@ -210,7 +211,7 @@ def get_model(
         if use_custom_fsdp and use_precision_aware_optimizer:
             kwargs["preserve_fp32_weights"] = False
 
-        ddp_config = DistributedDataParallelConfig(**kwargs) # 它在这里才实例化
+        ddp_config = DistributedDataParallelConfig(**kwargs)
 
         if not use_torch_fsdp2 and not use_megatron_fsdp:
             # In the custom FSDP and DDP use path, we need to initialize the bucket size.
@@ -799,56 +800,15 @@ def get_module_and_param_from_name(
     vp_stage: Optional[int] = None,
 ) -> Tuple[torch.nn.Module, torch.Tensor] | Tuple[torch.nn.Module, torch.Tensor, Tuple]:
     """
-    Get parameter from specific VP stage, ensuring that parameter
-    attributes are preserved. Supports both absolute and relative parameter names.
+    Get parameter from models in specific VP stage.
 
     Args:
         models: List of Megatron model instances or a submodule
-        param_name: Dot-separated parameter name (can be absolute or relative to models)
+        param_name: Local parameter name separated by dots, e.g., "transformer.layers.0.mlp.dense.bias"
         vp_stage: Virtual pipeline stage index (None for single stage)
 
     Returns:
         Tuple of (module, parameter) where module owns the parameter
-
-    Raises:
-        ValueError: If vp_stage is out of range or parameter doesn't exist
-
-    Examples:
-        Basic usage with full model:
-        >>> module, param = get_module_and_param_from_name(
-        ...     models=full_model,
-        ...     param_name="transformer.layers.0.attention.query.weight"
-        ... )
-
-        Usage with model list and VP stage:
-        >>> module, param = get_module_and_param_from_name(
-        ...     models=[model1, model2, model3],
-        ...     param_name="layers.0.mlp.dense.bias",
-        ...     vp_stage=1
-        ... )
-
-        Usage with submodule and relative path:
-        >>> linear_module = model.transformer.layers[0].mlp.dense
-        >>> module, param = get_module_and_param_from_name(
-        ...     models=linear_module,
-        ...     param_name="weight"
-        ... )
-
-        Usage with submodule and absolute path (automatic suffix matching):
-        >>> linear_module = model.transformer.layers[0].mlp.dense
-        >>> module, param = get_module_and_param_from_name(
-        ...     models=linear_module,
-        ...     param_name="transformer.layers.0.mlp.dense.weight"
-        ... )
-        # Automatically matches "weight" suffix and returns the parameter
-
-        Edge case with partial path matching:
-        >>> attention_module = model.transformer.layers[0].attention
-        >>> module, param = get_module_and_param_from_name(
-        ...     models=attention_module,
-        ...     param_name="layers.0.attention.query.weight"
-        ... )
-        # Matches "query.weight" suffix within the attention module
     """
 
     if isinstance(models, list):
@@ -865,21 +825,21 @@ def get_module_and_param_from_name(
     splitted_name = param_name.split(".")
 
     # Try to find the parameter using the given parts
-    def try_get_param(parts):
-        param = module
-        temp_module = module
+    def get_param(parts):
+        parent_module = module
+        previous_module = module
 
         for i, part in enumerate(parts):
-            if not hasattr(param, part):
+            if not hasattr(parent_module, part):
                 return None
-            param = getattr(param, part)
+            parent_module = getattr(parent_module, part)
             if i < len(parts) - 1:
-                temp_module = getattr(temp_module, part)
+                previous_module = getattr(previous_module, part)
 
-        return temp_module, param
+        return previous_module, parent_module
 
     # First try the full parameter name (current behavior)
-    result = try_get_param(splitted_name)
+    result = get_param(splitted_name)
     if result is not None:
         return result
 
@@ -887,7 +847,7 @@ def get_module_and_param_from_name(
     # This handles cases where models is a submodule but param_name is absolute
     for start_idx in range(1, len(splitted_name)):
         suffix_parts = splitted_name[start_idx:]
-        result = try_get_param(suffix_parts)
+        result = get_param(suffix_parts)
         if result is not None:
             return result
 
