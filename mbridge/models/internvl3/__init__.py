@@ -67,6 +67,12 @@ class InternVL3Bridge(VLMBridge):
             "language_model.model.layers.{layer_number}.self_attn.k_proj.bias",
             "language_model.model.layers.{layer_number}.self_attn.v_proj.bias",
         ],
+        "language_model.decoder.layers.{layer_number}.self_attention.q_layernorm.weight": [
+            "language_model.model.layers.{layer_number}.self_attn.q_norm.weight"
+        ],
+        "language_model.decoder.layers.{layer_number}.self_attention.k_layernorm.weight": [
+            "language_model.model.layers.{layer_number}.self_attn.k_norm.weight"
+        ],
         # vision
         "vision_model.decoder.layers.{layer_number}.self_attention.linear_qkv.weight": [
             "vision_model.encoder.layers.{layer_number}.attn.qkv.weight",
@@ -483,7 +489,8 @@ class InternVL3Bridge(VLMBridge):
         )
         assert (
             self.hf_config.llm_config.model_type == "qwen2"
-        ), f"only support the qwen2 llm, now is {self.hf_config.llm_config.model_type}"
+            or self.hf_config.llm_config.model_type == "qwen3"
+        ), f"only support the qwen2 and qwen3 llm, now is {self.hf_config.llm_config.model_type}"
         assert (
             self.hf_config.vision_config.num_hidden_layers == 24
         ), f"only support InternViT-300M-448px-V2_5"
@@ -560,8 +567,20 @@ class InternVL3Bridge(VLMBridge):
         Returns:
             TransformerConfig: Configuration object for LLaMA2 models
         """
-        return self._build_base_config(
-            text_config_key="llm_config",
-            add_qkv_bias=True,
-            qk_layernorm=False,
-        )
+        if self.hf_config.llm_config.model_type == "qwen2":
+            return self._build_base_config(
+                text_config_key="llm_config",
+                add_qkv_bias=True,
+                qk_layernorm=False,
+            )
+        elif self.hf_config.llm_config.model_type == "qwen3":
+            return self._build_base_config(
+                # qwen3
+                text_config_key="llm_config",
+                qk_layernorm=True,
+            )
+        else:
+            assert (
+                self.hf_config.llm_config.model_type == "qwen2"
+                or self.hf_config.llm_config.model_type == "qwen3"
+            ), f"only support the qwen2 and qwen3 llm, now is {self.hf_config.llm_config.model_type}"

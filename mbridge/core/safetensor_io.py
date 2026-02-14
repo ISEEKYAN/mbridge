@@ -7,6 +7,7 @@ from glob import glob
 from typing import Generator
 
 import torch
+from transformers import AutoConfig
 from safetensors import safe_open
 from safetensors.torch import save_file
 
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 class SafeTensorIO:
     def __init__(self, hf_dir: str):
         index_file = os.path.join(hf_dir, "model.safetensors.index.json")
+        config = AutoConfig.from_pretrained(hf_dir)
 
         self.index = {}
         self.origin_index = {}
@@ -24,7 +26,18 @@ class SafeTensorIO:
             with open(index_file, "r") as f:
                 origin_index = json.load(f)
                 self.index = origin_index["weight_map"]
+                if getattr(config, "tie_word_embeddings", False):
+                    if "lm_head.weight" in self.index.keys():
+                        self.index.pop("lm_head.weight")
                 self.origin_index = origin_index
+        else:
+            src_files = glob(os.path.join(hf_dir, "*.safetensors"))
+            if len(src_files) == 1:
+                for file in src_files:
+                    with safe_open(file, framework="pt", device="cpu") as f:
+                        filename = os.path.basename(file)
+                        for key in f.keys():
+                            self.index[key] = filename
 
         self.hf_dir = hf_dir
 
@@ -107,6 +120,12 @@ class SafeTensorIO:
                     ret.extend(f.keys())
             return ret
 
+    def get_keys_maps_to_save(self) -> dict:
+        filename_to_keys_map = defaultdict(set)
+        for key, filename in self.index.items():
+            filename_to_keys_map[filename].add(key)
+        return filename_to_keys_map
+
     def save_hf_weight(
         self,
         per_tensor_generator: Generator[tuple[str, torch.Tensor], None, None],
@@ -128,10 +147,7 @@ class SafeTensorIO:
             save_file(states, safetensor_file)
             return
 
-        filename_to_keys_map = defaultdict(set)
-        for key, filename in self.index.items():
-            filename_to_keys_map[filename].add(key)
-
+        filename_to_keys_map = self.get_keys_maps_to_save()
         states = {}
         saved_files = []
         collected_weights_count = 0
@@ -203,7 +219,7 @@ class SafeTensorIO:
             )
         return
 
-    def save_tmp_hf_weight(
+    def save_tmp_weight(
         self,
         hf_weight_name: str,
         tensor: torch.tensor,

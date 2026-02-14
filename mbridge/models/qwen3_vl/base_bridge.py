@@ -8,13 +8,13 @@ from megatron.core.extensions.transformer_engine import (
     TERowParallelLinear,
 )
 from megatron.core.models.vision.vit_layer_specs import (
-    get_vit_layer_with_transformer_engine_spec, )
+    get_vit_layer_with_transformer_engine_spec,
+)
 
-from mbridge.core.util import unwrap_model
 from mbridge.core import VLMBridge
+from mbridge.core.util import unwrap_model
 from mbridge.models.qwen3_vl.model import Qwen3VLModel
-from mbridge.models.qwen3_vl.transformer_config import (
-    get_vision_model_config, )
+from mbridge.models.qwen3_vl.transformer_config import get_vision_model_config
 from mbridge.models.qwen3_vl.utils import PatchMergerSubmodules
 
 

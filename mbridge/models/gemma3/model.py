@@ -260,6 +260,7 @@ class Gemma3Model(MegatronModule):
         packed_seq_params: Optional[PackedSeqParams] = None,
         *,
         inference_params: Optional[BaseInferenceContext] = None,
+        **kwargs,
     ) -> torch.Tensor:
         """Forward function of the LLaVA model.
 
@@ -371,6 +372,7 @@ class Gemma3Model(MegatronModule):
             inference_context=inference_context,
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=packed_seq_params,
+            **kwargs,
         )
 
         return output

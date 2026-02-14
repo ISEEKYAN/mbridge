@@ -84,6 +84,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
                 / dim
             )
         )
+        self.is_thd_format = False  # if is thd format, we do not need to split the rotary_pos_emb along CP
 
     def apply_interleaved_mrope(self, freqs, mrope_section):
         """Apply interleaved MRoPE to 3D rotary embeddings.
@@ -102,13 +103,14 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             freqs_t[..., idx] = freqs[dim, ..., idx]
         return freqs_t
 
-    def forward(self, position_ids: torch.Tensor, mrope_section: List[int]) -> Tensor:
+    def forward(self, position_ids: torch.Tensor, mrope_section: List[int], **kwargs) -> Tensor:
         """Forward pass of multimodal RoPE embedding.
 
         Args:
             position_ids (torch.Tensor): A postion_id tensor with shape [3, batchsize, seqlens]
             mrope_section (list[int]): Multimodal rope section is for channel dimension of temporal,
                 height and width in rope calculation.
+            **kwargs: Additional keyword arguments (ignored, for Megatron Core compatibility).
 
         Returns:
             Tensor: Embeddings after applying RoPE.
@@ -131,7 +133,10 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
 
         # shape (seq_length, bs, 1, 2 * dim)
         emb = emb[..., None, :].transpose(0, 1).contiguous()
-        if parallel_state.get_context_parallel_world_size() > 1:
+        if (
+            parallel_state.get_context_parallel_world_size() > 1
+            and not self.is_thd_format
+        ):
             # slice rotary_pos_emb along sequence dimension and select the parition of the current
             # CP rank
             emb = get_pos_emb_on_this_cp_rank(

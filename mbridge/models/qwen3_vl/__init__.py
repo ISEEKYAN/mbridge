@@ -4,7 +4,6 @@ from mbridge.core import register_model
 from mbridge.models.qwen3_vl.base_bridge import Qwen3VBaseBridge
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 
-
 _QWEN3VIT_DIRECT_MAPPING = {
     "vision_model.patch_embed.proj.weight": "model.visual.patch_embed.proj.weight",
     "vision_model.patch_embed.proj.bias": "model.visual.patch_embed.proj.bias",
@@ -178,7 +177,8 @@ class Qwen3VLBridge(Qwen3VBaseBridge):
             num_position_embeddings=self.hf_config.vision_config.num_position_embeddings,
             out_hidden_size=self.hf_config.vision_config.out_hidden_size,
             deepstack_visual_indexes=deepcopy(
-                self.hf_config.vision_config.deepstack_visual_indexes),
+                self.hf_config.vision_config.deepstack_visual_indexes
+            ),
         )
 
 
@@ -303,5 +303,6 @@ class Qwen3VLMoEBridge(Qwen3VBaseBridge):
             num_position_embeddings=self.hf_config.vision_config.num_position_embeddings,
             out_hidden_size=self.hf_config.vision_config.out_hidden_size,
             deepstack_visual_indexes=deepcopy(
-                self.hf_config.vision_config.deepstack_visual_indexes),
+                self.hf_config.vision_config.deepstack_visual_indexes
+            ),
         )
