@@ -256,14 +256,6 @@ def get_model(
                 ):
                     # print(f"maintain router bias dtype for {l.mlp.router}")
                     l.mlp.router._maintain_float32_expert_bias()
-        if hasattr(m, "decoder"):
-            for l in m.decoder.layers:
-                if (
-                    hasattr(l, "moe")
-                    and hasattr(l.moe, "router")
-                    and hasattr(l.moe.router, "_maintain_float32_expert_bias")
-                ):
-                    l.moe.router._maintain_float32_expert_bias()
     return model
 
 

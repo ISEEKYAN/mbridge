@@ -277,6 +277,21 @@ class LongCatFlashBridge(LLMBridge):
         )
         return transformer_layer_spec
 
+    def get_model(self, *args, **kwargs):
+        model = super().get_model(*args, **kwargs)
+        # Maintain router bias dtype for LongCat's moe structure (l.moe.router)
+        from mbridge.core.util import unwrap_model
+        for m in model:
+            m = unwrap_model(m)
+            if hasattr(m, "decoder"):
+                for l in m.decoder.layers:
+                    if (
+                        hasattr(l, "moe")
+                        and hasattr(l.moe, "router")
+                        and hasattr(l.moe.router, "_maintain_float32_expert_bias")
+                    ):
+                        l.moe.router._maintain_float32_expert_bias()
+        return model
 
     def _model_provider(
         self, post_model_creation_callbacks: list[Callable[[torch.nn.Module], None]]
@@ -354,6 +369,31 @@ class LongCatFlashBridge(LLMBridge):
             raise NotImplementedError(
                 f"Unsupported parameter name: {mcore_weights_name}"
             )
+
+    def _weight_to_mcore_format(
+        self, mcore_weights_name: str, hf_weights: list[torch.Tensor]
+    ) -> torch.Tensor:
+        # Merge q_latent and kv_latent for MLA (before super() to avoid dtype issues)
+        if (
+            "self_attention." in mcore_weights_name
+            and "linear_qkv_down_proj." in mcore_weights_name
+        ):
+            if hasattr(self, "dtype") and self.dtype is not None:
+                hf_weights = [
+                    w.to(self.dtype) if w.dtype != self.dtype else w for w in hf_weights
+                ]
+            assert len(hf_weights) == 2
+            q_latent, kv_latent = hf_weights
+            qkv_latent = torch.cat([q_latent, kv_latent], dim=0).view(-1, self.hf_config.hidden_size).contiguous()
+            return qkv_latent
+
+        # Keep router weights in original dtype (e.g. float32) to preserve precision
+        if "router" in mcore_weights_name:
+            if len(hf_weights) == 1:
+                return hf_weights[0]
+            raise NotImplementedError(f"Unsupported router parameter: {mcore_weights_name}")
+
+        return super()._weight_to_mcore_format(mcore_weights_name, hf_weights)
 
     def _weight_to_hf_format(
         self, mcore_weights_name: str, mcore_weights: torch.Tensor
