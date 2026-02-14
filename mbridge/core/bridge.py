@@ -165,9 +165,16 @@ class Bridge(ABC):
             models: List of model instances, supporting VPP (Virtual Pipeline Parallelism)
             weights_path: Path to the weights file or Hugging Face model identifier
         """
+        import time
+        from tqdm import tqdm
+
+        load_start = time.time()
+
         self.safetensor_io = self._get_safetensor_io(weights_path)
 
         for i, model in enumerate(models):
+            model_start = time.time()
+
             # map local weight names to global weight names
             local_to_global_map = self._weight_name_mapping_mcore_local_to_global(model)
             # map local weight names to huggingface weight names
@@ -176,10 +183,11 @@ class Bridge(ABC):
                 for k, v in local_to_global_map.items()
                 if "_extra_state" not in k
             }
+
             # only tp_rank0/etp_rank0 load from disk, others load from tp_rank0/etp_rank0
             to_load_from_disk = []
             for local_name, hf_names in local_to_hf_map.items():
-                if ".mlp.experts.linear_fc" in local_name:
+                if ".experts.linear_fc" in local_name:
                     if self.mpu.etp_rank == 0:
                         to_load_from_disk.extend(hf_names)
                 else:
@@ -193,13 +201,21 @@ class Bridge(ABC):
 
             # load huggingface weights
             if not memory_efficient:
+                if torch.distributed.get_rank() == 0:
+                    print(f"[Bridge] Loading {len(to_load_from_disk)} weights from disk...")
                 hf_weights_map = self.safetensor_io.load_some_hf_weight(
                     to_load_from_disk
                 )
 
-            # import mcore weights
+            # import mcore weights with progress bar
+            total_weights = len(local_to_hf_map)
+            if torch.distributed.get_rank() == 0:
+                pbar = tqdm(total=total_weights, desc=f"Loading model {i+1}/{len(models)}", unit="weight")
+
+            model_state_dict = model.state_dict()
             for local_name, hf_names in local_to_hf_map.items():
-                param = model.state_dict()[local_name]
+                param = model_state_dict[local_name]
+
                 # hf format to mcore format
                 if set(to_load_from_disk) & set(hf_names):
                     if not memory_efficient:
@@ -211,15 +227,19 @@ class Bridge(ABC):
                     mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
                 else:
                     mcore_weight = None
+
                 if hf_names[0] in {"lm_head.weight", "model.embed_tokens.weight"}:
                     if param.shape[0] == 1 and (
                         mcore_weight is None or mcore_weight.shape[0] != 1
                     ):
                         # skip lm_head.weight when the model is a value model
+                        if torch.distributed.get_rank() == 0:
+                            pbar.update(1)
                         continue
 
                 param_to_load = torch.empty_like(param)
-                if ".mlp.experts.linear_fc" in local_name:
+
+                if ".experts.linear_fc" in local_name:
                     # split mcore weights across etp
                     if self.mpu.etp_rank == 0:
                         mcore_weights_tp_split = self._weight_split_across_tp(
@@ -232,6 +252,7 @@ class Bridge(ABC):
                         ]
                     else:
                         mcore_weights_tp_split = None
+
                     torch.distributed.scatter(
                         param_to_load,
                         mcore_weights_tp_split,
@@ -251,15 +272,30 @@ class Bridge(ABC):
                         ]
                     else:
                         mcore_weights_tp_split = None
+
                     torch.distributed.scatter(
                         param_to_load,
                         mcore_weights_tp_split,
                         src=torch.distributed.get_global_rank(self.mpu.tp_group, 0),
                         group=self.mpu.tp_group,
                     )
+
                 # load
                 param.copy_(param_to_load)
 
+                if torch.distributed.get_rank() == 0:
+                    pbar.update(1)
+            del model_state_dict
+
+            if torch.distributed.get_rank() == 0:
+                pbar.close()
+                model_time = time.time() - model_start
+                print(f"[Bridge] Model {i+1}/{len(models)} loaded in {model_time:.2f}s")
+
+        if torch.distributed.get_rank() == 0:
+            total_time = time.time() - load_start
+            print(f"[Bridge] ✓ All {len(models)} model(s) loaded in {total_time:.2f}s")
+    #
     def _save_weights_fast(
         self,
         models: list,
@@ -530,7 +566,7 @@ class Bridge(ABC):
             broad_pp_param = broadcast_from_megatron_pp(param)
 
             # EP
-            if ".mlp.experts.linear_fc" in name and self.mpu.ep_size >= 1:
+            if ".experts.linear_fc" in name and self.mpu.ep_size >= 1:
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size
                 infer_params = [
@@ -806,7 +842,7 @@ class Bridge(ABC):
             }
             for k in ret.keys():
                 v = ret[k]
-                if ".mlp.experts.linear_fc" in v:
+                if ".experts.linear_fc" in v:
                     name_prefix, local_expert_id = v.split(".weight")
                     global_expert_idx = local_expert_to_global_expert[
                         int(local_expert_id)
@@ -1145,7 +1181,7 @@ class Bridge(ABC):
         Returns:
             torch.Tensor: Merged weight tensor
         """
-        if "mlp.experts.linear_fc" in mcore_weights_name:
+        if "experts.linear_fc" in mcore_weights_name:
             assert len(mcore_weights) == self.mpu.etp_size
             if self.mpu.etp_size == 1:
                 assert len(mcore_weights) == 1
@@ -1179,7 +1215,7 @@ class Bridge(ABC):
             up = torch.cat(up_lst, dim=0)
             ret = torch.cat((gate, up), dim=0)
 
-        elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
+        elif "experts.linear_fc2.weight" in mcore_weights_name:  # moe
             ret = torch.cat(mcore_weights, dim=1)
         elif (
             "self_attention.linear_kv_down_proj.weight" in mcore_weights_name
@@ -1233,7 +1269,7 @@ class Bridge(ABC):
             gates = gate.chunk(tp_split_size)
             ups = up.chunk(tp_split_size)
             ret = [torch.cat([g, u], dim=0) for g, u in zip(gates, ups)]
-        elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
+        elif "experts.linear_fc2.weight" in mcore_weights_name:  # moe
             ret = mcore_weights.chunk(tp_split_size, dim=1)
         else:
             if param.shape == mcore_weights.shape:

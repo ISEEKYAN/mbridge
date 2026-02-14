@@ -57,6 +57,7 @@ def get_model(
             model = []
             for i in range(virtual_pipeline_model_parallel_size):
                 # Set pre_process and post_process only after virtual rank is set.
+                mpu.set_virtual_pipeline_model_parallel_rank(i)
                 if (
                     "vp_stage"
                     in inspect.signature(mpu.is_pipeline_first_stage).parameters
