@@ -6,7 +6,6 @@ from mbridge.models.longcat.transformer_layer import ShortCutTransformerLayer
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.models.backends import BackendSpecProvider
 from megatron.core.models.gpt.moe_module_specs import get_moe_module_spec_for_backend
-from megatron.core.transformer import TransformerLayer
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
@@ -25,8 +24,8 @@ from mbridge.models.longcat.transformer_layer import (
 try:
     import transformer_engine as te  # pylint: disable=unused-import
 
-    from megatron.core.extensions.transformer_engine import TEFusedMLP, TENorm, TEColumnParallelLinear, \
-    TELayerNormColumnParallelLinear, TEDotProductAttention, TERowParallelLinear
+    from megatron.core.extensions.transformer_engine import TEFusedMLP, TEColumnParallelLinear, \
+    TELayerNormColumnParallelLinear, TEDotProductAttention, TERowParallelLinear, TENorm
     from megatron.core.extensions.transformer_engine_spec_provider import TESpecProvider
 
     HAVE_TE = True
@@ -115,63 +114,10 @@ def get_shortcut_decoder_block_spec(
     return block_spec
 
 
-def get_mtp_transformer_layer_with_transformer_engine_spec(
-    qk_layernorm: Optional[bool] = False,
-) -> ModuleSpec:
-    """This is the MTP spec dedicated to the LongcatFlash model.
-
-
-    Args:
-        qk_layernorm (bool, optional): To use layernorm for queries/keys. Defaults to False.
-
-    Returns:
-        ModuleSpec: Module specification with TE modules
-
-    """
-
-    linear_fc1 = TEColumnParallelLinear
-    linear_fc2 = TERowParallelLinear
-    mlp = ModuleSpec(
-        module=MLP, submodules=MLPSubmodules(linear_fc1=linear_fc1, linear_fc2=linear_fc2)
-    )
-
-    return ModuleSpec(
-        module=TransformerLayer,
-        submodules=TransformerLayerSubmodules(
-            input_layernorm=TENorm,
-            self_attention=ModuleSpec(
-                module=MLASelfAttention,
-                params={"attn_mask_type": AttnMaskType.causal},
-                submodules=MLASelfAttentionSubmodules(
-                    linear_q_proj=TEColumnParallelLinear,
-                    linear_q_down_proj=TEColumnParallelLinear,
-                    linear_q_up_proj=(
-                        TELayerNormColumnParallelLinear
-                        if qk_layernorm
-                        else TEColumnParallelLinear
-                    ),
-                    linear_kv_down_proj=TEColumnParallelLinear,
-                    linear_kv_up_proj=(
-                        TEColumnParallelLinear
-                    ),
-                    core_attention=TEDotProductAttention,
-                    linear_proj=TERowParallelLinear,
-                    q_layernorm=IdentityOp,
-                    kv_layernorm=TENorm,
-                ),
-            ),
-            self_attn_bda=get_bias_dropout_add,
-            pre_mlp_layernorm=TENorm,
-            mlp=mlp,
-            mlp_bda=get_bias_dropout_add,
-        ),
-    )
-
-
 def get_shortcut_layer_with_transformer_engine_spec(
     num_experts: Optional[int] = None,
     moe_grouped_gemm: Optional[bool] = False,
-    qk_layernorm: Optional[bool] = False,
+    qk_layernorm: Optional[bool] = True,
     multi_latent_attention: Optional[bool] = True,
     fp8: Optional[str] = None,  # pylint: disable=unused-argument
     moe_use_legacy_grouped_gemm: Optional[bool] = False,
@@ -230,8 +176,6 @@ def get_shortcut_layer_with_transformer_engine_spec(
                     linear_q_down_proj=TEColumnParallelLinear,
                     linear_q_up_proj=(
                         TELayerNormColumnParallelLinear
-                        if qk_layernorm
-                        else TEColumnParallelLinear
                     ),
                     linear_kv_down_proj=TEColumnParallelLinear,
                     linear_kv_up_proj=(

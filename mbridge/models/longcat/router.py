@@ -7,7 +7,7 @@ import torch
 
 from megatron.core.tensor_parallel import reduce_from_tensor_model_parallel_region
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.transformer.moe.moe_utils import (
+from mbridge.models.longcat.moe_utils import (
     ModelCommProcessGroups,
     MoEAuxLossAutoScaler,
     apply_random_logits,
@@ -20,7 +20,7 @@ from megatron.core.transformer.moe.moe_utils import (
     topk_routing_with_score_function,
     z_loss_func,
 )
-from megatron.core.transformer.transformer_config import TransformerConfig
+from mbridge.models.longcat.transformer_config import TransformerConfig
 
 
 class Router(ABC, MegatronModule):
@@ -59,7 +59,9 @@ class Router(ABC, MegatronModule):
         """Reset the router parameters."""
         if self.config.perform_initialization:
             self.config.init_method(self.weight)
-        self.weight.data = self.weight.data.to(dtype=self.config.params_dtype)
+        # Keep weight in fp32 if moe_router_dtype is fp32, otherwise convert to params_dtype
+        if self.config.moe_router_dtype != 'fp32':
+            self.weight.data = self.weight.data.to(dtype=self.config.params_dtype)
         setattr(self.weight, 'sequence_parallel', self.config.sequence_parallel)
 
     def gating(self, input: torch.Tensor):
@@ -166,6 +168,17 @@ class TopKRouter(Router):
         if hasattr(self, 'expert_bias') and self.expert_bias is not None:
             if self.expert_bias.dtype != torch.float32:
                 self.expert_bias.data = self.expert_bias.data.to(torch.float32)
+
+    def _maintain_float32_weight(self):
+        """
+        Maintain the router weight in float32 when moe_router_dtype is fp32.
+
+        When using bf16/fp16, Float16Module converts all parameters to lower precision.
+        We keep the router weight in float32 to avoid routing precision loss.
+        """
+        if self.config.moe_router_dtype == 'fp32':
+            if self.weight.dtype != torch.float32:
+                self.weight.data = self.weight.data.to(torch.float32)
 
     def sinkhorn_load_balancing(self, logits: torch.Tensor):
         """Apply sinkhorn routing to the logits tensor.
@@ -457,6 +470,7 @@ class TopKRouter(Router):
             input (torch.Tensor): Input tensor.
         """
         self._maintain_float32_expert_bias()
+        self._maintain_float32_weight()
 
         # Apply input jitter
         input = self.apply_input_jitter(input)
@@ -473,9 +487,11 @@ class TopKRouter(Router):
     def _load_from_state_dict(self, *args, **kwargs):
         """Load the state dict of the router."""
         self._maintain_float32_expert_bias()  # switch to float32 before loading
+        self._maintain_float32_weight()
         return super()._load_from_state_dict(*args, **kwargs)
 
     def _save_to_state_dict(self, *args, **kwargs):
         """Save the state dict of the router."""
         self._maintain_float32_expert_bias()  # switch to float32 before saving
+        self._maintain_float32_weight()
         return super()._save_to_state_dict(*args, **kwargs)

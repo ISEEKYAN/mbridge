@@ -35,7 +35,7 @@ from megatron.core.transformer.custom_layers.transformer_engine import (
 )
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.core.transformer.transformer_config import MLATransformerConfig
+from mbridge.models.longcat.transformer_config import MLATransformerConfig
 from megatron.core.utils import deprecate_inference_params
 
 try:

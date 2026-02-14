@@ -154,27 +154,50 @@ class SafeTensorIO:
                         del states[k]
                     logger.info(f"[SafeTensorIO] ✓ Saved '{filename}', remaining weights in buffer: {len(states)}")
 
+        # Save remaining weights that couldn't form a complete file
+        # (e.g. when some weights like MTP weights are not in the generator)
+        if states:
+            remaining_file_map = defaultdict(dict)
+            unknown_weights = {}
+            for weight_name, tensor in states.items():
+                if weight_name in self.index:
+                    expected_file = self.index[weight_name]
+                    remaining_file_map[expected_file][weight_name] = tensor
+                else:
+                    unknown_weights[weight_name] = tensor
+
+            for filename, to_save in remaining_file_map.items():
+                safetensor_file = os.path.join(new_hf_dir, filename)
+                expected_weights = filename_to_keys_map[filename]
+                missing_weights = expected_weights - set(to_save.keys())
+                if os.path.exists(safetensor_file):
+                    # File was already saved (fully complete), merge remaining weights into it
+                    with safe_open(safetensor_file, framework="pt", device="cpu") as f:
+                        for k in f.keys():
+                            if k not in to_save:
+                                to_save[k] = f.get_tensor(k)
+                logger.info(
+                    f"[SafeTensorIO] ✓ Saving partial file '{filename}' with "
+                    f"{len(to_save)}/{len(expected_weights)} weights "
+                    f"(missing {len(missing_weights)}: {list(missing_weights)[:5]}{'...' if len(missing_weights) > 5 else ''})"
+                )
+                save_file(to_save, safetensor_file)
+                saved_files.append(filename)
+
+            if unknown_weights:
+                for weight_name in unknown_weights:
+                    logger.warning(f"[SafeTensorIO] ⚠️  '{weight_name}' is NOT in the index file, skipping!")
+
+            # Clear saved weights from states
+            unsaved = set(unknown_weights.keys())
+            states = {k: v for k, v in states.items() if k in unsaved}
+
         logger.info(f"\n[SafeTensorIO] === Save Summary ===")
         logger.info(f"[SafeTensorIO] Total weights collected: {collected_weights_count}")
         logger.info(f"[SafeTensorIO] Files saved: {len(saved_files)}/{len(filename_to_keys_map)}")
         logger.info(f"[SafeTensorIO] Weights remaining in buffer: {len(states)}")
 
         if states:
-            logger.info(f"[SafeTensorIO] Remaining weights: {list(states.keys())}")
-
-            # Diagnose why these weights weren't saved
-            for weight_name in states.keys():
-                if weight_name in self.index:
-                    expected_file = self.index[weight_name]
-                    expected_weights = filename_to_keys_map[expected_file]
-                    missing_weights = expected_weights - states.keys()
-                    logger.warning(f"[SafeTensorIO] ⚠️  '{weight_name}' belongs to '{expected_file}'")
-                    logger.warning(f"[SafeTensorIO]     This file expects {len(expected_weights)} weights")
-                    logger.warning(f"[SafeTensorIO]     Missing {len(missing_weights)} weights: {list(missing_weights)[:5]}{'...' if len(missing_weights) > 5 else ''}")
-                else:
-                    logger.warning(f"[SafeTensorIO] ⚠️  '{weight_name}' is NOT in the index file!")
-
-        if not set(states.keys()) == set(hf_shared_weight_keys):
             warnings.warn(
                 f"Some weights are not saved: {states.keys()} {hf_shared_weight_keys=}"
             )
@@ -227,7 +250,7 @@ class SafeTensorIO:
             for old_key, key in zip(old_keys_for_file, keys_for_file):
                 tmp_filename = f"{new_hf_dir}/{old_key}.safetensors"
                 if not os.path.exists(tmp_filename):
-                    logger.warning(f"[SafeTensorIO] ERROR: 文件 '{tmp_filename}' 不存在，跳过该文件")
+                    logger.warning(f"[SafeTensorIO] ERROR: File '{tmp_filename}' not exists，skipping!")
                     continue
                 with safe_open(tmp_filename, framework="pt", device="cpu") as f:
                     tensor = f.get_tensor(old_key)

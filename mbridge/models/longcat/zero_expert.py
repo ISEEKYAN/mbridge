@@ -188,7 +188,7 @@ def zero_experts_compute_triton(
     expert_indices[normal_expert_mask] = -1
     expert_scales[normal_expert_mask] = 0.0
 
-    output = torch.zeros_like(hidden_states).to(hidden_states.device)
+    output = torch.zeros(hidden_states.shape, dtype=expert_scales.dtype).to(hidden_states.device)
     hidden_dim = hidden_states.size(-1)
     num_tokens = hidden_states.size(0)
 

@@ -19,7 +19,7 @@ from megatron.core.transformer.moe.token_dispatcher import (
     MoETokenDispatcher,
 )
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.core.transformer.transformer_config import TransformerConfig
+from mbridge.models.longcat.transformer_config import TransformerConfig
 
 try:
     import transformer_engine as te  # pylint: disable=unused-import
@@ -331,6 +331,7 @@ class MoELayer(BaseMoELayer):
 
             if zero_expert_result is not None and hidden_states.shape[0] > 0:
                 output = output + zero_expert_result
+                output = output.to(hidden_states.dtype)
 
             return output, mlp_bias
 

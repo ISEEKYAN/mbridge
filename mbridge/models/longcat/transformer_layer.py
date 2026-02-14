@@ -20,7 +20,7 @@ from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.identity_op import IdentityFuncOp, IdentityOp
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.core.transformer.transformer_config import TransformerConfig
+from mbridge.models.longcat.transformer_config import TransformerConfig
 from megatron.core.transformer.utils import sharded_state_dict_default
 from megatron.core.utils import (
     deprecate_inference_params,
