@@ -30,3 +30,4 @@ from .glm4_vl import Glm4VLBridgeMoe, Glm4VLBridgeDense
 from .gemma3 import Gemma3Bridge
 from .internvl3 import InternVL3Bridge
 from .qwen3_vl import Qwen3VLBridge, Qwen3VLBridge
+from .qwen3_5 import Qwen3p5MoeVlBridge

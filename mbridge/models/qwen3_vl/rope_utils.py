@@ -72,7 +72,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         if rotary_percent < 1.0:
             dim = int(dim * rotary_percent)
         self.rotary_interleaved = rotary_interleaved
-        assert not self.rotary_interleaved, "only support qwen3vl"
+        # assert not self.rotary_interleaved, "only support qwen3vl"
 
         self.seq_len_interpolation_factor = seq_len_interpolation_factor
         self.inv_freq = 1.0 / (
