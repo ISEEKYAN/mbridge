@@ -9,7 +9,7 @@ from megatron.core.transformer import TransformerConfig
 
 
 @dataclass
-class Qwen3p5VLTransformerConfig(TransformerConfig):
+class Qwen3_5VLTransformerConfig(TransformerConfig):
     patch_size: int = 14
     in_channels: int = 3
     spatial_merge_size: int = 2
@@ -17,3 +17,5 @@ class Qwen3p5VLTransformerConfig(TransformerConfig):
     num_position_embeddings: int = 2304
     out_hidden_size: int = 2304
     apply_rotary_pos_emb_in_fp32: bool = False
+    rotary_percent: float = 1.0
+    rotary_base: float = 10000

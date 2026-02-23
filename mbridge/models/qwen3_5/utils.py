@@ -1,16 +1,6 @@
-from dataclasses import dataclass
-from typing import Optional, Union
-
 import torch
-from megatron.core import parallel_state
-from megatron.core.transformer.module import MegatronModule
-from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.core.utils import get_tensor_model_parallel_group_if_none
-from torch import nn
-from torch.nn import functional as F
 
-from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-
+from mbridge.models.qwen3_vl.utils import find_vision_id_index
 
 
 def reorganize_inputs(

@@ -103,7 +103,9 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             freqs_t[..., idx] = freqs[dim, ..., idx]
         return freqs_t
 
-    def forward(self, position_ids: torch.Tensor, mrope_section: List[int], **kwargs) -> Tensor:
+    def forward(
+        self, position_ids: torch.Tensor, mrope_section: List[int], **kwargs
+    ) -> Tensor:
         """Forward pass of multimodal RoPE embedding.
 
         Args:

@@ -2,14 +2,13 @@ import logging
 from typing import Optional
 
 import torch
-from transformers import AutoConfig
-
-from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core import InferenceParams, mpu, tensor_parallel
+from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
+from transformers import AutoConfig
 
 from mbridge.core.util import (
     AllGatherVisionEmbeddings,
@@ -19,13 +18,16 @@ from mbridge.core.util import (
     qwen3vl_cp_split,
     split_data_cp_rank,
 )
-from mbridge.models.qwen3_5.transformer_config import Qwen3p5VLTransformerConfig
+from mbridge.models.qwen3_5.attention import Qwen3_5VLSelfAttention, SelfAttention
+from mbridge.models.qwen3_5.transformer_config import Qwen3_5VLTransformerConfig
 from mbridge.models.qwen3_5.utils import reorganize_inputs
-from mbridge.models.qwen3_vl.rope_utils import get_rope_index, Qwen3VLMultimodalRotaryEmbedding
-from mbridge.models.qwen3_5.attention import Qwen3p5VLSelfAttention, SelfAttention
+from mbridge.models.qwen3_vl.rope_utils import (
+    Qwen3VLMultimodalRotaryEmbedding,
+    get_rope_index,
+)
 
 
-class Qwen3p5GPTModel(GPTModel):
+class Qwen3_5GPTModel(GPTModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -34,18 +36,19 @@ class Qwen3p5GPTModel(GPTModel):
             kv_channels=self.config.kv_channels,
             rotary_percent=kwargs["rotary_percent"],
             rotary_interleaved=self.config.rotary_interleaved,
-            seq_len_interpolation_factor=kwargs.get("seq_len_interpolation_factor", None),
+            seq_len_interpolation_factor=kwargs.get(
+                "seq_len_interpolation_factor", None
+            ),
             rotary_base=kwargs.get("rotary_base", 10000),
         )
 
 
-class Qwen3p5VLModel(MegatronModule):
-    """Qwen3p5VLModel model
+class Qwen3_5VLModel(MegatronModule):
+    """Qwen3_5VLModel model"""
 
-    """
     def __init__(
         self,
-        language_transformer_config: Qwen3p5VLTransformerConfig,
+        language_transformer_config: Qwen3_5VLTransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
         language_mtp_block_spec: ModuleSpec,
         language_vocab_size: int,
@@ -65,14 +68,14 @@ class Qwen3p5VLModel(MegatronModule):
         image_token_id: int = 151655,
         video_token_id: int = 151656,
         vision_start_token_id: int = 151652,
-        rope_scaling: bool = False
+        rope_scaling: bool = False,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
         for layer_spec in language_transformer_layer_spec.layer_specs:
             # only replace SelfAttention
             if isinstance(layer_spec.submodules.self_attention.module, SelfAttention):
-                layer_spec.submodules.self_attention.module = Qwen3p5VLSelfAttention
+                layer_spec.submodules.self_attention.module = Qwen3_5VLSelfAttention
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -94,7 +97,7 @@ class Qwen3p5VLModel(MegatronModule):
             self._cast_rotary_emb_to_fp32(self.vision_model)
             self._mark_vision_params_sequence_parallel(self.vision_model)
 
-        self.language_model = Qwen3p5GPTModel(
+        self.language_model = Qwen3_5GPTModel(
             config=language_transformer_config,
             transformer_layer_spec=language_transformer_layer_spec,
             vocab_size=language_vocab_size,
@@ -114,12 +117,13 @@ class Qwen3p5VLModel(MegatronModule):
 
     @staticmethod
     def _cast_rotary_emb_to_fp32(module: torch.nn.Module):
-        """Force all RotaryEmbedding inv_freq buffers to stay at original float32 precision.
-        """
+        """Force all RotaryEmbedding inv_freq buffers to stay at original float32 precision."""
         for submodule in module.modules():
             if hasattr(submodule, "inv_freq") and submodule.inv_freq is not None:
                 # Save the original float32 inv_freq (this runs BEFORE Float16Module)
-                submodule._inv_freq_fp32_original = submodule.inv_freq.detach().clone().float()
+                submodule._inv_freq_fp32_original = (
+                    submodule.inv_freq.detach().clone().float()
+                )
 
                 def _hook(mod, args):
                     if hasattr(mod, "_inv_freq_fp32_original"):
@@ -127,11 +131,11 @@ class Qwen3p5VLModel(MegatronModule):
                         mod.inv_freq = mod._inv_freq_fp32_original.to(
                             device=mod.inv_freq.device
                         )
+
                 submodule.register_forward_pre_hook(_hook)
 
     def _mark_vision_params_sequence_parallel(self, module: torch.nn.Module):
-        """Mark all vision model parameters with sequence_parallel=True.
-        """
+        """Mark all vision model parameters with sequence_parallel=True."""
         for param in module.parameters():
             setattr(param, "sequence_parallel", self.config.sequence_parallel)
 
@@ -149,9 +153,7 @@ class Qwen3p5VLModel(MegatronModule):
     def set_input_tensor(self, input_tensor) -> None:
         if not isinstance(input_tensor, list):
             input_tensor = [input_tensor]
-        assert (
-            len(input_tensor) == 1
-        ), "input_tensor should only be length 1"
+        assert len(input_tensor) == 1, "input_tensor should only be length 1"
 
         self.language_model.set_input_tensor(input_tensor[0])
 
@@ -214,7 +216,7 @@ class Qwen3p5VLModel(MegatronModule):
         vision_grid_thw = None
         vision_data = None
         vision_mask = None
-        # TDOO: 似乎不好这样写了
+        # TODO: this approach may need rethinking
         cp_size = mpu.get_context_parallel_world_size()
 
         if self.pre_process:
@@ -260,7 +262,9 @@ class Qwen3p5VLModel(MegatronModule):
                         grid_thw=vision_grid_thw,
                     ).pooler_output
                     # Encodes images into continuous embeddings that can be forwarded to the language model.
-                    split_sizes = (vision_grid_thw.prod(-1) // self.spatial_merge_size**2).tolist()
+                    split_sizes = (
+                        vision_grid_thw.prod(-1) // self.spatial_merge_size**2
+                    ).tolist()
                     vision_embeds = torch.split(vision_embeds, split_sizes)
                     vision_embeds = torch.cat(vision_embeds, dim=0)
                 else:
@@ -297,8 +301,9 @@ class Qwen3p5VLModel(MegatronModule):
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True
                 )
-                vision_mask_thd = (input_ids_thd == self.image_token_id) \
-                                | (input_ids_thd == self.video_token_id)
+                vision_mask_thd = (input_ids_thd == self.image_token_id) | (
+                    input_ids_thd == self.video_token_id
+                )
 
                 vision_mask = vision_mask_thd
                 combined_embeddings_thd = (

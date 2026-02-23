@@ -1,4 +1,5 @@
 import inspect
+import logging
 from copy import deepcopy
 from typing import Callable, Optional
 
@@ -6,11 +7,10 @@ import torch
 
 from mbridge.core import VLMBridge
 from mbridge.core.util import unwrap_model
-from mbridge.models.qwen3_5.model import Qwen3p5VLModel
-from mbridge.models.qwen3_5.qwen3_5_safetensor import Qwen3p5SafeTensorIO
+from mbridge.models.qwen3_5.qwen3_5_safetensor import Qwen3_5SafeTensorIO
 
 
-class Qwen3p5VlBaseBridge(VLMBridge):
+class Qwen3_5VlBaseBridge(VLMBridge):
 
     def _get_transformer_layer_spec(self, vp_stage: Optional[int] = None):
         """
@@ -31,28 +31,38 @@ class Qwen3p5VlBaseBridge(VLMBridge):
 
         try:
             from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-                is_linear_attention_variant,
                 get_transformer_block_with_experimental_attention_variant_spec,
+                is_linear_attention_variant,
             )
         except ImportError:
             is_linear_attention_variant = None
             get_transformer_block_with_experimental_attention_variant_spec = None
 
-        if is_linear_attention_variant is not None and is_linear_attention_variant(getattr(self.config, "experimental_attention_variant", None)):
+        if is_linear_attention_variant is not None and is_linear_attention_variant(
+            getattr(self.config, "experimental_attention_variant", None)
+        ):
             # check if get_transformer_block_with_experimental_attention_variant_spec has vp_stage parameter
-            sig = inspect.signature(get_transformer_block_with_experimental_attention_variant_spec)
-            self.has_vp_stage = "vp_stage" in sig.parameters  # for mcore 0.12 compatibility
+            sig = inspect.signature(
+                get_transformer_block_with_experimental_attention_variant_spec
+            )
+            self.has_vp_stage = (
+                "vp_stage" in sig.parameters
+            )  # for mcore 0.12 compatibility
             extra_args = {}
             if self.has_vp_stage:
                 extra_args["vp_stage"] = vp_stage
 
             # Use experimental attention variant spec for linear attention (e.g., gated_delta_net)
-            transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec(
-                self.config,
-                **extra_args,
+            transformer_layer_spec = (
+                get_transformer_block_with_experimental_attention_variant_spec(
+                    self.config,
+                    **extra_args,
+                )
             )
         else:
-            raise ImportError("experimental_attention_variant is not supported, please megatron-lm dev branch")
+            raise ImportError(
+                "experimental_attention_variant is not supported, please megatron-lm dev branch"
+            )
 
         return transformer_layer_spec
 
@@ -71,8 +81,10 @@ class Qwen3p5VlBaseBridge(VLMBridge):
         return self.config
 
     def _get_safetensor_io(self, weights_path: str):
-        #TODO: 暂时先不处理 mtp 层
-        return Qwen3p5SafeTensorIO(self._get_actual_hf_path(weights_path), ignore_mtp=True)
+        # TODO: MTP layers are not handled yet
+        return Qwen3_5SafeTensorIO(
+            self._get_actual_hf_path(weights_path), ignore_mtp=True
+        )
 
     def _weight_name_mapping_mcore_local_to_global(
         self, model: torch.nn.Module, consider_ep: bool = True
@@ -246,7 +258,7 @@ class Qwen3p5VlBaseBridge(VLMBridge):
 
                 if experts_key not in self.export_weights_buff:
                     self.export_weights_buff[experts_key] = {}
-                assert experts_idx not in self.export_weights_buff
+                assert experts_idx not in self.export_weights_buff[experts_key]
                 self.export_weights_buff[experts_key][experts_idx] = mcore_weights
 
                 if (
@@ -318,11 +330,9 @@ class Qwen3p5VlBaseBridge(VLMBridge):
 
             return hf_names, [q, k, v]
 
-        elif (
-            "vision_model" not in mcore_weights_name and (
-                "linear_fc1.weight" in mcore_weights_name
-                or "linear_fc1.bias" in mcore_weights_name
-            )
+        elif "vision_model" not in mcore_weights_name and (
+            "linear_fc1.weight" in mcore_weights_name
+            or "linear_fc1.bias" in mcore_weights_name
         ):
             # split gate_proj and up_proj
             assert len(hf_names) == 2
@@ -450,8 +460,12 @@ class Qwen3p5VlBaseBridge(VLMBridge):
                 real_num_key_value_heads = q.shape[0] // 2 // group_dim
 
                 combined_w = q.reshape((num_attention_heads, 2 * head_dim, -1))
-                q_w = combined_w.narrow(1, 0, head_dim).reshape((num_attention_heads * head_dim, -1))
-                g_w = combined_w.narrow(1, head_dim, head_dim).reshape((num_attention_heads * head_dim, -1))
+                q_w = combined_w.narrow(1, 0, head_dim).reshape(
+                    (num_attention_heads * head_dim, -1)
+                )
+                g_w = combined_w.narrow(1, head_dim, head_dim).reshape(
+                    (num_attention_heads * head_dim, -1)
+                )
 
                 q = q_w.view(
                     [
@@ -486,11 +500,9 @@ class Qwen3p5VlBaseBridge(VLMBridge):
             else:
                 qkv = torch.cat([q, k, v], dim=1).view(*out_shape).contiguous()
             return qkv
-        elif (
-            "vision_model" not in mcore_weights_name and (
-                "linear_fc1.weight" in mcore_weights_name
-                or "linear_fc1.bias" in mcore_weights_name
-            )
+        elif "vision_model" not in mcore_weights_name and (
+            "linear_fc1.weight" in mcore_weights_name
+            or "linear_fc1.bias" in mcore_weights_name
         ):
             # merge gate_proj and up_proj
             assert len(hf_weights) == 2
@@ -521,13 +533,14 @@ class Qwen3p5VlBaseBridge(VLMBridge):
             # wv = in_proj_qkv_.narrow(1, 2 * linear_key_head_dim,
             #                          value_dim // linear_num_key_heads).reshape(value_dim, -1)
 
-
             wz = in_proj_z.reshape(value_dim, -1)
             wb = in_proj_b.reshape((linear_num_value_heads, -1))
             wa = in_proj_a.reshape((linear_num_value_heads, -1))
             return torch.cat([wq, wk, wv, wz, wb, wa], dim=0)
         else:
-            print(f"others weights {len(hf_weights)} {[hf_w.shape for hf_w in hf_weights]}")
+            logging.warning(
+                f"Unhandled weights {mcore_weights_name}: count={len(hf_weights)} shapes={[hf_w.shape for hf_w in hf_weights]}"
+            )
         raise NotImplementedError(f"Unsupported parameter name: {mcore_weights_name}")
 
     def _weight_merge_across_tp(
@@ -563,11 +576,9 @@ class Qwen3p5VlBaseBridge(VLMBridge):
             and "layer_norm" not in mcore_weights_name
         ):
             return torch.cat(mcore_weights, dim=0)
-        elif (
-            "vision_model" not in mcore_weights_name and (
-                "linear_fc1.weight" in mcore_weights_name
-                or "linear_fc1.bias" in mcore_weights_name
-            )
+        elif "vision_model" not in mcore_weights_name and (
+            "linear_fc1.weight" in mcore_weights_name
+            or "linear_fc1.bias" in mcore_weights_name
         ):
             mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
             if not mcore_config.gated_linear_unit:
@@ -596,7 +607,9 @@ class Qwen3p5VlBaseBridge(VLMBridge):
             mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
             tp_size = len(mcore_weights)
             k_dim = mcore_config.linear_num_key_heads * mcore_config.linear_key_head_dim
-            v_dim = mcore_config.linear_num_value_heads * mcore_config.linear_value_head_dim
+            v_dim = (
+                mcore_config.linear_num_value_heads * mcore_config.linear_value_head_dim
+            )
             split_shape = [
                 k_dim // tp_size,
                 k_dim // tp_size,
@@ -606,20 +619,29 @@ class Qwen3p5VlBaseBridge(VLMBridge):
                 mcore_config.linear_num_value_heads // tp_size,
             ]
             # split_shape for [wq, wk, wv, wz, wb, wa]
-            ret = self._split_weight_by_size_and_merge_across_tp(mcore_weights, split_shape)
+            ret = self._split_weight_by_size_and_merge_across_tp(
+                mcore_weights, split_shape
+            )
         elif "self_attention.conv1d" in mcore_weights_name:
             if "weight" in mcore_weights_name:
                 mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
                 tp_size = len(mcore_weights)
-                k_dim = mcore_config.linear_num_key_heads * mcore_config.linear_key_head_dim
-                v_dim = mcore_config.linear_num_value_heads * mcore_config.linear_value_head_dim
+                k_dim = (
+                    mcore_config.linear_num_key_heads * mcore_config.linear_key_head_dim
+                )
+                v_dim = (
+                    mcore_config.linear_num_value_heads
+                    * mcore_config.linear_value_head_dim
+                )
                 split_shape = [
                     k_dim // tp_size,
                     k_dim // tp_size,
                     v_dim // tp_size,
                 ]
                 # split_shape for [X, B, C]
-                ret = self._split_weight_by_size_and_merge_across_tp(mcore_weights, split_shape)
+                ret = self._split_weight_by_size_and_merge_across_tp(
+                    mcore_weights, split_shape
+                )
             else:
                 raise NotImplementedError(f"{mcore_weights_name} not supported yet")
         else:
@@ -656,11 +678,9 @@ class Qwen3p5VlBaseBridge(VLMBridge):
             and "layer_norm" not in mcore_weights_name
         ):
             return mcore_weights.chunk(tp_split_size)
-        elif (
-            "vision_model" not in mcore_weights_name and (
-                "linear_fc1.weight" in mcore_weights_name
-                or "linear_fc1.bias" in mcore_weights_name
-            )
+        elif "vision_model" not in mcore_weights_name and (
+            "linear_fc1.weight" in mcore_weights_name
+            or "linear_fc1.bias" in mcore_weights_name
         ):
             mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
             if not mcore_config.gated_linear_unit:
@@ -675,7 +695,9 @@ class Qwen3p5VlBaseBridge(VLMBridge):
         elif "self_attention.in_proj.weight" in mcore_weights_name:
             mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
             k_dim = mcore_config.linear_num_key_heads * mcore_config.linear_key_head_dim
-            v_dim = mcore_config.linear_num_value_heads * mcore_config.linear_value_head_dim
+            v_dim = (
+                mcore_config.linear_num_value_heads * mcore_config.linear_value_head_dim
+            )
             split_shape = [
                 k_dim,
                 k_dim,
@@ -691,14 +713,23 @@ class Qwen3p5VlBaseBridge(VLMBridge):
             for weight in split_w_lst:
                 weight_list.append(weight.chunk(tp_split_size))
             ret = [
-                torch.cat([wq_slice, wk_slice, wv_slice, wz_slice, wb_slice, wa_slice], dim=0)
-                for wq_slice, wk_slice, wv_slice, wz_slice, wb_slice, wa_slice in zip(*weight_list)
+                torch.cat(
+                    [wq_slice, wk_slice, wv_slice, wz_slice, wb_slice, wa_slice], dim=0
+                )
+                for wq_slice, wk_slice, wv_slice, wz_slice, wb_slice, wa_slice in zip(
+                    *weight_list
+                )
             ]
         elif "self_attention.conv1d" in mcore_weights_name:
             if "weight" in mcore_weights_name:
                 mcore_config = self._get_mcore_config_by_name(mcore_weights_name)
-                k_dim = mcore_config.linear_num_key_heads * mcore_config.linear_key_head_dim
-                v_dim = mcore_config.linear_num_value_heads * mcore_config.linear_value_head_dim
+                k_dim = (
+                    mcore_config.linear_num_key_heads * mcore_config.linear_key_head_dim
+                )
+                v_dim = (
+                    mcore_config.linear_num_value_heads
+                    * mcore_config.linear_value_head_dim
+                )
                 split_shape = [
                     k_dim,
                     k_dim,
@@ -734,11 +765,11 @@ class Qwen3p5VlBaseBridge(VLMBridge):
         mcore_weights: list[torch.Tensor],
         split_shape: list[int],
     ) -> torch.Tensor:
-        '''
+        """
         First split weight by splist_shape and then merge across tensor parallel ranks
 
         use for linear attn in_proj and linear attn conv1d layer weight
-        '''
+        """
         tp_size = len(mcore_weights)
 
         weight_lst = [[] for _ in range(len(split_shape))]
@@ -767,6 +798,7 @@ class Qwen3p5VlBaseBridge(VLMBridge):
         Returns:
             function: A provider function that creates and returns a GPTModel instance
         """
+        from mbridge.models.qwen3_5.model import Qwen3_5VLModel
 
         share_embeddings_and_output_weights = getattr(
             self.hf_config, "tie_word_embeddings", False
@@ -781,7 +813,7 @@ class Qwen3p5VlBaseBridge(VLMBridge):
         ):
             transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
 
-            model = Qwen3p5VLModel(
+            model = Qwen3_5VLModel(
                 language_transformer_config=self.config,
                 language_transformer_layer_spec=transformer_layer_spec,
                 language_mtp_block_spec=None,
@@ -789,7 +821,9 @@ class Qwen3p5VlBaseBridge(VLMBridge):
                 language_max_sequence_length=self.hf_config.text_config.max_position_embeddings,
                 hf_config=self.hf_config,
                 hf_vision_cls=self.HfVisionClass,
-                language_rotary_base=self.hf_config.text_config.rope_scaling.get("rope_theta", 10000000),
+                language_rotary_base=self.hf_config.text_config.rope_scaling.get(
+                    "rope_theta", 10000000
+                ),
                 position_embedding_type="mrope",
                 pre_process=pre_process,
                 post_process=post_process,

@@ -26,16 +26,16 @@ def cos_similarity(a, b):
     )
 
 
-path1 = "qwen3p5_save/hf_qwen3_5.pt"
+path1 = "qwen3_5_save/hf_qwen3_5.pt"
 
 path2_list = [
-    # "qwen3p5_save/mlm_tp1_pp1_cp1_ep1.pt",
-    # "qwen3p5_save/mlm_tp2_pp1_cp1_ep1.pt",
-    # "qwen3p5_save/mlm_tp2_pp1_cp1_ep4.pt",
-    # "qwen3p5_save/mlm_tp2_pp1_cp2_ep4.pt",
-    "qwen3p5_save/mlm_tp2_pp2_cp2_ep4.pt",
-    "qwen3p5_save/mlm_tp4_pp2_cp1_ep4.pt",
-    "qwen3p5_save/mlm_tp2_pp2_cp1_ep2.pt",
+    # "qwen3_5_save/mlm_tp1_pp1_cp1_ep1.pt",
+    # "qwen3_5_save/mlm_tp2_pp1_cp1_ep1.pt",
+    # "qwen3_5_save/mlm_tp2_pp1_cp1_ep4.pt",
+    # "qwen3_5_save/mlm_tp2_pp1_cp2_ep4.pt",
+    "qwen3_5_save/mlm_tp2_pp2_cp2_ep4.pt",
+    "qwen3_5_save/mlm_tp4_pp2_cp1_ep4.pt",
+    "qwen3_5_save/mlm_tp2_pp2_cp1_ep2.pt",
 ]
 
 a = torch.load(path1)

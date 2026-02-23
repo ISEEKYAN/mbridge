@@ -13,7 +13,6 @@ except:
 
 import torch
 import torch.nn.functional as F
-from mbridge.core.util import unwrap_model
 from megatron.core import parallel_state as mpu
 from megatron.core.models.gpt.gpt_model import ModelType
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
@@ -29,6 +28,7 @@ from example.qwen3_5.load_model_and_forward import (
     mcore_fwd_fn,
 )
 from mbridge import AutoBridge
+from mbridge.core.util import unwrap_model
 
 
 def init_distributed(tp=2, pp=1, cp=1, vpp=1, ep=1, etp=None):
@@ -99,11 +99,17 @@ def main():
     if args.save_path is not None:
         save_weights_kwargs = {}
         import inspect
+
         save_func_sig = inspect.signature(bridge.save_weights)
         if "distributed_filesystem" in save_func_sig.parameters:
             save_weights_kwargs["distributed_filesystem"] = True
         unwrapped_model = unwrap_model(model)
-        bridge.save_weights(unwrapped_model, args.save_path, memory_efficient=True, **save_weights_kwargs)
+        bridge.save_weights(
+            unwrapped_model,
+            args.save_path,
+            memory_efficient=True,
+            **save_weights_kwargs,
+        )
 
     print(f"rank{torch.distributed.get_rank()}: end load weight, start forward ...")
 

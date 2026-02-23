@@ -6,14 +6,14 @@ from glob import glob
 from typing import Generator
 
 import torch
-from transformers import AutoConfig
 from safetensors import safe_open
 from safetensors.torch import save_file
+from transformers import AutoConfig
 
 from mbridge.core.safetensor_io import SafeTensorIO
 
 
-class Qwen3p5SafeTensorIO(SafeTensorIO):
+class Qwen3_5SafeTensorIO(SafeTensorIO):
     def __init__(self, hf_dir: str, ignore_mtp: bool = False):
         index_file = os.path.join(hf_dir, "model.safetensors.index.json")
         config = AutoConfig.from_pretrained(hf_dir, trust_remote_code=True)
@@ -32,7 +32,9 @@ class Qwen3p5SafeTensorIO(SafeTensorIO):
                 origin_index["weight_map"] = filtered_index
 
                 self.index = origin_index["weight_map"]
-                if getattr(config, "tie_word_embeddings", False):
+                if getattr(config, "tie_word_embeddings", False) or getattr(
+                    getattr(config, "text_config", None), "tie_word_embeddings", False
+                ):
                     if "lm_head.weight" in self.index.keys():
                         self.index.pop("lm_head.weight")
                 self.origin_index = origin_index

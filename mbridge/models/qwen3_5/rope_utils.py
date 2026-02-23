@@ -20,12 +20,12 @@ import logging
 from typing import List, Optional
 
 import torch
-from torch import Tensor, nn
 from megatron.core import parallel_state
 from megatron.core.models.common.embeddings.rope_utils import (
     _apply_rotary_pos_emb_bshd,
     get_pos_emb_on_this_cp_rank,
 )
+from torch import Tensor, nn
 
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 
@@ -44,7 +44,8 @@ logger = logging.getLogger(__name__)
 def apply_rotary_pos_emb_thd_absolute(
     t: Tensor,
     cu_seqlens: Tensor,
-    freqs: Tensor, rotary_interleaved: bool = False,
+    freqs: Tensor,
+    rotary_interleaved: bool = False,
     multi_latent_attention: bool = False,
     mscale: float = 1.0,
     cp_group: torch.distributed.ProcessGroup = None,
@@ -61,7 +62,8 @@ def apply_rotary_pos_emb_thd_absolute(
         Tensor: Shape [t, h, d]. The input tensor after applying RoPE.
     """
     return _apply_rotary_pos_emb_bshd(
-        t[:, None], freqs,
+        t[:, None],
+        freqs,
         rotary_interleaved=rotary_interleaved,
         multi_latent_attention=multi_latent_attention,
         mscale=mscale,
@@ -89,14 +91,18 @@ def apply_rotary_pos_emb_absolute(
 
     if cu_seqlens is None:
         result = _apply_rotary_pos_emb_bshd(
-            t, freqs,
+            t,
+            freqs,
             rotary_interleaved=config.rotary_interleaved,
             multi_latent_attention=config.multi_latent_attention,
             mscale=mscale,
         )
     else:
         result = apply_rotary_pos_emb_thd_absolute(
-            t, cu_seqlens, freqs, rotary_interleaved=config.rotary_interleaved,
+            t,
+            cu_seqlens,
+            freqs,
+            rotary_interleaved=config.rotary_interleaved,
             multi_latent_attention=config.multi_latent_attention,
             mscale=mscale,
             cp_group=cp_group,

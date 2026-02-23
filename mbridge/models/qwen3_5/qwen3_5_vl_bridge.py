@@ -1,9 +1,8 @@
 import torch
 
 from mbridge.core import register_model
-from mbridge.models.qwen3_5.transformer_config import Qwen3p5VLTransformerConfig
-from mbridge.models.qwen3_5.base_bridge import Qwen3p5VlBaseBridge
-
+from mbridge.models.qwen3_5.base_bridge import Qwen3_5VlBaseBridge
+from mbridge.models.qwen3_5.transformer_config import Qwen3_5VLTransformerConfig
 
 _QWEN3p5VIT_DIRECT_MAPPING = {
     "vision_model.patch_embed.proj.weight": "model.visual.patch_embed.proj.weight",
@@ -88,7 +87,7 @@ _QWEN3p5TEXT_ATTENTION_MAPPING = {
         "model.language_model.layers.{layer_number}.self_attn.k_proj.bias",
         "model.language_model.layers.{layer_number}.self_attn.v_proj.bias",
     ],
-    # linear attetnion
+    # linear attention
     "language_model.decoder.layers.{layer_number}.self_attention.dt_bias": [
         "model.language_model.layers.{layer_number}.linear_attn.dt_bias"
     ],
@@ -99,7 +98,7 @@ _QWEN3p5TEXT_ATTENTION_MAPPING = {
         "model.language_model.layers.{layer_number}.linear_attn.in_proj_qkv.weight",
         "model.language_model.layers.{layer_number}.linear_attn.in_proj_z.weight",
         "model.language_model.layers.{layer_number}.linear_attn.in_proj_b.weight",
-        "model.language_model.layers.{layer_number}.linear_attn.in_proj_a.weight"
+        "model.language_model.layers.{layer_number}.linear_attn.in_proj_a.weight",
     ],
     "language_model.decoder.layers.{layer_number}.self_attention.conv1d.weight": [
         "model.language_model.layers.{layer_number}.linear_attn.conv1d.weight"
@@ -111,8 +110,8 @@ _QWEN3p5TEXT_ATTENTION_MAPPING = {
         "model.language_model.layers.{layer_number}.linear_attn.out_proj.weight"
     ],
     "language_model.decoder.layers.{layer_number}.self_attention.in_proj.layer_norm_weight": [
-        "model.language_model.layers.{layer_number}.input_layernorm.weight"    
-    ]
+        "model.language_model.layers.{layer_number}.input_layernorm.weight"
+    ],
 }
 
 _QWEN3p5TEXT_MLP_MAPPING = {
@@ -154,14 +153,15 @@ _QWEN3p5TEXT_MOE_MLP_MAPPING = {
     ],
 }
 
+
 @register_model("qwen3_5")
-class Qwen3p5VlBridge(Qwen3p5VlBaseBridge):
+class Qwen3_5VlBridge(Qwen3_5VlBaseBridge):
     try:
         from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5VisionModel
     except:
         Qwen3_5VisionModel = None
     HfVisionClass: type = Qwen3_5VisionModel
-    TransformerConfigClass = Qwen3p5VLTransformerConfig
+    TransformerConfigClass = Qwen3_5VLTransformerConfig
 
     _CONFIG_MAPPING = {
         "num_layers": "num_hidden_layers",
@@ -216,8 +216,12 @@ class Qwen3p5VlBridge(Qwen3p5VlBaseBridge):
             linear_value_head_dim=self.hf_config.text_config.linear_value_head_dim,
             linear_num_key_heads=self.hf_config.text_config.linear_num_key_heads,
             linear_num_value_heads=self.hf_config.text_config.linear_num_value_heads,
-            rotary_percent=self.hf_config.text_config.rope_scaling.get("partial_rotary_factor", 0.25),
-            rotary_interleaved=self.hf_config.text_config.rope_scaling.get("mrope_interleaved", True),
+            rotary_percent=self.hf_config.text_config.rope_scaling.get(
+                "partial_rotary_factor", 0.25
+            ),
+            rotary_interleaved=self.hf_config.text_config.rope_scaling.get(
+                "mrope_interleaved", True
+            ),
             mrope_section=self.hf_config.text_config.rope_scaling.get(
                 "mrope_section",
                 [11, 11, 10],
@@ -233,14 +237,16 @@ class Qwen3p5VlBridge(Qwen3p5VlBaseBridge):
 
 
 @register_model("qwen3_5_moe")
-class Qwen3p5MoeVlBridge(Qwen3p5VlBaseBridge):
+class Qwen3_5MoeVlBridge(Qwen3_5VlBaseBridge):
     try:
-        from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeVisionModel
+        from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+            Qwen3_5MoeVisionModel,
+        )
     except:
         Qwen3_5MoeVisionModel = None
     HfVisionClass: type = Qwen3_5MoeVisionModel
 
-    TransformerConfigClass = Qwen3p5VLTransformerConfig
+    TransformerConfigClass = Qwen3_5VLTransformerConfig
 
     _CONFIG_MAPPING = {
         "num_layers": "num_hidden_layers",
@@ -312,7 +318,8 @@ class Qwen3p5MoeVlBridge(Qwen3p5VlBaseBridge):
             moe_grouped_gemm=True,
             moe_router_score_function="softmax",
             moe_shared_expert_intermediate_size=self.hf_config.text_config.shared_expert_intermediate_size,
-            moe_shared_expert_gate=self.hf_config.text_config.shared_expert_intermediate_size > 0,
+            moe_shared_expert_gate=self.hf_config.text_config.shared_expert_intermediate_size
+            > 0,
             # Other optimizations
             persist_layer_norm=True,
             bias_activation_fusion=True,
@@ -335,8 +342,12 @@ class Qwen3p5MoeVlBridge(Qwen3p5VlBaseBridge):
             linear_value_head_dim=self.hf_config.text_config.linear_value_head_dim,
             linear_num_key_heads=self.hf_config.text_config.linear_num_key_heads,
             linear_num_value_heads=self.hf_config.text_config.linear_num_value_heads,
-            rotary_percent=self.hf_config.text_config.rope_scaling.get("partial_rotary_factor", 0.25),
-            rotary_interleaved=self.hf_config.text_config.rope_scaling.get("mrope_interleaved", True),
+            rotary_percent=self.hf_config.text_config.rope_scaling.get(
+                "partial_rotary_factor", 0.25
+            ),
+            rotary_interleaved=self.hf_config.text_config.rope_scaling.get(
+                "mrope_interleaved", True
+            ),
             mrope_section=self.hf_config.text_config.rope_scaling.get(
                 "mrope_section",
                 [11, 11, 10],

@@ -1,13 +1,13 @@
-from typing import Optional, Union, Tuple
-import torch
-from torch import Tensor
+from typing import Optional, Tuple, Union
 
+import torch
 from megatron.core.transformer.attention import *
+from torch import Tensor
 
 from mbridge.models.qwen3_vl.rope_utils import apply_rotary_pos_emb_absolute
 
 
-class Qwen3p5VLSelfAttention(SelfAttention):
+class Qwen3_5VLSelfAttention(SelfAttention):
     def forward(
         self,
         hidden_states: Tensor,
@@ -51,12 +51,16 @@ class Qwen3p5VLSelfAttention(SelfAttention):
         # Check if we need to skip RoPE
         # no_rope is 0-indexed array and self.layer_number is 1-indexed
         no_rope = (
-            self.config.no_rope_freq[self.layer_number - 1] if self.config.no_rope_freq else False
+            self.config.no_rope_freq[self.layer_number - 1]
+            if self.config.no_rope_freq
+            else False
         )
         if no_rope:
             rotary_pos_emb = None
 
-        inference_context = deprecate_inference_params(inference_context, inference_params)
+        inference_context = deprecate_inference_params(
+            inference_context, inference_params
+        )
 
         if inference_context and inference_context.is_dynamic_batching():
             assert HAVE_FA3 or is_fa_min_version(
@@ -114,9 +118,13 @@ class Qwen3p5VLSelfAttention(SelfAttention):
                 self.config.fused_single_qkv_rope and split_qkv
             ), "fused_single_qkv_rope requested but not available/supported for the config."
         if output_gate:
-            assert split_qkv, "output_gate is not supported for unsplit mixed_qkv tensor."
+            assert (
+                split_qkv
+            ), "output_gate is not supported for unsplit mixed_qkv tensor."
 
-        with off_interface(self.offload_qkv_linear, hidden_states, "qkv_linear") as hidden_states:
+        with off_interface(
+            self.offload_qkv_linear, hidden_states, "qkv_linear"
+        ) as hidden_states:
             qkv_output = self.get_query_key_value_tensors(
                 hidden_states,
                 key_value_states,
@@ -160,9 +168,9 @@ class Qwen3p5VLSelfAttention(SelfAttention):
         if in_decode_mode and self.config.flash_decode:
             assert self.layer_number in inference_context.key_value_memory_dict
             assert inference_context.sequence_len_offset is not None
-            inference_key_memory, inference_value_memory = inference_context.key_value_memory_dict[
-                self.layer_number
-            ]
+            inference_key_memory, inference_value_memory = (
+                inference_context.key_value_memory_dict[self.layer_number]
+            )
             output = self.flash_decode(
                 sequence_len_offset=sequence_len_offset,
                 query_layer=query,
@@ -202,7 +210,7 @@ class Qwen3p5VLSelfAttention(SelfAttention):
                 )
             )
 
-        if packed_seq_params is not None and packed_seq_params.qkv_format == 'thd':
+        if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
             query = query.squeeze(1)
             key = key.squeeze(1)
             value = value.squeeze(1)
@@ -217,7 +225,7 @@ class Qwen3p5VLSelfAttention(SelfAttention):
         ):
             q_pos_emb, k_pos_emb = rotary_pos_emb
 
-            if packed_seq_params is not None and packed_seq_params.qkv_format == 'thd':
+            if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
                 if packed_seq_params.cu_seqlens_q_padded is not None:
                     cu_seqlens_q = packed_seq_params.cu_seqlens_q_padded
                 else:
@@ -232,18 +240,27 @@ class Qwen3p5VLSelfAttention(SelfAttention):
             if split_qkv:
                 if q_pos_emb is not None:
                     # TODO VIJAY: simplify
-                    if inference_context is None or inference_context.is_static_batching():
+                    if (
+                        inference_context is None
+                        or inference_context.is_static_batching()
+                    ):
                         query = apply_rotary_pos_emb_absolute(
                             query,
                             q_pos_emb,
                             config=self.config,
                             cu_seqlens=cu_seqlens_q,
-                            mscale=_yarn_get_concentration_factor_from_config(self.config),
+                            mscale=_yarn_get_concentration_factor_from_config(
+                                self.config
+                            ),
                             cp_group=self.pg_collection.cp,
                         )
                     else:
                         query = inference_context.apply_rotary_emb_query(
-                            query, q_pos_emb, self.config, cu_seqlens_q, self.pg_collection.cp
+                            query,
+                            q_pos_emb,
+                            self.config,
+                            cu_seqlens_q,
+                            self.pg_collection.cp,
                         )
                 if k_pos_emb is not None:
                     key = apply_rotary_pos_emb_absolute(
@@ -255,7 +272,9 @@ class Qwen3p5VLSelfAttention(SelfAttention):
                         cp_group=self.pg_collection.cp,
                     )
             else:
-                raise ValueError("fused_qkv_rotary_pos_emb is not supported for unsplit mixed_qkv tensor.")
+                raise ValueError(
+                    "fused_qkv_rotary_pos_emb is not supported for unsplit mixed_qkv tensor."
+                )
 
             # TODO, can apply positional embedding to value_layer so it has
             # absolute positional embedding.
@@ -298,7 +317,9 @@ class Qwen3p5VLSelfAttention(SelfAttention):
                 # Dynamic batching attention kernel.
                 q, k, v = (query, key, value)
                 cu_query_lengths, max_seqlen_q = inference_context.cu_query_lengths()
-                cu_kv_lengths, kv_lengths, max_seqlen_k = inference_context.cu_kv_lengths()
+                cu_kv_lengths, kv_lengths, max_seqlen_k = (
+                    inference_context.cu_kv_lengths()
+                )
 
                 core_attn_out = self.flash_decode_and_prefill(
                     q,
@@ -312,7 +333,7 @@ class Qwen3p5VLSelfAttention(SelfAttention):
                     block_table,
                     inference_context.is_decode_only(),
                 )
-                core_attn_out = rearrange(core_attn_out, 's b h d -> s b (h d)')
+                core_attn_out = rearrange(core_attn_out, "s b h d -> s b (h d)")
 
                 # Clear the outputs for padding tokens when using quantization scales
                 # to avoid corrupting amax calculations
@@ -321,10 +342,12 @@ class Qwen3p5VLSelfAttention(SelfAttention):
 
             if self.offload_core_attention and self.training:
                 core_attn_out = off_interface.group_commit(
-                    core_attn_out, name="core_attn", forced_released_tensors=[query, key, value]
+                    core_attn_out,
+                    name="core_attn",
+                    forced_released_tensors=[query, key, value],
                 )
 
-        if packed_seq_params is not None and packed_seq_params.qkv_format == 'thd':
+        if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
             # reshape to same output shape as unpacked case
             # (t, np, hn) -> (t, b=1, h=np*hn)
             # t is the pack size = sum (sq_i)
@@ -342,7 +365,9 @@ class Qwen3p5VLSelfAttention(SelfAttention):
         # Output. [sq, b, h]
         # =================
         nvtx_range_push(suffix="linear_proj")
-        with off_interface(self.offload_attn_proj, core_attn_out, "attn_proj") as core_attn_out:
+        with off_interface(
+            self.offload_attn_proj, core_attn_out, "attn_proj"
+        ) as core_attn_out:
             output, bias = self.linear_proj(core_attn_out)
         if self.offload_attn_proj:
             output = off_interface.group_commit(

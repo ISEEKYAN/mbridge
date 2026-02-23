@@ -280,9 +280,7 @@ def get_args():
         choices=["image", "video", "mix"],
         help="sample type",
     )
-    parser.add_argument(
-        "--save_path", type=str, default=None, help="Save path"
-    )
+    parser.add_argument("--save_path", type=str, default=None, help="Save path")
 
     args = parser.parse_args()
     return args
@@ -442,7 +440,10 @@ def main():
 
             megatron_output = megatron_output[:, :real_seq_length, :]
 
-            torch.save(megatron_output, f"qwen3p5_save/mlm_tp{args.tp}_pp{args.pp}_cp{args.cp}_ep{args.ep}.pt")
+            torch.save(
+                megatron_output,
+                f"qwen3_5_save/mlm_tp{args.tp}_pp{args.pp}_cp{args.cp}_ep{args.ep}.pt",
+            )
 
             print(f"Finish Done")
 

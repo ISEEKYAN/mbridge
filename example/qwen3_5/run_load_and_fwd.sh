@@ -33,7 +33,7 @@ CP_SIZE $CP_SIZE
 EP_SIZE $EP_SIZE
 "
 
-# torch 启动参数
+# torchrun distributed args
 DISTRIBUTED_ARGS="
     --nproc_per_node $GPUS_PER_NODE \
     --nnodes $NNODES \

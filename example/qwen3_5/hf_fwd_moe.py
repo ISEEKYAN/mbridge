@@ -9,7 +9,6 @@ except:
 
 from example.qwen3_5.load_model_and_forward import get_sample_for_forward
 
-
 if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Load model and generate text")
@@ -46,6 +45,6 @@ if __name__ == "__main__":
     hf_output = model.forward(**inputs)
 
     print(hf_output.logits.shape, hf_output.logits.device, hf_output.logits.dtype)
-    torch.save(hf_output.logits.cpu(), "qwen3p5_save/hf_qwen3_5.pt")
+    torch.save(hf_output.logits.cpu(), "qwen3_5_save/hf_qwen3_5.pt")
 
     print(f"hf Done")
