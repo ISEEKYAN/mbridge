@@ -340,8 +340,9 @@ class Qwen3VLModel(MegatronModule):
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True
                 )
-                vision_mask_thd = (input_ids_thd == self.image_token_id) \
-                                | (input_ids_thd == self.video_token_id)
+                vision_mask_thd = (input_ids_thd == self.image_token_id) | (
+                    input_ids_thd == self.video_token_id
+                )
                 if deepstack_feature_lists is not None:
                     tmp_embeddings = torch.zeros_like(
                         combined_embeddings.transpose(0, 1)

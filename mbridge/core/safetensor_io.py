@@ -14,7 +14,7 @@ from safetensors.torch import save_file
 class SafeTensorIO:
     def __init__(self, hf_dir: str):
         index_file = os.path.join(hf_dir, "model.safetensors.index.json")
-        config = AutoConfig.from_pretrained(hf_dir)
+        config = AutoConfig.from_pretrained(hf_dir, trust_remote_code=True)
 
         self.index = {}
         self.origin_index = {}
