@@ -21,7 +21,7 @@ export MASTER_ADDR="${_MASTER_ADDR:-localhost}"
 readonly TP_SIZE=2
 readonly PP_SIZE=2
 readonly CP_SIZE=1
-readonly EP_SIZE=2
+readonly EP_SIZE=4
 
 echo "INFO
 __POD_IP__ $__POD_IP__
@@ -42,12 +42,11 @@ DISTRIBUTED_ARGS="
     --master_port $MASTER_PORT \
 "
 
-
 SAMPLE_TYPE="image"
 
-# python example/qwen3_5/hf_fwd_moe.py \
-#     --model_path hf-hub/Qwen/Qwen3.5_small/ \
-#     --sample_type $SAMPLE_TYPE
+python example/qwen3_5/hf_fwd_moe.py \
+    --model_path hf-hub/Qwen/Qwen3.5-35B-A3B/ \
+    --sample_type $SAMPLE_TYPE
 
 torchrun $DISTRIBUTED_ARGS example/qwen3_5/load_model_and_forward.py \
     --tp $TP_SIZE \
@@ -55,6 +54,6 @@ torchrun $DISTRIBUTED_ARGS example/qwen3_5/load_model_and_forward.py \
     --ep $EP_SIZE \
     --etp 1 \
     --cp $CP_SIZE \
-    --model_path hf-hub/Qwen/Qwen3.5_small/ \
+    --model_path hf-hub/Qwen/Qwen3.5-35B-A3B/ \
     --sample_type $SAMPLE_TYPE \
     --check_export

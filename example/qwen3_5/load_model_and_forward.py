@@ -354,11 +354,8 @@ def main():
     model = bridge.get_model(model_type=ModelType.encoder_or_decoder)
     assert len(model) == 1
     bridge.load_weights(model, hf_model_path, memory_efficient=False)
-    for pname, params in model[0].named_parameters():
-        if torch.distributed.get_rank() == 0:
-            print(f"Model weight {pname=} {params.shape} {params.dtype} {params.sum()}")
 
-    # # check the export
+    # check the export
     if args.check_export:
         print(
             f"rank{torch.distributed.get_rank()}: end load weight, start check export ..."
@@ -392,6 +389,11 @@ def main():
     print(f"rank{torch.distributed.get_rank()}: end load weight, start forward ...")
 
     sample = get_sample_for_forward(hf_model_path, args.sample_type)
+    input_mask = sample["input_ids"] != bridge.hf_config.image_token_id
+    input_mask = input_mask & (sample["input_ids"] != bridge.hf_config.vision_end_token_id)
+    input_mask = input_mask & (sample["input_ids"] != bridge.hf_config.vision_start_token_id)
+    input_mask = F.pad(input_mask[:, 1:], (0, 1, 0, 0), value=True)
+
     real_seq_length = sample["input_ids"].shape[-1]
     torch.distributed.barrier()
     seq_length_factor = args.tp
@@ -440,12 +442,27 @@ def main():
 
             megatron_output = megatron_output[:, :real_seq_length, :]
 
-            torch.save(
-                megatron_output,
-                f"qwen3_5_save/mlm_tp{args.tp}_pp{args.pp}_cp{args.cp}_ep{args.ep}.pt",
-            )
+            if torch.distributed.get_rank() == torch.distributed.get_world_size() - 1:
+                os.makedirs("qwen3_5_save", exist_ok=True)
+                torch.save(
+                    megatron_output,
+                    f"qwen3_5_save/mlm_tp{args.tp}_pp{args.pp}_cp{args.cp}_ep{args.ep}.pt",
+                )
 
-            print(f"Finish Done")
+                hf_output = torch.load("qwen3_5_save/hf_qwen3_5.pt", map_location="cpu").to(
+                    megatron_output.device
+                )
+
+                print(f"======= cos_similarity without mask =======")
+                cos_similarity(hf_output, megatron_output)
+
+                # 去除 image-token-id 的再来做对比
+                print(f"======= cos_similarity with mask =======")
+                hf_output = hf_output[input_mask]
+                megatron_output = megatron_output[input_mask]
+                cos_similarity(hf_output, megatron_output)
+
+            print(f"forward finished")
 
     torch.distributed.barrier()
     torch.distributed.destroy_process_group()

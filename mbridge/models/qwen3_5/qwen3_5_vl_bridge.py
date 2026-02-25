@@ -219,9 +219,6 @@ class Qwen3_5VlBridge(Qwen3_5VlBaseBridge):
             rotary_percent=self.hf_config.text_config.rope_scaling.get(
                 "partial_rotary_factor", 0.25
             ),
-            rotary_interleaved=self.hf_config.text_config.rope_scaling.get(
-                "mrope_interleaved", True
-            ),
             mrope_section=self.hf_config.text_config.rope_scaling.get(
                 "mrope_section",
                 [11, 11, 10],
@@ -344,9 +341,6 @@ class Qwen3_5MoeVlBridge(Qwen3_5VlBaseBridge):
             linear_num_value_heads=self.hf_config.text_config.linear_num_value_heads,
             rotary_percent=self.hf_config.text_config.rope_scaling.get(
                 "partial_rotary_factor", 0.25
-            ),
-            rotary_interleaved=self.hf_config.text_config.rope_scaling.get(
-                "mrope_interleaved", True
             ),
             mrope_section=self.hf_config.text_config.rope_scaling.get(
                 "mrope_section",

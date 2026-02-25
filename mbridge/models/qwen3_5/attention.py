@@ -4,7 +4,10 @@ import torch
 from megatron.core.transformer.attention import *
 from torch import Tensor
 
-from mbridge.models.qwen3_vl.rope_utils import apply_rotary_pos_emb_absolute
+from megatron.core.models.common.embeddings.yarn_rotary_pos_embedding import (
+    _yarn_get_concentration_factor_from_config,
+)
+from mbridge.models.qwen3_5.rope_utils import apply_rotary_pos_emb_absolute
 
 
 class Qwen3_5VLSelfAttention(SelfAttention):
@@ -249,9 +252,6 @@ class Qwen3_5VLSelfAttention(SelfAttention):
                             q_pos_emb,
                             config=self.config,
                             cu_seqlens=cu_seqlens_q,
-                            mscale=_yarn_get_concentration_factor_from_config(
-                                self.config
-                            ),
                             cp_group=self.pg_collection.cp,
                         )
                     else:
@@ -268,7 +268,6 @@ class Qwen3_5VLSelfAttention(SelfAttention):
                         k_pos_emb,
                         config=self.config,
                         cu_seqlens=cu_seqlens_kv,
-                        mscale=_yarn_get_concentration_factor_from_config(self.config),
                         cp_group=self.pg_collection.cp,
                     )
             else:

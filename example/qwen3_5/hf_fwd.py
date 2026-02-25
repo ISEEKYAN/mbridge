@@ -4,7 +4,7 @@ import os
 import torch
 
 try:
-    from transformers import Qwen3_5MoeForConditionalGeneration
+    from transformers import Qwen3_5ForConditionalGeneration
 except:
     print(f"your install the tranformers>=5.2.0 or install from source")
 
@@ -27,7 +27,7 @@ if __name__ == "__main__":
 
     # default: Load the model on the available device(s)
     torch.set_grad_enabled(False)
-    model = Qwen3_5MoeForConditionalGeneration.from_pretrained(
+    model = Qwen3_5ForConditionalGeneration.from_pretrained(
         args.model_path,
         dtype="auto",
         device_map="auto",

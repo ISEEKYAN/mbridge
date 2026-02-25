@@ -3,6 +3,8 @@ import torch
 
 def cos_similarity(a, b):
     print(f"a {a.shape} b {b.shape}")
+    b = b.to(a.dtype)
+
     a = a.to(b.device)
     a = a.float()
     # a = a / a.norm(dim=-1, keepdim=True)
@@ -29,13 +31,14 @@ def cos_similarity(a, b):
 path1 = "qwen3_5_save/hf_qwen3_5.pt"
 
 path2_list = [
-    # "qwen3_5_save/mlm_tp1_pp1_cp1_ep1.pt",
+    # "qwen3_5_save/mlm_tp1_pp1_cp1_ep4.pt",
     # "qwen3_5_save/mlm_tp2_pp1_cp1_ep1.pt",
     # "qwen3_5_save/mlm_tp2_pp1_cp1_ep4.pt",
     # "qwen3_5_save/mlm_tp2_pp1_cp2_ep4.pt",
-    "qwen3_5_save/mlm_tp2_pp2_cp2_ep4.pt",
-    "qwen3_5_save/mlm_tp4_pp2_cp1_ep4.pt",
-    "qwen3_5_save/mlm_tp2_pp2_cp1_ep2.pt",
+    # "qwen3_5_save/mlm_tp2_pp2_cp2_ep4.pt",
+    # "qwen3_5_save/mlm_tp4_pp2_cp1_ep4.pt",
+    # "qwen3_5_save/mlm_tp2_pp2_cp1_ep2.pt",
+    "qwen3_5_save/mlm_tp2_pp2_cp1_ep4.pt"
 ]
 
 a = torch.load(path1)
