@@ -821,6 +821,9 @@ class Qwen3_5VlBaseBridge(VLMBridge):
                 language_max_sequence_length=self.hf_config.text_config.max_position_embeddings,
                 hf_config=self.hf_config,
                 hf_vision_cls=self.HfVisionClass,
+                language_rotary_percent=self.hf_config.text_config.rope_scaling.get(
+                    "partial_rotary_factor", 0.25
+                ),
                 language_rotary_base=self.hf_config.text_config.rope_scaling.get(
                     "rope_theta", 10000000
                 ),

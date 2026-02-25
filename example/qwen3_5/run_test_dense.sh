@@ -19,9 +19,8 @@ readonly MASTER_PORT=65535
 export MASTER_ADDR="${_MASTER_ADDR:-localhost}"
 
 readonly TP_SIZE=2
-readonly PP_SIZE=1
+readonly PP_SIZE=2
 readonly CP_SIZE=1
-readonly EP_SIZE=16
 
 echo "INFO
 __POD_IP__ $__POD_IP__
@@ -30,7 +29,6 @@ NNODES $NNODES
 TP_SIZE $TP_SIZE
 PP_SIZE $PP_SIZE
 CP_SIZE $CP_SIZE
-EP_SIZE $EP_SIZE
 "
 
 # torchrun distributed args
@@ -42,15 +40,17 @@ DISTRIBUTED_ARGS="
     --master_port $MASTER_PORT \
 "
 
+
 SAMPLE_TYPE="image"
 
-torchrun $DISTRIBUTED_ARGS \
-    example/qwen3_5/load_model_and_inference.py \
+python example/qwen3_5/hf_fwd.py \
+    --model_path hf-hub/Qwen/Qwen3.5-27B/ \
+    --sample_type $SAMPLE_TYPE
+
+torchrun $DISTRIBUTED_ARGS example/qwen3_5/load_model_and_forward.py \
     --tp $TP_SIZE \
     --pp $PP_SIZE \
-    --ep $EP_SIZE \
-    --etp 1 \
     --cp $CP_SIZE \
-    --model_path hf-hub/Qwen/Qwen3.5-397B-A17B/ \
+    --model_path hf-hub/Qwen/Qwen3.5-27B/ \
     --sample_type $SAMPLE_TYPE \
-
+    --check_export

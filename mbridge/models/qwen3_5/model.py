@@ -21,7 +21,7 @@ from mbridge.core.util import (
 from mbridge.models.qwen3_5.attention import Qwen3_5VLSelfAttention, SelfAttention
 from mbridge.models.qwen3_5.transformer_config import Qwen3_5VLTransformerConfig
 from mbridge.models.qwen3_5.utils import reorganize_inputs
-from mbridge.models.qwen3_vl.rope_utils import (
+from mbridge.models.qwen3_5.rope_utils import (
     Qwen3VLMultimodalRotaryEmbedding,
     get_rope_index,
 )
@@ -31,7 +31,6 @@ class Qwen3_5GPTModel(GPTModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # rebuild rope
         self.rotary_pos_emb = Qwen3VLMultimodalRotaryEmbedding(
             kv_channels=self.config.kv_channels,
             rotary_percent=kwargs["rotary_percent"],
@@ -41,6 +40,10 @@ class Qwen3_5GPTModel(GPTModel):
             ),
             rotary_base=kwargs.get("rotary_base", 10000),
         )
+        self.mrope_section = self.config.mrope_section
+        assert (
+            self.mrope_section is not None
+        ), "mrope require mrope_section setting, but we got None from TransformerConfig"
 
 
 class Qwen3_5VLModel(MegatronModule):
@@ -72,10 +75,11 @@ class Qwen3_5VLModel(MegatronModule):
     ) -> None:
         super().__init__(config=language_transformer_config)
 
-        for layer_spec in language_transformer_layer_spec.layer_specs:
+        for _, layer_spec in enumerate(language_transformer_layer_spec.layer_specs):
             # only replace SelfAttention
-            if isinstance(layer_spec.submodules.self_attention.module, SelfAttention):
+            if issubclass(layer_spec.submodules.self_attention.module, SelfAttention):
                 layer_spec.submodules.self_attention.module = Qwen3_5VLSelfAttention
+
 
         self.pre_process = pre_process
         self.post_process = post_process
