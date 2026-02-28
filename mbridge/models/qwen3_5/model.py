@@ -80,7 +80,6 @@ class Qwen3_5VLModel(MegatronModule):
             if issubclass(layer_spec.submodules.self_attention.module, SelfAttention):
                 layer_spec.submodules.self_attention.module = Qwen3_5VLSelfAttention
 
-
         self.pre_process = pre_process
         self.post_process = post_process
         self.add_encoder = add_encoder
@@ -98,8 +97,8 @@ class Qwen3_5VLModel(MegatronModule):
 
         if self.pre_process:
             self.vision_model = hf_vision_cls._from_config(hf_config.vision_config)
-            self._cast_rotary_emb_to_fp32(self.vision_model)
-            self._mark_vision_params_sequence_parallel(self.vision_model)
+            self._hook_fp32_rotary_emb(self.vision_model)
+            self._hook_vision_params_avg_grad_across_tp(self.vision_model)
 
         self.language_model = Qwen3_5GPTModel(
             config=language_transformer_config,
@@ -120,8 +119,9 @@ class Qwen3_5VLModel(MegatronModule):
         )
 
     @staticmethod
-    def _cast_rotary_emb_to_fp32(module: torch.nn.Module):
-        """Force all RotaryEmbedding inv_freq buffers to stay at original float32 precision."""
+    def _hook_fp32_rotary_emb(module: torch.nn.Module):
+        """Force all RotaryEmbedding inv_freq buffers to stay at original float32 precision.
+        """
         for submodule in module.modules():
             if hasattr(submodule, "inv_freq") and submodule.inv_freq is not None:
                 # Save the original float32 inv_freq (this runs BEFORE Float16Module)
@@ -138,10 +138,18 @@ class Qwen3_5VLModel(MegatronModule):
 
                 submodule.register_forward_pre_hook(_hook)
 
-    def _mark_vision_params_sequence_parallel(self, module: torch.nn.Module):
-        """Mark all vision model parameters with sequence_parallel=True."""
-        for param in module.parameters():
-            setattr(param, "sequence_parallel", self.config.sequence_parallel)
+    def _hook_vision_params_avg_grad_across_tp(self, module: torch.nn.Module):
+        """Mark all vision model parameters with average_gradients_across_tp_domain=True.
+
+        Since the vision model receives full (non-SP-split) input on every TP rank,
+        each TP rank computes the full gradient independently. Using AVG all-reduce
+        across TP ranks keeps replicated weights synchronized without scaling the
+        gradient by tp_size (which SUM would incorrectly do).
+        """
+        if module is None:
+            return module
+        for param in module.parameters(recurse=True):
+            setattr(param, "average_gradients_across_tp_domain", True)
 
     @property
     def share_embeddings_and_output_weights(self):
@@ -371,3 +379,67 @@ class Qwen3_5VLModel(MegatronModule):
         )
 
         return output
+
+    def verify_vision_weights_consistency(self, step: int = -1):
+        """
+        Verify that vision model weights are consistent across all ranks.
+        Should be called after optimizer.step() and param all-gather.
+
+        Checks:
+        1. Across TP ranks: vision weights should be identical (replicated, not sharded).
+        2. Across DP ranks: vision weights should be identical (same optimizer update).
+        """
+        if self.vision_model is None:
+            return
+
+        rank = torch.distributed.get_rank()
+        tp_group = mpu.get_tensor_model_parallel_group()
+        tp_rank = mpu.get_tensor_model_parallel_rank()
+        tp_size = mpu.get_tensor_model_parallel_world_size()
+        dp_group = mpu.get_data_parallel_group()
+        dp_rank = mpu.get_data_parallel_rank()
+        dp_size = mpu.get_data_parallel_world_size()
+
+        logger = logging.getLogger(__name__)
+        all_consistent = True
+
+        for name, param in self.vision_model.named_parameters():
+            if not param.requires_grad:
+                continue
+
+            # --- Check 1: TP consistency ---
+            if tp_size > 1:
+                # Gather weights from all TP ranks
+                gathered = [torch.zeros_like(param.data) for _ in range(tp_size)]
+                torch.distributed.all_gather(gathered, param.data, group=tp_group)
+                for i in range(1, tp_size):
+                    if not torch.equal(gathered[0], gathered[i]):
+                        max_diff = (gathered[0] - gathered[i]).abs().max().item()
+                        if torch.distributed.get_rank() == 0:
+                            logger.warning(
+                                f"[Step {step}] TP MISMATCH: vision_model.{name} "
+                                f"tp_rank 0 vs tp_rank {i}, max_diff={max_diff:.6e}"
+                                f" {gathered[0].sum()} {gathered[i].sum()}"
+                            )
+                        all_consistent = False
+
+            # --- Check 2: DP consistency ---
+            if dp_size > 1:
+                gathered = [torch.zeros_like(param.data) for _ in range(dp_size)]
+                torch.distributed.all_gather(gathered, param.data, group=dp_group)
+                for i in range(1, dp_size):
+                    if not torch.equal(gathered[0], gathered[i]):
+                        max_diff = (gathered[0] - gathered[i]).abs().max().item()
+                        if torch.distributed.get_rank() == 0:
+                            logger.warning(
+                                f"[Step {step}] DP MISMATCH: vision_model.{name} "
+                                f"dp_rank 0 vs dp_rank {i}, max_diff={max_diff:.6e}"
+                                f" {gathered[0].sum()} {gathered[i].sum()}"
+                            )
+                        all_consistent = False
+
+        if all_consistent and rank == 0:
+            logger.info(
+                f"[Step {step}] matching. Vision model weights consistent across "
+                f"TP({tp_size}) and DP({dp_size}) ranks."
+            )
