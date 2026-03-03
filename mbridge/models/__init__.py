@@ -34,3 +34,5 @@ from .qwen3_vl import Qwen3VLBridge, Qwen3VLBridge
 from contextlib import suppress
 with suppress(ImportError):
     from .qwen3_5 import Qwen3_5VlBridge, Qwen3_5MoeVlBridge
+with suppress(ImportError):
+    from .qwen3_omni_moe import Qwen3OmniMoeBridge
