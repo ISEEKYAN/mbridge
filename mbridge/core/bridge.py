@@ -23,6 +23,81 @@ from .util import (
 )
 
 
+def _safe_gather_uneven_dtensor(dtensor):
+    """Gather unevenly sharded DTensor, compatible with old Megatron-Core."""
+    from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
+        gather_uneven_dtensor_to_full_tensor,
+        update_uneven_dtensor_chunk_metadata,
+    )
+    try:
+        return gather_uneven_dtensor_to_full_tensor(dtensor)
+    except RuntimeError as e:
+        """Old Megatron-Core bug: DeviceMesh._flatten() name conflict (e.g. 'dp_cp already exists')"""
+        if "already exists" not in str(e):
+            raise
+
+    import torch.distributed as dist
+    from torch.distributed._tensor import DTensor as _DTensor
+    from torch.distributed.tensor.placement_types import Replicate, Shard
+    try:
+        from torch.distributed.tensor.placement_types import _StridedShard
+    except ImportError:
+        _StridedShard = type(None)
+
+    device_mesh = dtensor.device_mesh
+    if device_mesh.size() == dist.get_world_size():
+        from torch.distributed.distributed_c10d import _get_default_group
+        process_group = _get_default_group()
+    else:
+        process_group = device_mesh._flatten().get_group()
+
+    if not hasattr(dtensor._local_tensor, "__create_chunk_list__"):
+        update_uneven_dtensor_chunk_metadata(dtensor)
+
+    chunk_metadata_list = dtensor.__create_chunk_list__()
+    local_chunk_metadata = chunk_metadata_list[0]
+    world_size = process_group.size()
+
+    local_chunk_info = {
+        "shape": list(dtensor.to_local().shape),
+        "offset": getattr(local_chunk_metadata, "offsets", [0] * len(dtensor.shape)),
+        "rank": process_group.rank(),
+    }
+
+    all_chunk_info = [None] * world_size
+    dist.all_gather_object(all_chunk_info, local_chunk_info, group=process_group)
+
+    local_tensor = dtensor.to_local()
+    have_shard = any(
+        isinstance(p, Shard) or isinstance(p, _StridedShard)
+        for p in dtensor.placements
+    )
+
+    if not have_shard:
+        full_tensor = local_tensor.clone()
+    else:
+        gathered = [
+            torch.empty(info["shape"], dtype=local_tensor.dtype, device=local_tensor.device)
+            for info in all_chunk_info
+        ]
+        dist.all_gather(gathered, local_tensor, group=process_group)
+        full_tensor = torch.empty(
+            dtensor.shape, dtype=local_tensor.dtype, device=local_tensor.device
+        )
+        for info, shard in zip(all_chunk_info, gathered):
+            slices = tuple(
+                slice(o, o + s) for o, s in zip(info["offset"], shard.shape)
+            )
+            full_tensor[slices] = shard
+        del gathered
+
+    return _DTensor.from_local(
+        full_tensor,
+        placements=[Replicate()] * len(dtensor.placements),
+        device_mesh=device_mesh,
+    )
+
+
 class Bridge(ABC):
     """
     Base model bridge class.
@@ -479,6 +554,13 @@ class Bridge(ABC):
         assert (
             len(self.export_weights_buff) == 0
         ), f"should be empty {self.export_weights_buff=}"
+        
+        # FSDP Zero-3: ensure all params are DTensor for export.
+        if self.use_megatron_fsdp:
+            for model_chunk in models:
+                fsdp = model_chunk.module
+                if getattr(fsdp, "data_parallel_sharding_strategy", None) == "optim_grads_params":
+                    fsdp.synchronize_param_gather()
         models = [unwrap_model(model) for model in models]
 
         def get_model_chunk_generator():
@@ -542,11 +624,8 @@ class Bridge(ABC):
             name = broadcast_str_from_megatron_pp(name)
             broad_pp_param = None
             if isinstance(param, DTensor):
-                from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
-                    gather_uneven_dtensor_to_full_tensor,
-                )
                 _, local_weights = get_module_and_param_from_name(models, iter_name, iter_vpp_rank)
-                full_tensor = gather_uneven_dtensor_to_full_tensor(local_weights)            
+                full_tensor = _safe_gather_uneven_dtensor(local_weights)
                 broad_pp_param = full_tensor.to_local()                 
             else:
                 broad_pp_param = broadcast_from_megatron_pp(param)
