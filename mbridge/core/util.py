@@ -7,13 +7,14 @@ from collections import defaultdict
 from functools import lru_cache
 
 import torch
+from typing import List, Optional, Tuple
 from megatron.core import mpu
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.fp8_utils import correct_amax_history_if_needed
 from megatron.core.models.gpt.gpt_model import ModelType
 from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.transformer.module import Float16Module
+from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import (
     StragglerDetector,
     check_param_hashes_across_dp_replicas,
@@ -30,6 +31,7 @@ def get_model(
     bf16: bool = True,
     virtual_pipeline_model_parallel_size: int = None,
     encoder_pipeline_model_parallel_size: int = 0,
+    use_megatron_fsdp: bool = False,
     use_torch_fsdp2: bool = False,
     use_custom_fsdp: bool = False,
     use_precision_aware_optimizer: bool = False,
@@ -164,9 +166,13 @@ def get_model(
     correct_amax_history_if_needed(model)
 
     if wrap_with_ddp:
-        from megatron.core.distributed import DistributedDataParallelConfig
-
-        if use_torch_fsdp2:
+        from megatron.core.distributed import DistributedDataParallelConfig, FullyShardedDataParallel
+        if use_megatron_fsdp:
+            from megatron.core.distributed import FullyShardedDataParallel
+            DP = FullyShardedDataParallel
+            if use_torch_fsdp2:
+                raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
+        elif use_torch_fsdp2:
             try:
                 from megatron.core.distributed import (
                     TorchFullyShardedDataParallel as torch_FSDP,
@@ -207,7 +213,7 @@ def get_model(
 
         ddp_config = DistributedDataParallelConfig(**kwargs)
 
-        if not use_torch_fsdp2:
+        if not use_torch_fsdp2 and not use_megatron_fsdp:
             # In the custom FSDP and DDP use path, we need to initialize the bucket size.
 
             # If bucket_size is not provided as an input, use sane default.
@@ -273,7 +279,11 @@ try:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, torch_FSDP, custom_FSDP, Float16Module)
 except ImportError:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, custom_FSDP, Float16Module)
-
+try:
+    from megatron.core.distributed.fsdp.src.megatron_fsdp.megatron_fsdp import MegatronFSDP
+    ALL_MODULE_WRAPPER_CLASSNAMES = ALL_MODULE_WRAPPER_CLASSNAMES + (MegatronFSDP,)
+except ImportError:
+    pass
 
 def unwrap_model(model, module_instances=ALL_MODULE_WRAPPER_CLASSNAMES):
     return_list = True
@@ -782,3 +792,64 @@ def postprocess_packed_seqs(
         output_new[i, attention_mask[i]] = tmp[:s_len]
 
     return output_new
+
+
+def get_module_and_param_from_name(
+    models: MegatronModule | List[MegatronModule],
+    param_name: str,
+    vp_stage: Optional[int] = None,
+) -> Tuple[torch.nn.Module, torch.Tensor] | Tuple[torch.nn.Module, torch.Tensor, Tuple]:
+    """
+    Get parameter from models in specific VP stage.
+
+    Args:
+        models: List of Megatron model instances or a submodule
+        param_name: Local parameter name separated by dots, e.g., "transformer.layers.0.mlp.dense.bias"
+        vp_stage: Virtual pipeline stage index (None for single stage)
+
+    Returns:
+        Tuple of (module, parameter) where module owns the parameter
+    """
+
+    if isinstance(models, list):
+        if vp_stage is None:
+            model = models[0]
+        else:
+            if vp_stage >= len(models):
+                raise ValueError(f"VP stage {vp_stage} out of range (max: {len(models) - 1})")
+            model = models[vp_stage]
+    else:
+        model = models
+
+    module = unwrap_model(model)
+    splitted_name = param_name.split(".")
+
+    # Try to find the parameter using the given parts
+    def get_param(parts):
+        parent_module = module
+        previous_module = module
+
+        for i, part in enumerate(parts):
+            if not hasattr(parent_module, part):
+                return None
+            parent_module = getattr(parent_module, part)
+            if i < len(parts) - 1:
+                previous_module = getattr(previous_module, part)
+
+        return previous_module, parent_module
+
+    # First try the full parameter name (current behavior)
+    result = get_param(splitted_name)
+    if result is not None:
+        return result
+
+    # If full name doesn't work, try suffixes of the parameter name
+    # This handles cases where models is a submodule but param_name is absolute
+    for start_idx in range(1, len(splitted_name)):
+        suffix_parts = splitted_name[start_idx:]
+        result = get_param(suffix_parts)
+        if result is not None:
+            return result
+
+    # If no approach works, raise an error
+    raise ValueError(f"Parameter '{param_name}' not found in model at VP stage {vp_stage}")

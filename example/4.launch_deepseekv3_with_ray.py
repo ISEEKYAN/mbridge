@@ -100,6 +100,7 @@ def worker_fn(
     etp: Optional[int],
     num_layers_in_first_pipeline_stage: Optional[int] = None,
     num_layers_in_last_pipeline_stage: Optional[int] = None,
+    use_megatron_fsdp: bool = False,
 ):
     """Worker that runs on a single GPU.
 
@@ -118,7 +119,22 @@ def worker_fn(
         num_layers_in_last_pipeline_stage=num_layers_in_last_pipeline_stage,
     )
     # bridge.config.mtp_num_layers = 0
-    model = bridge.get_model(post_model_creation_callbacks=[], wrap_with_ddp=False)
+    if use_megatron_fsdp:
+        ddp_config = {
+            "use_distributed_optimizer": True,
+            "check_for_nan_in_grad": True,
+            "use_megatron_fsdp": True,
+            "data_parallel_sharding_strategy": "optim_grads_params",
+        }
+        model = bridge.get_model(
+            wrap_with_ddp=True,
+            use_megatron_fsdp=True,
+            ddp_config=ddp_config,
+            data_parallel_random_init=False,
+            post_model_creation_callbacks=[],
+        )
+    else:
+        model = bridge.get_model(post_model_creation_callbacks=[], wrap_with_ddp=False)
 
     # maintain router bias dtype
     for m in model:
@@ -224,6 +240,11 @@ def main():
     parser.add_argument(
         "--master_port", type=int, default=12355, help="NCCL master port"
     )
+    parser.add_argument(
+        "--use_megatron_fsdp",
+        action="store_true",
+        help="Use Megatron-FSDP",
+    )
     args = parser.parse_args()
 
     # Connect to the running Ray cluster
@@ -252,6 +273,7 @@ def main():
                     args.etp,
                     args.num_layers_in_first_pipeline_stage,
                     args.num_layers_in_last_pipeline_stage,
+                    args.use_megatron_fsdp,
                 )
             )
             rank += 1

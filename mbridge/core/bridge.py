@@ -11,7 +11,7 @@ from megatron.core.models.gpt.gpt_model import ModelType
 from transformers import AutoConfig
 from transformers.utils.hub import cached_file
 from safetensors import safe_open
-
+from torch.distributed._tensor import DTensor
 from .parallel_states import ParallelStates
 from .safetensor_io import SafeTensorIO
 from .util import (
@@ -19,7 +19,83 @@ from .util import (
     broadcast_str_from_megatron_pp,
     get_model,
     unwrap_model,
+    get_module_and_param_from_name,
 )
+
+
+def _safe_gather_uneven_dtensor(dtensor):
+    """Gather unevenly sharded DTensor, compatible with old Megatron-Core."""
+    from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
+        gather_uneven_dtensor_to_full_tensor,
+        update_uneven_dtensor_chunk_metadata,
+    )
+    try:
+        return gather_uneven_dtensor_to_full_tensor(dtensor)
+    except RuntimeError as e:
+        """Old Megatron-Core bug: DeviceMesh._flatten() name conflict (e.g. 'dp_cp already exists')"""
+        if "already exists" not in str(e):
+            raise
+
+    import torch.distributed as dist
+    from torch.distributed._tensor import DTensor as _DTensor
+    from torch.distributed.tensor.placement_types import Replicate, Shard
+    try:
+        from torch.distributed.tensor.placement_types import _StridedShard
+    except ImportError:
+        _StridedShard = type(None)
+
+    device_mesh = dtensor.device_mesh
+    if device_mesh.size() == dist.get_world_size():
+        from torch.distributed.distributed_c10d import _get_default_group
+        process_group = _get_default_group()
+    else:
+        process_group = device_mesh._flatten().get_group()
+
+    if not hasattr(dtensor._local_tensor, "__create_chunk_list__"):
+        update_uneven_dtensor_chunk_metadata(dtensor)
+
+    chunk_metadata_list = dtensor.__create_chunk_list__()
+    local_chunk_metadata = chunk_metadata_list[0]
+    world_size = process_group.size()
+
+    local_chunk_info = {
+        "shape": list(dtensor.to_local().shape),
+        "offset": getattr(local_chunk_metadata, "offsets", [0] * len(dtensor.shape)),
+        "rank": process_group.rank(),
+    }
+
+    all_chunk_info = [None] * world_size
+    dist.all_gather_object(all_chunk_info, local_chunk_info, group=process_group)
+
+    local_tensor = dtensor.to_local()
+    have_shard = any(
+        isinstance(p, Shard) or isinstance(p, _StridedShard)
+        for p in dtensor.placements
+    )
+
+    if not have_shard:
+        full_tensor = local_tensor.clone()
+    else:
+        gathered = [
+            torch.empty(info["shape"], dtype=local_tensor.dtype, device=local_tensor.device)
+            for info in all_chunk_info
+        ]
+        dist.all_gather(gathered, local_tensor, group=process_group)
+        full_tensor = torch.empty(
+            dtensor.shape, dtype=local_tensor.dtype, device=local_tensor.device
+        )
+        for info, shard in zip(all_chunk_info, gathered):
+            slices = tuple(
+                slice(o, o + s) for o, s in zip(info["offset"], shard.shape)
+            )
+            full_tensor[slices] = shard
+        del gathered
+
+    return _DTensor.from_local(
+        full_tensor,
+        placements=[Replicate()] * len(dtensor.placements),
+        device_mesh=device_mesh,
+    )
 
 
 class Bridge(ABC):
@@ -60,6 +136,7 @@ class Bridge(ABC):
         self.make_vocab_size_divisible_by = make_vocab_size_divisible_by
         self.vocab_size = None
         self.padded_vocab_size = None
+        self.use_megatron_fsdp = False
 
         # Some moe models require multiple weights to be combined into one,
         # such as qwen3vl. It will cache it into this buff until all weights are collected.
@@ -73,6 +150,7 @@ class Bridge(ABC):
         fp16: bool = False,
         bf16: bool = True,
         encoder_pipeline_model_parallel_size: int = 0,
+        use_megatron_fsdp: bool = False,
         use_torch_fsdp2: bool = False,
         use_custom_fsdp: bool = False,
         use_precision_aware_optimizer: bool = False,
@@ -120,6 +198,7 @@ class Bridge(ABC):
         #     and self.mpu.vpp_size > 1
         # ):
         #     raise ValueError("tie_word_embeddings is not supported for VPP > 1")
+        self.use_megatron_fsdp = use_megatron_fsdp
         model = get_model(
             self._model_provider(
                 post_model_creation_callbacks,
@@ -131,6 +210,7 @@ class Bridge(ABC):
             bf16=bf16,
             virtual_pipeline_model_parallel_size=self.mpu.vpp_size,
             encoder_pipeline_model_parallel_size=encoder_pipeline_model_parallel_size,
+            use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
             use_custom_fsdp=use_custom_fsdp,
             use_precision_aware_optimizer=use_precision_aware_optimizer,
@@ -198,8 +278,9 @@ class Bridge(ABC):
                 )
 
             # import mcore weights
+            unwrapped_model = unwrap_model(model)
             for local_name, hf_names in local_to_hf_map.items():
-                param = model.state_dict()[local_name]
+                param = unwrapped_model.state_dict()[local_name]
                 # hf format to mcore format
                 if set(to_load_from_disk) & set(hf_names):
                     if not memory_efficient:
@@ -218,7 +299,7 @@ class Bridge(ABC):
                         # skip lm_head.weight when the model is a value model
                         continue
 
-                param_to_load = torch.empty_like(param)
+                param_to_load = torch.empty(param.shape, device=param.device, dtype=param.dtype)
                 if ".mlp.experts.linear_fc" in local_name:
                     # split mcore weights across etp
                     if self.mpu.etp_rank == 0:
@@ -258,7 +339,14 @@ class Bridge(ABC):
                         group=self.mpu.tp_group,
                     )
                 # load
+                if isinstance(param, DTensor):
+                    _, local_weights = get_module_and_param_from_name(unwrapped_model, local_name)
+                    sliced_converted_weights = param_to_load.reshape(-1)[local_weights.megatron_fsdp_slice]
+                    param._local_tensor.reshape(-1).copy_(sliced_converted_weights)
+                    continue
                 param.copy_(param_to_load)
+            if self.use_megatron_fsdp:
+                model.module.install_optimized_model_weights()
 
     def _save_weights_fast(
         self,
@@ -543,6 +631,13 @@ class Bridge(ABC):
         assert (
             len(self.export_weights_buff) == 0
         ), f"should be empty {self.export_weights_buff=}"
+        
+        # FSDP Zero-3: ensure all params are DTensor for export.
+        if self.use_megatron_fsdp:
+            for model_chunk in models:
+                fsdp = model_chunk.module
+                if getattr(fsdp, "data_parallel_sharding_strategy", None) == "optim_grads_params":
+                    fsdp.synchronize_param_gather()
         models = [unwrap_model(model) for model in models]
 
         def get_model_chunk_generator():
@@ -604,7 +699,13 @@ class Bridge(ABC):
                 name, param = None, None
 
             name = broadcast_str_from_megatron_pp(name)
-            broad_pp_param = broadcast_from_megatron_pp(param)
+            broad_pp_param = None
+            if isinstance(param, DTensor):
+                _, local_weights = get_module_and_param_from_name(models, iter_name, iter_vpp_rank)
+                full_tensor = _safe_gather_uneven_dtensor(local_weights)
+                broad_pp_param = full_tensor.to_local()                 
+            else:
+                broad_pp_param = broadcast_from_megatron_pp(param)
 
             # EP
             if ".mlp.experts.linear_fc" in name and self.mpu.ep_size >= 1:
@@ -651,7 +752,7 @@ class Bridge(ABC):
                     if len(converted_names) == 0:
                         continue
 
-                    yield from zip(converted_names, [p.detach() for p in converted_params])
+                    yield from zip(converted_names, [p.detach().to(self.dtype) for p in converted_params])
                 continue
 
             # TP
@@ -683,7 +784,7 @@ class Bridge(ABC):
             if len(converted_names) == 0:
                 continue
 
-            yield from zip(converted_names, [p.detach() for p in converted_params])
+            yield from zip(converted_names, [p.detach().to(self.dtype) for p in converted_params])
 
     def export_weights_without_gather(
         self, models: list[torch.nn.Module],
