@@ -418,6 +418,9 @@ class Qwen3VBaseBridge(VLMBridge):
 
             setattr(self, "vision_config", vision_transformer_config)
 
+            rope_theta = self.hf_config.text_config.rope_theta if hasattr(self.hf_config.text_config, "rope_theta") \
+                else self.hf_config.text_config.rope_scaling["rope_theta"]
+
             model = Qwen3VLModel(
                 language_transformer_config=self.config,
                 language_transformer_layer_spec=transformer_layer_spec,
@@ -426,7 +429,7 @@ class Qwen3VBaseBridge(VLMBridge):
                 vision_transformer_config=vision_transformer_config,
                 vision_transformer_layer_spec=vision_transformer_layer_spec,
                 vision_patch_merger_spec=vision_patch_merger_spec,
-                language_rotary_base=self.hf_config.text_config.rope_theta,
+                language_rotary_base=rope_theta,
                 pre_process=pre_process,
                 post_process=post_process,
                 add_decoder=add_decoder,
