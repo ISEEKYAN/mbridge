@@ -1,7 +1,7 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 import os
 from abc import ABC
-from typing import Callable, Generator
+from typing import Callable, Generator, List, Optional, Tuple, Union
 from glob import glob
 from collections import defaultdict
 
@@ -20,6 +20,127 @@ from .util import (
     get_model,
     unwrap_model,
 )
+
+def _is_weight_like(name: str) -> bool:
+    # Minimal helper: only quantize "*weight" (exclude bias, etc.)
+    n = name.lower()
+    return n.endswith(".weight") or ".weight" in n
+
+
+def should_quantize_param_megatron(param_name: str, *, quantize_router: bool = False) -> bool:
+    """
+    Megatron(Qwen3 MoE) FP8 quant rules based on parameter name.
+    """
+    n = param_name.lower()
+
+    if not _is_weight_like(param_name):
+        return False
+
+    exclude_substr = [
+        # embeddings
+        "embedding", "embeddings", "word_embeddings", "position_embeddings",
+        "tokentype_embeddings", "embed_tokens",
+        # norms
+        "layernorm", "layer_norm", "rmsnorm", "norm",
+        "q_layernorm", "k_layernorm", "pre_mlp_layernorm",
+        # output heads
+        "lm_head", "output_layer", "output_layers",
+    ]
+    for s in exclude_substr:
+        if s in n:
+            return False
+
+    if "layer_norm_weight" in n:
+        return False
+
+    include_substr = [
+        ".self_attention.linear_qkv.",
+        ".self_attention.linear_proj.",
+        ".mlp.experts.linear_fc1.",
+        ".mlp.experts.linear_fc2.",
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj",
+        "fc1", "fc2",
+        "gate", "mlp",
+    ]
+    if any(s in n for s in include_substr):
+        return True
+
+    if quantize_router and ".mlp.router." in n:
+        return True
+
+    return False
+
+
+def is_tensor_parallel_param(param) -> bool:
+    return hasattr(param, "tensor_model_parallel") and bool(param.tensor_model_parallel)
+
+
+def get_tensor_parallel_partition_dim(param) -> int:
+    assert is_tensor_parallel_param(param)
+    return int(param.partition_dim)
+
+
+def _copy_tp_attrs(src, dst):
+    # Keep TP metadata so downstream logic can still detect partition dim.
+    if hasattr(src, "tensor_model_parallel"):
+        dst.tensor_model_parallel = src.tensor_model_parallel
+    if hasattr(src, "partition_dim"):
+        dst.partition_dim = src.partition_dim
+
+
+def scaled_fp8_blockwise(
+    data_hp,
+    weight_block_size,
+):
+    # cast tensor from high precision to FP8 with 128*128 blockwise quantization.
+    assert len(data_hp.shape) == 2, "Only 2d input tensor is supported"
+
+    block_size1 = weight_block_size[1]
+    block_size0 = weight_block_size[0]
+    assert data_hp.shape[1] % block_size1 == 0, (
+        f"data_hp.shape[1] {data_hp.shape[1]}  must be a multiple of block_size1: {block_size1}."
+    )
+    assert data_hp.shape[0] % block_size0 == 0, (
+        f"data_hp.shape[0] {data_hp.shape[0]} must be a multiple of block_size0: {block_size0}."
+    )
+
+    # FP8
+    max_dtype = torch.finfo(torch.float8_e4m3fn).max
+
+    original_shape = data_hp.shape
+    blk_m, blk_n = data_hp.shape[0] // block_size0, data_hp.shape[1] // block_size1
+
+    assert block_size1 == block_size0
+    data_hp = data_hp.reshape(blk_m, block_size0, blk_n, block_size1)
+
+    # Permute to (BLK_M, BLK_N, BLOCK_SIZE_M, BLOCK_SIZE_N)
+    data_hp = data_hp.permute(0, 2, 1, 3)
+    # Flatten to (BLK_M, BLK_N, BLOCK_SIZE_M * BLOCK_SIZE_N)
+    data_hp = data_hp.to(torch.float32).contiguous().flatten(start_dim=2)
+
+    # Calculate max absolute value per block
+    max_abs = torch.amax(torch.abs(data_hp), dim=-1, keepdim=True)
+
+    # Use FP32 scale
+    scale_fp = max_dtype / max_abs
+    scale_fp = torch.where(max_abs == 0, 1.0, scale_fp)
+    # preserve the behavior for 0 amax case
+    scale_fp = torch.where(max_abs == torch.inf, 1.0, scale_fp)
+
+    descale_fp = torch.reciprocal(scale_fp)
+
+    # Scale and saturate cast the data elements to max of target dtype
+    data_lp = torch.clamp(data_hp * scale_fp, min=-1 * max_dtype, max=max_dtype)
+
+    fp_data = data_lp.to(torch.float8_e4m3fn)
+
+    # (BLK_M, BLK_N, BLOCK_SIZE_M * BLOCK_SIZE_N) to (M, N)
+    fp_data = fp_data.reshape(blk_m, blk_n, block_size0, block_size1).permute(0, 2, 1, 3).reshape(original_shape)
+
+    # Convert to target format, but still in original precision container
+    return fp_data, descale_fp
+
 
 
 class Bridge(ABC):
@@ -685,6 +806,226 @@ class Bridge(ABC):
 
             yield from zip(converted_names, [p.detach() for p in converted_params])
 
+    def export_weights_quant(
+        self,
+        models: List[torch.nn.Module],
+        *,
+        weight_block_size: Tuple[int, int] = (128, 128),
+        should_quantize_param_megatron = should_quantize_param_megatron,
+        quant_fn = scaled_fp8_blockwise,
+    ) -> Generator[Tuple[str, torch.Tensor], None, None]:
+        assert len(self.export_weights_buff) == 0, f"should be empty {self.export_weights_buff=}"
+        models = [unwrap_model(m) for m in models]
+        
+        bs0, bs1 = int(weight_block_size[0]), int(weight_block_size[1])
+        
+        # ---------------- helpers ----------------
+        
+        def _scale_cat_dim(part_dim: int, scale: torch.Tensor) -> int:
+            # scale often [Mb, Nb, 1] or [Mb, Nb]
+            if scale is None or scale.ndim < 2:
+                return 0
+            return 0 if part_dim == 0 else 1
+        
+        def _flatten_tensors(x: Union[torch.Tensor, List, Tuple]) -> List[torch.Tensor]:
+            out: List[torch.Tensor] = []
+            if isinstance(x, torch.Tensor):
+                return [x]
+            if isinstance(x, (list, tuple)):
+                for it in x:
+                    out.extend(_flatten_tensors(it))
+                return out
+            raise TypeError(f"Unexpected tensor container type: {type(x)}")
+        
+        def get_model_chunk_generator():
+            for model in models:
+                existing_keys = set()
+                for name, param in model.named_parameters():
+                    existing_keys.add(name)
+                    yield name, param
+        
+                extra_keys = [
+                    x
+                    for x in model.state_dict().keys()
+                    if "_extra_state" not in x
+                    and "expert_bias" in x 
+                    and x not in existing_keys
+                ]
+                for name in extra_keys:
+                    yield name, model.state_dict()[name].to(torch.cuda.current_device())
+        
+        weights_names: List[Tuple[int, int, str]] = []
+        for vpp_rank, model in enumerate(models):
+            existing_keys = set()
+            for name, _param in model.named_parameters():
+                existing_keys.add(name)
+                weights_names.append((self.mpu.pp_rank, vpp_rank, name))
+            extra_keys = [
+                x
+                for x in model.state_dict().keys()
+                if "_extra_state" not in x and "expert_bias" in x and x not in existing_keys
+            ]
+            for name in extra_keys:
+                weights_names.append((self.mpu.pp_rank, vpp_rank, name))
+        
+        weights_names_all_pp = [None] * self.mpu.pp_size
+        torch.distributed.all_gather_object(
+            object_list=weights_names_all_pp, obj=weights_names, group=self.mpu.pp_group
+        )
+        weights_names_all_pp = sum(weights_names_all_pp, [])
+        model_chunk_generator = get_model_chunk_generator()
+        local_to_global_maps = [
+            self._weight_name_mapping_mcore_local_to_global(model, consider_ep=False)
+            for model in models
+        ]
+        
+        
+        # ---------------- main loop ----------------
+        for iter_pp_rank, iter_vpp_rank, iter_name in weights_names_all_pp:
+            local_to_global_map = local_to_global_maps[iter_vpp_rank]
+        
+            # Source PP rank:
+            if iter_pp_rank == self.mpu.pp_rank:
+                try:
+                    _local_name, param = next(model_chunk_generator)
+                except StopIteration:
+                    param = None
+        
+                mg_name = local_to_global_map[iter_name]
+        
+                do_quant = should_quantize_param_megatron(mg_name)
+                if do_quant and (param is None or param.ndim != 2):
+                    do_quant = False
+        
+                do_quant_t = torch.tensor(
+                    [1 if do_quant else 0],
+                    device=torch.cuda.current_device(),
+                    dtype=torch.int32,
+                )
+        
+                if do_quant:
+                    bf16 = param.to(torch.bfloat16)
+                    fp8_shard, sc_shard = quant_fn(bf16, weight_block_size)
+                    _copy_tp_attrs(param, fp8_shard)
+        
+                    payload_param = fp8_shard
+                    payload_scale = sc_shard
+                    
+                else:
+                    payload_param = param
+                    payload_scale = None
+            else:
+                mg_name, payload_param, payload_scale, do_quant_t = None, None, None, None
+        
+            # PP broadcast: name + do_quant + param(+ scale)
+            mg_name = broadcast_str_from_megatron_pp(mg_name)
+            do_quant = should_quantize_param_megatron(mg_name)
+
+            broad_pp_param = broadcast_from_megatron_pp(payload_param)
+            broad_pp_scale = broadcast_from_megatron_pp(payload_scale) if do_quant else None
+        
+            
+            # ---------------- EP path ----------------
+            if ".mlp.experts.linear_fc" in mg_name and self.mpu.ep_size > 1:
+                num_experts = self.config.num_moe_experts
+                num_experts_per_rank = num_experts // self.mpu.ep_size
+        
+                # all_gather across EP on fp8/bf16 shard
+                ep_params = [torch.empty_like(broad_pp_param) for _ in range(self.mpu.ep_size)]
+                torch.distributed.all_gather(ep_params, broad_pp_param, group=self.mpu.ep_group)
+        
+                ep_scales = None
+                if do_quant:
+                    ep_scales = [torch.empty_like(broad_pp_scale) for _ in range(self.mpu.ep_size)]
+                    torch.distributed.all_gather(ep_scales, broad_pp_scale, group=self.mpu.ep_group)
+        
+                name_prefix, local_expert_id = mg_name.split(".weight")
+                local_expert_id = int(local_expert_id)
+                global_expert_ids = [
+                    num_experts_per_rank * ep_rank + local_expert_id
+                    for ep_rank in range(self.mpu.ep_size)
+                ]
+                global_expert_names = [f"{name_prefix}.weight{eid}" for eid in global_expert_ids]
+        
+                for idx_e, (mg2, p_shard) in enumerate(zip(global_expert_names, ep_params, strict=True)):
+                    # ETP gather/concat on fp8
+                    if self.mpu.etp_size > 1:
+                        etp_params = [torch.empty_like(p_shard) for _ in range(self.mpu.etp_size)]
+                        torch.distributed.all_gather(etp_params, p_shard, group=self.mpu.etp_group)
+        
+                        part_dim = get_tensor_parallel_partition_dim(p_shard) if is_tensor_parallel_param(p_shard) else 0
+                        merged_w = torch.cat(etp_params, dim=part_dim)
+        
+                        merged_s = None
+                        if do_quant:
+                            sc_shard = ep_scales[idx_e]
+                            etp_sc = [torch.empty_like(sc_shard) for _ in range(self.mpu.etp_size)]
+                            torch.distributed.all_gather(etp_sc, sc_shard, group=self.mpu.etp_group)
+                            merged_s = torch.cat(etp_sc, dim=_scale_cat_dim(part_dim, sc_shard))
+                    else:
+                        merged_w = p_shard
+                        merged_s = ep_scales[idx_e] if do_quant else None
+        
+                    # convert names (still reuse your converter)
+                    hf_names, hf_params = self._weight_to_hf_format(mg2, merged_w)
+                    hf_params_flat = _flatten_tensors(hf_params)
+        
+                    if do_quant:
+                        _, hf_params_scales = self._weight_to_hf_format_scale(mg2, merged_s)
+                        for j, (hn, ht) in enumerate(zip(hf_names, hf_params_flat, strict=True)):
+                            fp8_j = hf_params[j]
+                            sc_j = hf_params_scales[j]
+                            
+                            yield (hn, fp8_j.detach())
+                            yield (hn + "_scale_inv", sc_j.detach())
+                    else:
+                        for hn, ht in zip(hf_names, hf_params_flat, strict=True):
+                            yield (hn, ht.detach())
+        
+                continue
+        
+            # ---------------- TP path / non-TP ----------------
+            if do_quant:
+                # Path-B: gather fp8 shards -> concat; gather scale shards -> concat
+                if is_tensor_parallel_param(broad_pp_param) and self.mpu.tp_size > 1:
+                    fp8_shards = [torch.empty_like(broad_pp_param) for _ in range(self.mpu.tp_size)]
+                    torch.distributed.all_gather(fp8_shards, broad_pp_param, group=self.mpu.tp_group)
+        
+                    sc_shards = [torch.empty_like(broad_pp_scale) for _ in range(self.mpu.tp_size)]
+                    torch.distributed.all_gather(sc_shards, broad_pp_scale, group=self.mpu.tp_group)
+        
+                    part_dim = get_tensor_parallel_partition_dim(broad_pp_param)
+                    merged_w = torch.cat(fp8_shards, dim=part_dim)
+                    merged_s = torch.cat(sc_shards, dim=_scale_cat_dim(part_dim, broad_pp_scale))
+                else:
+                    merged_w = broad_pp_param
+                    merged_s = broad_pp_scale
+        
+                hf_names, hf_params = self._weight_to_hf_format(mg_name, merged_w)
+                _, hf_params_scales = self._weight_to_hf_format_scale(mg_name, merged_s)
+                hf_params_flat = _flatten_tensors(hf_params)
+
+                for j, (hn, ht) in enumerate(zip(hf_names, hf_params_flat, strict=True)):
+                    fp8_j = hf_params[j]
+                    sc_j = hf_params_scales[j]
+                    
+                    yield (hn, fp8_j.detach())
+                    yield (hn + "_scale_inv", sc_j.detach())
+        
+            else:
+                if is_tensor_parallel_param(broad_pp_param) and self.mpu.tp_size > 1:
+                    infer_params = [torch.empty_like(broad_pp_param) for _ in range(self.mpu.tp_size)]
+                    torch.distributed.all_gather(infer_params, broad_pp_param, group=self.mpu.tp_group)
+                    infer_params = self._weight_merge_across_tp(mg_name, infer_params, broad_pp_param)
+                else:
+                    infer_params = broad_pp_param
+        
+                converted_names, converted_params = self._weight_to_hf_format(mg_name, infer_params)
+                if len(converted_names) != 0:
+                    for cn, cp in zip(converted_names, converted_params, strict=True):
+                        yield (cn, cp.detach())
+
+
     def export_weights_without_gather(
         self, models: list[torch.nn.Module],
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
@@ -1103,6 +1444,89 @@ class Bridge(ABC):
             q = qkv[:, :q_len].reshape(*single_out_shape)
             k = qkv[:, q_len : q_len + k_len].reshape(*single_out_shape)
             v = qkv[:, q_len + k_len :].reshape(*single_out_shape)
+            return hf_names, [q, k, v]
+
+        elif (
+            "linear_fc1.weight" in mcore_weights_name
+            or "linear_fc1.bias" in mcore_weights_name
+        ):
+            # split gate_proj and up_proj
+            assert len(hf_names) == 2
+            gate, up = mcore_weights.chunk(2)
+            return hf_names, [gate, up]
+        raise NotImplementedError(f"Unsupported parameter name: {mcore_weights_name}")
+
+    def _weight_to_hf_format_scale(
+        self, mcore_weights_name: str, mcore_weights: torch.Tensor, quant_block_wize: tuple[int, int] = (128, 128)
+    ) -> tuple[list[str], list[torch.Tensor]]:
+        """
+        Export MCore weights to Hugging Face format.
+
+        Takes MCore weight names and tensor, outputs Hugging Face weight names and tensors.
+        Due to MCore's runtime optimizations involving weight merging, output can be a list.
+
+        Args:
+            mcore_weights_name: MCore weight name
+            mcore_weights: MCore weight tensor
+
+        Returns:
+            tuple: (hf_names, hf_weights) - lists of Hugging Face weight names and tensors
+
+        Raises:
+            NotImplementedError: If the parameter name is unsupported
+        """
+        hf_names = self._weight_name_mapping_mcore_to_hf(mcore_weights_name)
+        if len(hf_names) == 1:
+            # pad embeding and output layer
+            if self.make_vocab_size_divisible_by is not None and (
+                "embedding.word_embeddings.weight" in mcore_weights_name
+                or "output_layer.weight" in mcore_weights_name
+            ):
+                assert mcore_weights.shape[0] == self.padded_vocab_size
+                assert self.vocab_size is not None
+
+                return [hf_names[0]], [mcore_weights[: self.vocab_size]]
+
+            return [hf_names[0]], [mcore_weights]
+
+        if (
+            "self_attention.linear_qkv." in mcore_weights_name
+            and "layer_norm" not in mcore_weights_name
+        ):
+            
+            # split qkv
+            assert len(hf_names) == 3
+            # split qkv
+            num_key_value_heads = self.hf_config.num_key_value_heads
+            hidden_dim = self.hf_config.hidden_size
+            num_attention_heads = self.hf_config.num_attention_heads
+            head_dim = (
+                getattr(self.hf_config, "head_dim", hidden_dim // num_attention_heads)
+                or hidden_dim // num_attention_heads
+            )
+            hidden_dim = self.hf_config.hidden_size
+            assert ((head_dim % quant_block_wize[0]) == 0), f"head_dim is not divisible by quant_block_size[0], head_dim is {head_dim}, quant_block_size is {quant_block_wize}, mcore_weights_name is {mcore_weights_name}"
+            assert ((hidden_dim % quant_block_wize[1]) == 0), f"hidden_dim is not divisible by quant_block_size[1], hidden_dim is {hidden_dim}, quant_block_size is {quant_block_wize}, mcore_weights_name is {mcore_weights_name}"
+            
+            head_dim = head_dim // quant_block_wize[0]
+            hidden_dim = hidden_dim // quant_block_wize[1]
+            out_shape = (
+                [num_key_value_heads, -1, hidden_dim]
+                if ".bias" not in mcore_weights_name
+                else [num_key_value_heads, -1]
+            )
+            
+            qkv = mcore_weights.view(*out_shape)
+            q_len = head_dim * num_attention_heads // num_key_value_heads
+            k_len = head_dim
+            v_len = head_dim
+            single_out_shape = (
+                [-1, hidden_dim, 1] if ".bias" not in mcore_weights_name else [-1]
+            )
+            q = qkv[:, :q_len].reshape(*single_out_shape)
+            k = qkv[:, q_len : q_len + k_len].reshape(*single_out_shape)
+            v = qkv[:, q_len + k_len :].reshape(*single_out_shape)
+            
             return hf_names, [q, k, v]
 
         elif (
