@@ -733,8 +733,8 @@ class Bridge(ABC):
         models: List[torch.nn.Module],
         *,
         weight_block_size: Tuple[int, int] = (128, 128),
-        quantize_router: bool = False,
         should_quantize_param_megatron = should_quantize_param_megatron,
+        quant_fn = scaled_fp8_blockwise,
     ) -> Generator[Tuple[str, torch.Tensor], None, None]:
         assert len(self.export_weights_buff) == 0, f"should be empty {self.export_weights_buff=}"
         models = [unwrap_model(m) for m in models]
@@ -815,7 +815,7 @@ class Bridge(ABC):
         
                 mg_name = local_to_global_map[iter_name]
         
-                do_quant = should_quantize_param_megatron(mg_name, quantize_router=quantize_router)
+                do_quant = should_quantize_param_megatron(mg_name)
                 if do_quant and (param is None or param.ndim != 2):
                     do_quant = False
         
@@ -827,7 +827,7 @@ class Bridge(ABC):
         
                 if do_quant:
                     bf16 = param.to(torch.bfloat16)
-                    fp8_shard, sc_shard = scaled_fp8_blockwise(bf16, weight_block_size)
+                    fp8_shard, sc_shard = quant_fn(bf16, weight_block_size)
                     _copy_tp_attrs(param, fp8_shard)
         
                     payload_param = fp8_shard
@@ -841,7 +841,7 @@ class Bridge(ABC):
         
             # PP broadcast: name + do_quant + param(+ scale)
             mg_name = broadcast_str_from_megatron_pp(mg_name)
-            do_quant = should_quantize_param_megatron(mg_name, quantize_router=quantize_router)
+            do_quant = should_quantize_param_megatron(mg_name)
 
             broad_pp_param = broadcast_from_megatron_pp(payload_param)
             broad_pp_scale = broadcast_from_megatron_pp(payload_scale) if do_quant else None
