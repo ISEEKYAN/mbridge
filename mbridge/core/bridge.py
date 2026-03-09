@@ -265,6 +265,7 @@ class Bridge(ABC):
         models: list,
         weights_path: str,
         tensors_per_file: int = 500,
+        strict: bool = True,
     ) -> None:
         if len(glob(os.path.join(weights_path, "*.safetensors"))) > 0:
             raise ValueError(f"The path:{weights_path} should not has safetensors files")
@@ -462,6 +463,7 @@ class Bridge(ABC):
             weights_path,
             rank,
             world_size,
+            strict=strict,
         )
 
         # Clean up HF batch files
@@ -486,6 +488,7 @@ class Bridge(ABC):
         weights_path: str,
         memory_efficient: bool = False,
         distributed_filesystem: bool = False,
+        strict: bool = True,
     ) -> None:
         """
         Save weights from a Megatron-Core model into a Hugging Face model.
@@ -502,7 +505,7 @@ class Bridge(ABC):
                 memory_efficient
             ), f"distributed_filesystem should use with memory_efficient"
             assert is_distributed, f"distributed_filesystem should use in distributed"
-            return self._save_weights_fast(models, weights_path)
+            return self._save_weights_fast(models, weights_path, strict=strict)
 
         rank = torch.distributed.get_rank() if is_distributed else 0
         per_tensor_generator = self.export_weights(models)
@@ -514,7 +517,7 @@ class Bridge(ABC):
         if rank == 0:
             if memory_efficient:
                 self.safetensor_io.save_hf_weight_memory_efficient(
-                    per_tensor_generator, weights_path
+                    per_tensor_generator, weights_path, strict=strict
                 )
             else:
                 self.safetensor_io.save_hf_weight(
