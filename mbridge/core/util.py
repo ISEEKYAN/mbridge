@@ -530,7 +530,7 @@ def qwen3vl_cp_split(
         )
     )
     for image_padded in images_padded:
-        assert not image_padded, "qwen3vl vit not support sp now, no need to paded"
+        assert not image_padded, "qwen3vl vit not support sp now, no need to padded"
 
     pixel_values = torch.cat(new_pixel_values, dim=0)
     image_grid_thw = torch.cat(new_image_grid_thws, dim=0)

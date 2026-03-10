@@ -36,118 +36,14 @@ try:
     from megatron.core.extensions.transformer_engine import fused_apply_rotary_pos_emb
 except ImportError:
     fused_apply_rotary_pos_emb = None
-
+from mbridge.models.qwen3_vl.rope_utils import (
+    Qwen3VLMultimodalRotaryEmbedding,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
-    """Multimodal Rotary Embedding for language model.
-    only support for qwen3vl
-
-    Args:
-        kv_channels (int): Projection weights dimension in multi-head attention. Obtained
-            from transformer config
-        rotary_percent (float): Percent of rotary dimension to use for rotary position
-            embeddings.
-        rotary_interleaved (bool, optional): If True, interleaved rotary position embeddings.
-            Defaults to False.
-        seq_len_interpolation_factor (float, optional): scale of linearly interpolating RoPE
-            for longer sequences. The value must be a float larger than 1.0. Defaults to None
-        rotary_base (int, optional): Base period for rotary position embeddings. Defaults to
-            10000.
-    """
-
-    def __init__(
-        self,
-        kv_channels: int,
-        rotary_percent: float,
-        rotary_interleaved: bool = False,
-        seq_len_interpolation_factor: Optional[float] = None,
-        rotary_base: int = 10000,
-    ) -> None:
-        super().__init__()
-
-        dim = kv_channels
-        if rotary_percent < 1.0:
-            dim = int(dim * rotary_percent)
-        self.rotary_interleaved = rotary_interleaved
-        # assert not self.rotary_interleaved, "only support qwen3vl"
-
-        self.seq_len_interpolation_factor = seq_len_interpolation_factor
-        self.inv_freq = 1.0 / (
-            rotary_base
-            ** (
-                torch.arange(
-                    0, dim, 2, dtype=torch.float32, device=torch.cuda.current_device()
-                )
-                / dim
-            )
-        )
-        self.is_thd_format = False  # if is thd format, we do not need to split the rotary_pos_emb along CP
-
-    def apply_interleaved_mrope(self, freqs, mrope_section):
-        """Apply interleaved MRoPE to 3D rotary embeddings.
-        Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
-        interleaved [THTHWHTHW...TT], preserving frequency continuity.
-        args:
-            x: (3, bs, seq_len, head_dim // 2)
-            mrope_section: (3,)
-        returns:
-            x_t: (bs, seq_len, head_dim // 2)
-        """
-        freqs_t = freqs[0]  # just overwrite the first dimension T
-        for dim, offset in enumerate((1, 2), start=1):  # H, W
-            length = mrope_section[dim] * 3
-            idx = slice(offset, length, 3)
-            freqs_t[..., idx] = freqs[dim, ..., idx]
-        return freqs_t
-
-    def forward(
-        self, position_ids: torch.Tensor, mrope_section: List[int], **kwargs
-    ) -> Tensor:
-        """Forward pass of multimodal RoPE embedding.
-
-        Args:
-            position_ids (torch.Tensor): A postion_id tensor with shape [3, batchsize, seqlens]
-            mrope_section (list[int]): Multimodal rope section is for channel dimension of temporal,
-                height and width in rope calculation.
-            **kwargs: Additional keyword arguments (ignored, for Megatron Core compatibility).
-
-        Returns:
-            Tensor: Embeddings after applying RoPE.
-        """
-        seq = position_ids.to(device=self.inv_freq.device, dtype=self.inv_freq.dtype)
-
-        if self.seq_len_interpolation_factor is not None:
-            seq *= 1 / self.seq_len_interpolation_factor
-
-        # shape (3, bs, dim, 1)
-        inv_freq_expanded = self.inv_freq[None, None, :, None].expand(
-            3, seq.shape[1], -1, 1
-        )
-        # shape (3, bs, 1, seq_length)
-        seq_expanded = seq[:, :, None, :].float()
-        # shape (3, bs, seq_length, dim)
-        freqs = (inv_freq_expanded @ seq_expanded).transpose(2, 3)
-        freqs = self.apply_interleaved_mrope(freqs, mrope_section)
-        emb = torch.cat((freqs, freqs), dim=-1)
-
-        # shape (seq_length, bs, 1, 2 * dim)
-        emb = emb[..., None, :].transpose(0, 1).contiguous()
-        if (
-            parallel_state.get_context_parallel_world_size() > 1
-            and not self.is_thd_format
-        ):
-            # slice rotary_pos_emb along sequence dimension and select the parition of the current
-            # CP rank
-            emb = get_pos_emb_on_this_cp_rank(
-                emb, 0, parallel_state.get_context_parallel_group()
-            )
-        return emb
-
-
-# Slightly modified from Qwen3VLModel.get_rope_index
+# Slightly modified from Qwen3_5VLModel.get_rope_index
 def get_rope_index(
     spatial_merge_size: int,
     image_token_id: int,
@@ -166,6 +62,9 @@ def get_rope_index(
             video_grid_thw, video_grid_thw[:, 0], dim=0
         )
         video_grid_thw[:, 0] = 1
+
+    image_grid_thw_list = image_grid_thw.tolist() if image_grid_thw is not None else None
+    video_grid_thw_list = video_grid_thw.tolist() if video_grid_thw is not None else None
 
     mrope_position_deltas = []
     if input_ids is not None and (
@@ -206,28 +105,19 @@ def get_rope_index(
                 else:
                     ed_video = len(input_tokens) + 1
                 if ed_image < ed_video:
-                    t, h, w = (
-                        image_grid_thw[image_index][0],
-                        image_grid_thw[image_index][1],
-                        image_grid_thw[image_index][2],
-                    )
+                    t, h, w = image_grid_thw_list[image_index]
                     image_index += 1
                     remain_images -= 1
                     ed = ed_image
-
                 else:
-                    t, h, w = (
-                        video_grid_thw[video_index][0],
-                        video_grid_thw[video_index][1],
-                        video_grid_thw[video_index][2],
-                    )
+                    t, h, w = video_grid_thw_list[video_index]
                     video_index += 1
                     remain_videos -= 1
                     ed = ed_video
                 llm_grid_t, llm_grid_h, llm_grid_w = (
-                    t.item(),
-                    h.item() // spatial_merge_size,
-                    w.item() // spatial_merge_size,
+                    t,
+                    h // spatial_merge_size,
+                    w // spatial_merge_size,
                 )
                 text_len = ed - st
 
@@ -309,7 +199,13 @@ def get_rope_index(
 
 
 def apply_rotary_pos_emb_thd_absolute(
-    t: Tensor, cu_seqlens: Tensor, freqs: Tensor, rotary_interleaved: bool = False
+    t: Tensor,
+    cu_seqlens: Tensor,
+    freqs: Tensor,
+    rotary_interleaved: bool = False,
+    multi_latent_attention: bool = False,
+    mscale: float = 1.0,
+    cp_group: torch.distributed.ProcessGroup = None,
 ) -> Tensor:
     """A baseline implementation of applying RoPE for `thd` format.
 
@@ -323,7 +219,11 @@ def apply_rotary_pos_emb_thd_absolute(
         Tensor: Shape [t, h, d]. The input tensor after applying RoPE.
     """
     return _apply_rotary_pos_emb_bshd(
-        t[:, None], freqs, rotary_interleaved=rotary_interleaved
+        t[:, None],
+        freqs,
+        rotary_interleaved=rotary_interleaved,
+        multi_latent_attention=multi_latent_attention,
+        mscale=mscale,
     ).squeeze(1)
 
 
@@ -332,6 +232,8 @@ def apply_rotary_pos_emb_absolute(
     freqs: Tensor,
     config: Qwen3VLTransformerConfig,
     cu_seqlens: Optional[Tensor] = None,
+    mscale: float = 1.0,
+    cp_group: torch.distributed.ProcessGroup = None,
 ):
     """
     Reroute to the appropriate apply_rotary_pos_emb function depending on
@@ -346,11 +248,21 @@ def apply_rotary_pos_emb_absolute(
 
     if cu_seqlens is None:
         result = _apply_rotary_pos_emb_bshd(
-            t, freqs, rotary_interleaved=config.rotary_interleaved
+            t,
+            freqs,
+            rotary_interleaved=config.rotary_interleaved,
+            multi_latent_attention=config.multi_latent_attention,
+            mscale=mscale,
         )
     else:
         result = apply_rotary_pos_emb_thd_absolute(
-            t, cu_seqlens, freqs, rotary_interleaved=config.rotary_interleaved
+            t,
+            cu_seqlens,
+            freqs,
+            rotary_interleaved=config.rotary_interleaved,
+            multi_latent_attention=config.multi_latent_attention,
+            mscale=mscale,
+            cp_group=cp_group,
         )
 
     if config.apply_rotary_pos_emb_in_fp32:

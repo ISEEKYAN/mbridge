@@ -13,21 +13,22 @@ from megatron.core.models.vision.vit_layer_specs import (
 
 from mbridge.core import VLMBridge
 from mbridge.core.util import unwrap_model
-from mbridge.models.qwen3_vl.model import Qwen3VLModel
 from mbridge.models.qwen3_vl.transformer_config import get_vision_model_config
 from mbridge.models.qwen3_vl.utils import PatchMergerSubmodules
+from mbridge.models.qwen3_omni_moe.model import Qwen3OmniMoeModel
+from mbridge.models.qwen3_omni_moe.transformer_config import get_audio_model_config
 
 
-class Qwen3VBaseBridge(VLMBridge):
+class Qwen3OmniBaseBridge(VLMBridge):
 
     def _adjust_mapping_for_shared_weights(self):
-        if getattr(self.hf_config.text_config, "tie_word_embeddings", False):
+        if getattr(self.hf_config.thinker_config.text_config, "tie_word_embeddings", False):
             self._DIRECT_MAPPING["language_model.output_layer.weight"] = (
                 "model.language_model.embed_tokens.weight"
             )
 
     def _get_hf_shared_weight_keys(self):
-        if getattr(self.hf_config.text_config, "tie_word_embeddings", False):
+        if getattr(self.hf_config.thinker_config.text_config, "tie_word_embeddings", False):
             return ["model.language_model.embed_tokens.weight"]
         return []
 
@@ -112,8 +113,12 @@ class Qwen3VBaseBridge(VLMBridge):
 
     def _weight_name_mapping_other(self, name: str) -> list[str]:
         split_name = name.split(".")
-        layer_number = split_name[3]
-        split_name[3] = "{layer_number}"
+        if split_name[0] == "audio_model":
+            layer_number = split_name[2]
+            split_name[2] = "{layer_number}"
+        else:
+            layer_number = split_name[3]
+            split_name[3] = "{layer_number}"
         key = ".".join(split_name)
         convert_names = []
         mapping_names = self._OTHER_MAPPING[key]
@@ -146,7 +151,7 @@ class Qwen3VBaseBridge(VLMBridge):
         hf_names = self._weight_name_mapping_mcore_to_hf(mcore_weights_name)
         if len(hf_names) == 1:
             # vision model
-            tmp_config = self.hf_config.vision_config
+            tmp_config = self.hf_config.thinker_config.vision_config
             vision_hidden_size = tmp_config.hidden_size
             vision_num_query_groups = tmp_config.num_heads
             vision_head_dim = vision_hidden_size // tmp_config.num_heads
@@ -176,31 +181,6 @@ class Qwen3VBaseBridge(VLMBridge):
                     .contiguous()
                 )
 
-            # moe
-            if ".mlp.experts.linear_fc" in mcore_weights_name:
-                # get export index
-                experts_key = hf_names[0]
-                experts_idx = int(mcore_weights_name.split(".weight")[-1])
-
-                if experts_key not in self.export_weights_buff:
-                    self.export_weights_buff[experts_key] = {}
-                assert experts_idx not in self.export_weights_buff
-                self.export_weights_buff[experts_key][experts_idx] = mcore_weights.T
-
-                if (
-                    len(self.export_weights_buff[experts_key])
-                    < self.config.num_moe_experts
-                ):
-                    return [], []
-
-                mcore_weights_list = []
-                for idx in range(self.config.num_moe_experts):
-                    mcore_weights_list.append(
-                        self.export_weights_buff[experts_key].pop(idx)
-                    )
-                self.export_weights_buff.pop(experts_key)
-                return [hf_names[0]], [torch.stack(mcore_weights_list)]
-
             return [hf_names[0]], [mcore_weights]
 
         if (
@@ -211,12 +191,12 @@ class Qwen3VBaseBridge(VLMBridge):
             # split qkv
             assert len(hf_names) == 3
             # split qkv
-            num_key_value_heads = self.hf_config.text_config.num_key_value_heads
-            hidden_dim = self.hf_config.text_config.hidden_size
-            num_attention_heads = self.hf_config.text_config.num_attention_heads
+            num_key_value_heads = self.hf_config.thinker_config.text_config.num_key_value_heads
+            hidden_dim = self.hf_config.thinker_config.text_config.hidden_size
+            num_attention_heads = self.hf_config.thinker_config.text_config.num_attention_heads
 
             head_dim = getattr(
-                self.hf_config.text_config,
+                self.hf_config.thinker_config.text_config,
                 "head_dim",
                 hidden_dim // num_attention_heads,
             )
@@ -269,7 +249,7 @@ class Qwen3VBaseBridge(VLMBridge):
         if len(hf_weights) == 1:
             # vision model
             hf_names = self._weight_name_mapping_mcore_to_hf(mcore_weights_name)
-            tmp_config = self.hf_config.vision_config
+            tmp_config = self.hf_config.thinker_config.vision_config
             vision_hidden_size = tmp_config.hidden_size
             vision_num_query_groups = tmp_config.num_heads
             vision_head_dim = vision_hidden_size // tmp_config.num_heads
@@ -318,17 +298,6 @@ class Qwen3VBaseBridge(VLMBridge):
                 )
                 return torch.cat((hf_weights[0], extra_zeros), dim=0)
 
-            # moe
-            if ".mlp.experts.linear_fc" in mcore_weights_name:
-                # get export index
-                local_experts_idx = int(mcore_weights_name.split(".weight")[-1])
-                num_experts = self.config.num_moe_experts
-                num_experts_per_rank = num_experts // self.mpu.ep_size
-                experts_idx = (
-                    local_experts_idx + num_experts_per_rank * self.mpu.ep_rank
-                )
-                return hf_weights[0][experts_idx].T.clone().contiguous()
-
             return hf_weights[0]
 
         if (
@@ -337,14 +306,14 @@ class Qwen3VBaseBridge(VLMBridge):
         ):
             # merge qkv
             assert len(hf_weights) == 3
-            num_key_value_heads = self.hf_config.text_config.num_key_value_heads
-            hidden_dim = self.hf_config.text_config.hidden_size
-            num_attention_heads = self.hf_config.text_config.num_attention_heads
+            num_key_value_heads = self.hf_config.thinker_config.text_config.num_key_value_heads
+            hidden_dim = self.hf_config.thinker_config.text_config.hidden_size
+            num_attention_heads = self.hf_config.thinker_config.text_config.num_attention_heads
             if "vision_model" in mcore_weights_name:
-                num_attention_heads = self.hf_config.text_config.vision_config.num_heads
-                num_key_value_heads = self.hf_config.text_config.vision_config.num_heads
+                num_attention_heads = self.hf_config.thinker_config.text_config.vision_config.num_heads
+                num_key_value_heads = self.hf_config.thinker_config.text_config.vision_config.num_heads
             head_dim = getattr(
-                self.hf_config.text_config,
+                self.hf_config.thinker_config.text_config,
                 "head_dim",
                 hidden_dim // num_attention_heads,
             )
@@ -392,7 +361,7 @@ class Qwen3VBaseBridge(VLMBridge):
         """
 
         share_embeddings_and_output_weights = getattr(
-            self.hf_config, "tie_word_embeddings", False
+            self.hf_config.thinker_config.text_config, "tie_word_embeddings", False
         )
 
         def provider(
@@ -404,7 +373,7 @@ class Qwen3VBaseBridge(VLMBridge):
         ):
             transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
             vision_transformer_config = get_vision_model_config(
-                deepcopy(self.config), self.hf_config.vision_config
+                deepcopy(self.config), self.hf_config.thinker_config.vision_config
             )
             vision_transformer_config.pipeline_model_parallel_size = 1
             vision_transformer_config.first_pipeline_num_layers = None
@@ -418,17 +387,24 @@ class Qwen3VBaseBridge(VLMBridge):
 
             setattr(self, "vision_config", vision_transformer_config)
 
-            rope_theta = self.hf_config.text_config.rope_theta if hasattr(self.hf_config.text_config, "rope_theta") \
-                else self.hf_config.text_config.rope_scaling["rope_theta"]
+            audio_transformer_config = get_audio_model_config(
+                self.hf_config.thinker_config.audio_config
+            )
 
-            model = Qwen3VLModel(
+            setattr(self, "audio_config", audio_transformer_config)
+
+            rope_theta = self.hf_config.thinker_config.text_config.rope_theta if hasattr(self.hf_config.thinker_config.text_config, "rope_theta") \
+                else self.hf_config.thinker_config.text_config.rope_scaling["rope_theta"]
+
+            model = Qwen3OmniMoeModel(
                 language_transformer_config=self.config,
                 language_transformer_layer_spec=transformer_layer_spec,
-                language_vocab_size=self.hf_config.text_config.vocab_size,
-                language_max_sequence_length=self.hf_config.text_config.max_position_embeddings,
+                language_vocab_size=self.hf_config.thinker_config.text_config.vocab_size,
+                language_max_sequence_length=self.hf_config.thinker_config.text_config.max_position_embeddings,
                 vision_transformer_config=vision_transformer_config,
                 vision_transformer_layer_spec=vision_transformer_layer_spec,
                 vision_patch_merger_spec=vision_patch_merger_spec,
+                audio_transformer_config=audio_transformer_config,
                 language_rotary_base=rope_theta,
                 pre_process=pre_process,
                 post_process=post_process,

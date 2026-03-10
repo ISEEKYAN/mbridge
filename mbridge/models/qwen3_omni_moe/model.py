@@ -1,6 +1,8 @@
 import logging
 
 import torch
+from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import Qwen3OmniMoeAudioEncoderConfig
+from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import Qwen3OmniMoeAudioEncoder
 from megatron.core import InferenceParams, mpu, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import MegatronModule
@@ -16,15 +18,15 @@ from mbridge.core.util import (
 )
 from mbridge.models.qwen3_vl.attention import Qwen3VLSelfAttention
 from mbridge.models.qwen3_vl.gpt_model import Qwen3VLGPTModel
-from mbridge.models.qwen3_vl.rope_utils import get_rope_index
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from mbridge.models.qwen3_vl.utils import reorganize_inputs, split_deepstack_embs
 from mbridge.models.qwen3_vl.vision_model import Qwen3VLVisionModel
+from mbridge.models.qwen3_omni_moe.rope_utils import get_rope_index
 
 
 # Note: This is under development and may be missing features.
-class Qwen3VLModel(MegatronModule):
-    """Qwen3VL multi-modal model.
+class Qwen3OmniMoeModel(MegatronModule):
+    """Qwen3 Omni Moe multi-modal model.
 
     Args:
         language_transformer_config (TransformerConfig): Transformer config for the language model.
@@ -68,6 +70,7 @@ class Qwen3VLModel(MegatronModule):
         vision_transformer_config: Qwen3VLTransformerConfig,
         vision_transformer_layer_spec: ModuleSpec,
         vision_patch_merger_spec: ModuleSpec,
+        audio_transformer_config: Qwen3OmniMoeAudioEncoderConfig,
         parallel_output: bool = True,
         language_rotary_percent: float = 1.0,
         pre_process: bool = True,
@@ -79,7 +82,10 @@ class Qwen3VLModel(MegatronModule):
         language_share_embeddings_and_output_weights: bool = False,
         image_token_id: int = 151655,
         video_token_id: int = 151656,
+        audio_token_id: int = 151675,
         vision_start_token_id: int = 151652,
+        audio_start_token_id: int = 151669,
+        position_id_per_seconds: int  = 13,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -105,6 +111,9 @@ class Qwen3VLModel(MegatronModule):
         self.image_token_id = image_token_id
         self.video_token_id = video_token_id
         self.vision_start_token_id = vision_start_token_id
+        self.audio_token_id = audio_token_id
+        self.audio_start_token_id = audio_start_token_id
+        self.position_id_per_seconds = position_id_per_seconds
 
         self.square_merge_size = vision_transformer_config.spatial_merge_size**2
 
@@ -119,6 +128,8 @@ class Qwen3VLModel(MegatronModule):
                 pre_process=True,
                 post_process=True,
             )
+
+            self.audio_model = Qwen3OmniMoeAudioEncoder(audio_transformer_config)
 
         self.language_model = Qwen3VLGPTModel(
             config=language_transformer_config,
@@ -169,6 +180,7 @@ class Qwen3VLModel(MegatronModule):
         freeze_language_model: bool,
         freeze_vision_model: bool,
         freeze_vision_projection: bool,
+        freeze_audio_model: bool = False,
     ):
         """Freeze model modules.
 
@@ -187,6 +199,8 @@ class Qwen3VLModel(MegatronModule):
         if freeze_vision_projection and self.vision_model is not None:
             modules.append(self.vision_model.decoder.deepstack_merger_list)
             modules.append(self.vision_model.merger)
+        if freeze_audio_model and self.audio_model is not None:
+            modules.append(self.audio_model)
 
         for module in modules:
             for param in module.parameters():
@@ -200,6 +214,23 @@ class Qwen3VLModel(MegatronModule):
                     param.requires_grad = True
                 for param in self.vision_model.merger.parameters():
                     param.requires_grad = True
+
+    def get_audio_features(
+        self,
+        input_features: torch.FloatTensor,
+        feature_attention_mask: torch.LongTensor = None,
+        audio_feature_lengths: torch.LongTensor = None,
+    ):
+        if feature_attention_mask is not None:
+            input_features = input_features.permute(0, 2, 1)[feature_attention_mask.bool()].permute(1, 0)
+
+        feature_lens = audio_feature_lengths
+        audio_outputs = self.audio_model(
+            input_features,
+            feature_lens=feature_lens,
+        )
+
+        return audio_outputs.last_hidden_state
 
     def forward(
         self,
@@ -217,6 +248,10 @@ class Qwen3VLModel(MegatronModule):
         # can set at dataset
         image_input_mask: torch.Tensor = None,
         video_input_mask: torch.Tensor = None,
+        input_features: torch.Tensor = None,
+        feature_attention_mask: torch.Tensor = None,
+        use_audio_in_video: bool = False,
+        video_second_per_grid: torch.Tensor = None,
         cp_img_num: list[int] = None,
         images_padded: list[bool] = None,
         **kwargs,
@@ -318,14 +353,31 @@ class Qwen3VLModel(MegatronModule):
                             seqlen_on_cp_ranks,
                         )
 
+            audio_embeds = None
+            if feature_attention_mask is not None:
+                audio_feature_lengths = torch.sum(feature_attention_mask, dim=1)
+            else:
+                audio_feature_lengths = None
+
+            if input_features is not None:
+                audio_embeds = self.get_audio_features(
+                    input_features,
+                    feature_attention_mask=feature_attention_mask,
+                    audio_feature_lengths=audio_feature_lengths,
+                )
+                audio_mask = input_ids == self.audio_token_id
+
             combined_embeddings = self.language_model.embedding(
                 input_ids=input_ids,
                 position_ids=None,  # NOTE: disable
             ).clone()  # [text_seq_len, b, h_language]
 
-            if vision_embeds is not None:
+            if vision_embeds is not None or audio_embeds is not None:
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
-                combined_embeddings[vision_mask] = vision_embeds
+                if vision_embeds is not None:
+                    combined_embeddings[vision_mask] = vision_embeds
+                if audio_embeds is not None:
+                    combined_embeddings[audio_mask] = audio_embeds
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
 
             if (
@@ -340,9 +392,8 @@ class Qwen3VLModel(MegatronModule):
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True
                 )
-                vision_mask_thd = (input_ids_thd == self.image_token_id) | (
-                    input_ids_thd == self.video_token_id
-                )
+                vision_mask_thd = (input_ids_thd == self.image_token_id) \
+                                | (input_ids_thd == self.video_token_id)
                 if deepstack_feature_lists is not None:
                     tmp_embeddings = torch.zeros_like(
                         combined_embeddings.transpose(0, 1)
@@ -414,11 +465,17 @@ class Qwen3VLModel(MegatronModule):
                 self.config.spatial_merge_size,
                 self.image_token_id,
                 self.video_token_id,
+                self.audio_token_id,
                 self.vision_start_token_id,
-                input_ids,
+                self.audio_start_token_id,
+                self.position_id_per_seconds,
+                input_ids=input_ids,
                 image_grid_thw=image_grid_thw,
                 video_grid_thw=video_grid_thw,
                 attention_mask=attention_mask,
+                use_audio_in_video=use_audio_in_video,
+                audio_seqlens=audio_feature_lengths,
+                second_per_grids=video_second_per_grid,
             )  #  [3*b*s]
             if packed_seq_params is not None:
                 # convert position_ids to THD format

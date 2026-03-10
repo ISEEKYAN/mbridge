@@ -1,13 +1,11 @@
 # Example to use tp/pp/cp/vpp to test dense model
-# torchrun --nproc_per_node=8 example/qwen3vl/load_model_and_forward.py --model_path /path/to/model
+# torchrun --nproc_per_node=8 example/qwen3_omni/load_model_and_forward.py --model_path /path/to/model
 
 import argparse
 import os
 
-import requests
-
 try:
-    from transformers import Qwen3VLProcessor
+    from transformers import Qwen3OmniMoeProcessor
 except:
     print(f"your install the tranformers>=4.57.0 or install from source")
 
@@ -24,162 +22,46 @@ from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from mbridge import AutoBridge
 
 
-def download_img(filename):
-    image_url = "https://www.ilankelman.org/stopsigns/australia.jpg"
-    try:
-        response = requests.get(image_url, stream=True)
-        response.raise_for_status()
-
-        with open(filename, "wb") as file:
-            for chunk in response.iter_content(chunk_size=8192):
-                file.write(chunk)
-    except requests.exceptions.RequestException as e:
-        print(f"downlaod fail: {e}")
-        raise e
-
-
-def download_video(filename):
-    video_url = (
-        "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen2-VL/space_woaudio.mp4"
-    )
-    try:
-        response = requests.get(video_url, stream=True)
-        response.raise_for_status()
-
-        with open(filename, "wb") as file:
-            for chunk in response.iter_content(chunk_size=8192):
-                file.write(chunk)
-    except requests.exceptions.RequestException as e:
-        print(f"downlaod fail: {e}")
-        raise e
-
-
-def get_image_sample_for_forward(hf_model_path):
-    processor = Qwen3VLProcessor.from_pretrained(hf_model_path)
-    # text = "Please describe this picture completely and in detail, including the details, characters, scenes, etc."
-    text = "Describe this image in shortly."
-    filename = "../australia.jpg"
-    if True:
-        if not os.path.exists(filename):
-            download_img(filename)
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": filename},
-                    {"type": "text", "text": text},
-                ],
-            }
-        ]
-    else:
-        text = "Given the accelerating trajectory of artificial intelligence, where do you foresee the most critical point of divergence between a future in which AI acts as a fundamentally benevolent, symbiotic partner in elevating human consciousness, collective intelligence, and our capacity to solve existential challenges, and a future where it inadvertently becomes an insidious, alienating force that amplifies societal biases, erodes human agency, and creates a new, opaque class structure based on access to and control of cognitive capital—and what specific, measurable factors in our current approach to AI development, governance, and education will be the primary determinants in steering us toward one outcome over the other?"
-        messages = [{"role": "user", "content": [{"type": "text", "text": text}]}]
-
-    inputs = processor.apply_chat_template(
-        messages,
-        tokenize=True,
-        add_generation_prompt=True,
-        return_dict=True,
-        return_tensors="pt",
-        max_pixels=256 * 28 * 28,
-    )
-    inputs.pop("token_type_ids", None)
-    if "pixel_values" in inputs:
-        inputs["pixel_values"] = inputs["pixel_values"].to(torch.bfloat16)
-
-    return inputs
-
-
-def get_video_sample_for_forward(hf_model_path):
-    processor = Qwen3VLProcessor.from_pretrained(hf_model_path)
-    video_file = "../space_woaudio.mp4"
-    if not os.path.exists(video_file):
-        download_video(video_file)
-
-    processor = Qwen3VLProcessor.from_pretrained(hf_model_path)
-    # Messages containing a video url(or a local path) and a text query
-    messages = [
+def get_sample_for_forward(hf_model_path):
+    processor = Qwen3OmniMoeProcessor.from_pretrained(hf_model_path)
+    image_file = "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/demo/cars.jpg"
+    audio_file = "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/demo/cough.wav"
+    
+    conversation = [
         {
             "role": "user",
             "content": [
-                {
-                    "type": "video",
-                    "video": video_file,
-                },
-                {"type": "text", "text": "Describe those videos in shortly."},
+                {"type": "image", "image": image_file},
+                {"type": "audio", "audio": audio_file},
+                {"type": "text", "text": "Describe those audios and images in shortly and respectively."},
             ],
-        }
+        },
     ]
-    # Preparation for inference
+
+    kwargs = {
+        "videos_kwargs": {
+            "use_audio_in_video": False,
+        },
+    }
     inputs = processor.apply_chat_template(
-        messages,
-        tokenize=True,
+        conversation,
         add_generation_prompt=True,
-        return_dict=True,
-        return_tensors="pt",
-    )
-    inputs.pop("token_type_ids", None)
-    assert "pixel_values" not in inputs
-    inputs["pixel_values_videos"] = inputs["pixel_values_videos"].to(torch.bfloat16)
-
-    return inputs
-
-
-def get_mix_sample_for_forward(hf_model_path):
-    processor = Qwen3VLProcessor.from_pretrained(hf_model_path)
-    video_file = "../space_woaudio.mp4"
-    if not os.path.exists(video_file):
-        download_video(video_file)
-    image_file = "../australia.jpg"
-    if not os.path.exists(image_file):
-        download_img(image_file)
-
-    processor = Qwen3VLProcessor.from_pretrained(hf_model_path)
-    # Messages containing a video url(or a local path) and a text query
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "image": image_file,
-                },
-                {
-                    "type": "video",
-                    "video": video_file,
-                },
-                {
-                    "type": "text",
-                    "text": "Describe those videos and images in shortly and respectively",
-                },
-            ],
-        }
-    ]
-    # Preparation for inference
-    inputs = processor.apply_chat_template(
-        messages,
         tokenize=True,
-        add_generation_prompt=True,
         return_dict=True,
         return_tensors="pt",
         add_vision_id=True,  # have better to add this
+        **kwargs,
     )
-    inputs.pop("token_type_ids", None)
-    inputs["pixel_values"] = inputs["pixel_values"].to(torch.bfloat16)
-    inputs["pixel_values_videos"] = inputs["pixel_values_videos"].to(torch.bfloat16)
+
+    if "pixel_values" in inputs:
+        inputs["pixel_values"] = inputs["pixel_values"].to(torch.bfloat16)
+    if "pixel_values_videos" in inputs:
+        inputs["pixel_values_videos"] = inputs["pixel_values_videos"].to(torch.bfloat16)
+        print(f'{inputs["pixel_values_videos"].shape=}')
+    if "input_features" in inputs:
+        inputs["input_features"] = inputs["input_features"].to(torch.bfloat16)
 
     return inputs
-
-
-def get_sample_for_forward(hf_model_path, sample_type="image"):
-    if sample_type == "image":
-        return get_image_sample_for_forward(hf_model_path)
-    elif sample_type == "video":
-        return get_video_sample_for_forward(hf_model_path)
-    elif sample_type == "mix":
-        return get_mix_sample_for_forward(hf_model_path)
-    else:
-        assert False
 
 
 def gather_output_from_cp(input_: torch.Tensor, seq_dim, cp_size, cp_group):
@@ -273,13 +155,6 @@ def get_args():
     )
     parser.add_argument("--check_export", action="store_true", help="Trust remote code")
 
-    parser.add_argument(
-        "--sample_type",
-        type=str,
-        default="image",
-        choices=["image", "video", "mix"],
-        help="sample type",
-    )
     args = parser.parse_args()
     return args
 
@@ -289,6 +164,12 @@ def mcore_fwd_fn(data_iterator, model):
 
     output_tensor = model(
         input_ids=sample["input_ids"].cuda(),
+        input_features= (
+            sample["input_features"].cuda() if "input_features" in sample else None
+        ),
+        feature_attention_mask = (
+            sample["feature_attention_mask"].cuda() if "feature_attention_mask" in sample else None
+        ),
         position_ids=None,
         attention_mask=None,
         pixel_values=(
@@ -351,6 +232,7 @@ def main():
         )
     model = bridge.get_model(model_type=ModelType.encoder_and_decoder)
     assert len(model) == 1
+
     bridge.load_weights(model, hf_model_path, memory_efficient=False)
 
     # check the export
@@ -370,15 +252,22 @@ def main():
 
         missing_keys = set(keys) - loaded_keys
         missing_keys = sorted(list(missing_keys))
-        assert len(missing_keys) == 0
-        print(f"missing keys: {missing_keys}")
+        thinker_missing_keys = []
+        for key in missing_keys:
+            if key.startswith("thinker."):
+                thinker_missing_keys.append(key)
+        assert len(thinker_missing_keys) == 0, f"missing keys: {thinker_missing_keys}"
 
     print(f"rank{torch.distributed.get_rank()}: end load weight, start forward ...")
 
-    sample = get_sample_for_forward(hf_model_path, args.sample_type)
+    sample = get_sample_for_forward(hf_model_path)
     input_mask = sample["input_ids"] != bridge.hf_config.image_token_id
+    input_mask = input_mask & sample["input_ids"] != bridge.hf_config.video_token_id
     input_mask = input_mask & (sample["input_ids"] != bridge.hf_config.vision_end_token_id)
     input_mask = input_mask & (sample["input_ids"] != bridge.hf_config.vision_start_token_id)
+    input_mask = input_mask & sample["input_ids"] != bridge.hf_config.audio_token_id
+    input_mask = input_mask & (sample["input_ids"] != bridge.hf_config.audio_end_token_id)
+    input_mask = input_mask & (sample["input_ids"] != bridge.hf_config.audio_start_token_id)
     input_mask = F.pad(input_mask[:, 1:], (0, 1, 0, 0), value=True)
 
     real_seq_length = sample["input_ids"].shape[-1]
