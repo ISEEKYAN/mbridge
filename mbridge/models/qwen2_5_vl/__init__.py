@@ -472,7 +472,13 @@ class Qwen2_5VLBridge(VLMBridge):
             self.hf_config, "tie_word_embeddings", False
         )
 
-        def provider(pre_process, post_process, vp_stage: Optional[int] = None):
+        def provider(
+            pre_process,
+            post_process,
+            add_decoder=True,
+            add_encoder=True,
+            vp_stage: Optional[int] = None
+        ):
             transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
 
             from megatron.core.extensions.transformer_engine import (
@@ -512,8 +518,8 @@ class Qwen2_5VLBridge(VLMBridge):
                 language_rotary_base=self.hf_config.rope_theta,
                 pre_process=pre_process,
                 post_process=post_process,
-                add_decoder=True,
-                add_encoder=True,
+                add_decoder=add_decoder,
+                add_encoder=add_encoder,
                 parallel_output=True,
                 language_share_embeddings_and_output_weights=share_embeddings_and_output_weights,
                 vp_stage=vp_stage,
