@@ -1,18 +1,19 @@
 # Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
 import logging
+from packaging.version import Version
 from collections import namedtuple
 from typing import List
 
 import megatron.core as mcore
 import torch
-from megatron.core import InferenceParams, tensor_parallel
+from megatron.core import InferenceParams, tensor_parallel, mpu
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from mbridge.core.util import preprocess_packed_seqs
+from mbridge.core.util import preprocess_packed_seqs, split_data_cp_rank
 
 from .attention import Qwen2_5VLSelfAttention
 from .transformer_config import Qwen2VLTransformerConfig
@@ -145,7 +146,7 @@ class Qwen2_5VLModel(MegatronModule):
             scatter_embedding_sequence_parallel=False,
             **args,
         )
-        if True:
+        if Version(mcore.__version__) < Version("0.15.0"):
             # patch the rotary_pos_emb.forward to support THD format with CP
             from .rope_utils import mrope_forward_thd_cp
 
@@ -355,6 +356,15 @@ class Qwen2_5VLModel(MegatronModule):
                     )[0]
                     .transpose(0, 1)
                     .contiguous()
+                )
+            cp_size = mpu.get_context_parallel_world_size()
+            if (
+                combined_embeddings is not None
+                and cp_size > 1
+                and packed_seq_params is None
+            ):
+                combined_embeddings = split_data_cp_rank(
+                    combined_embeddings, cp_size, 0
                 )
             if self.config.sequence_parallel:
                 combined_embeddings = (

@@ -2,11 +2,7 @@
 ps -ef | grep python | awk  '{print $2}' | xargs -I {} kill -9 {}
 sleep 1
 
-DIR="$(cd "$( dirname "$0" )" && pwd)"
-# mbridge
-cd ${DIR}/../..
-
-export PYTHONPATH==$DIR/../..:$DIR/../../../Megatron-LM:$PYTHONPATH
+export PYTHONPATH=$PWD:/root/Megatron-LM:$PYTHONPATH
 echo "PYTHONPATH ${PYTHONPATH}"
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export HF_DATASETS_OFFLINE=1
@@ -21,8 +17,8 @@ readonly MASTER_PORT=65535
 export MASTER_ADDR="${_MASTER_ADDR:-localhost}"
 
 readonly TP_SIZE=1
-readonly PP_SIZE=2
-readonly CP_SIZE=1
+readonly PP_SIZE=1
+readonly CP_SIZE=2
 
 echo "INFO
 __POD_IP__ $__POD_IP__
@@ -52,7 +48,6 @@ torchrun $DISTRIBUTED_ARGS \
     example/qwen2_5_vl/load_model_and_forward.py \
     --tp $TP_SIZE \
     --pp $PP_SIZE \
-    --etp 1 \
     --cp $CP_SIZE \
     --model_path ../hf-hub/Qwen/Qwen2.5-VL-3B-Instruct \
     --sample_type $SAMPLE_TYPE \
