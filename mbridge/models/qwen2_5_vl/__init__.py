@@ -167,6 +167,16 @@ class Qwen2_5VLBridge(VLMBridge):
             return ["model.embed_tokens.weight"]
         return []
 
+    def _get_mcore_config_by_name(self, mcore_weights_name: str):
+        # attention the order is important
+        if "vision_model.projection." in mcore_weights_name:
+            assert hasattr(self, "project_config")
+            return self.project_config
+        if "vision_model." in mcore_weights_name:
+            assert hasattr(self, "vision_config")
+            return self.vision_config
+        return self.config
+
     def _weight_name_mapping_attention(self, name: str) -> list[str]:
         split_name = name.split(".")
         layer_number = split_name[3]
@@ -504,6 +514,9 @@ class Qwen2_5VLBridge(VLMBridge):
                 linear_fc2=TERowParallelLinear,
             )
             vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
+
+            setattr(self, "vision_config", vision_transformer_config)
+            setattr(self, "project_config", vision_projection_config)
 
             model = Qwen2_5VLModel(
                 language_transformer_config=self.config,

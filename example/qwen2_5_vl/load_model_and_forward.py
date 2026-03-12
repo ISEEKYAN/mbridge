@@ -246,7 +246,7 @@ def main():
             num_layers_in_first_pipeline_stage=first_last_layer // 2,
             num_layers_in_last_pipeline_stage=(first_last_layer + 1) // 2,
         )
-    model = bridge.get_model(model_type=ModelType.encoder_and_decoder)
+    model = bridge.get_model(model_type=ModelType.encoder_or_decoder)
     assert len(model) == 1
     bridge.load_weights(model, hf_model_path, memory_efficient=False)
 

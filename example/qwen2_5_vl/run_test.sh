@@ -16,8 +16,8 @@ readonly WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
 readonly MASTER_PORT=65535
 export MASTER_ADDR="${_MASTER_ADDR:-localhost}"
 
-readonly TP_SIZE=1
-readonly PP_SIZE=1
+readonly TP_SIZE=2
+readonly PP_SIZE=2
 readonly CP_SIZE=2
 
 echo "INFO
