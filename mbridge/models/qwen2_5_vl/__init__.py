@@ -167,6 +167,16 @@ class Qwen2_5VLBridge(VLMBridge):
             return ["model.embed_tokens.weight"]
         return []
 
+    def _get_mcore_config_by_name(self, mcore_weights_name: str):
+        # attention the order is important
+        if "vision_model.projection." in mcore_weights_name:
+            assert hasattr(self, "project_config")
+            return self.project_config
+        if "vision_model." in mcore_weights_name:
+            assert hasattr(self, "vision_config")
+            return self.vision_config
+        return self.config
+
     def _weight_name_mapping_attention(self, name: str) -> list[str]:
         split_name = name.split(".")
         layer_number = split_name[3]
@@ -472,7 +482,13 @@ class Qwen2_5VLBridge(VLMBridge):
             self.hf_config, "tie_word_embeddings", False
         )
 
-        def provider(pre_process, post_process, vp_stage: Optional[int] = None):
+        def provider(
+            pre_process,
+            post_process,
+            add_decoder=True,
+            add_encoder=True,
+            vp_stage: Optional[int] = None
+        ):
             transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
 
             from megatron.core.extensions.transformer_engine import (
@@ -499,6 +515,9 @@ class Qwen2_5VLBridge(VLMBridge):
             )
             vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
 
+            setattr(self, "vision_config", vision_transformer_config)
+            setattr(self, "project_config", vision_projection_config)
+
             model = Qwen2_5VLModel(
                 language_transformer_config=self.config,
                 language_transformer_layer_spec=transformer_layer_spec,
@@ -512,8 +531,8 @@ class Qwen2_5VLBridge(VLMBridge):
                 language_rotary_base=self.hf_config.rope_theta,
                 pre_process=pre_process,
                 post_process=post_process,
-                add_decoder=True,
-                add_encoder=True,
+                add_decoder=add_decoder,
+                add_encoder=add_encoder,
                 parallel_output=True,
                 language_share_embeddings_and_output_weights=share_embeddings_and_output_weights,
                 vp_stage=vp_stage,
