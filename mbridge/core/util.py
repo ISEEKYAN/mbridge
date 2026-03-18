@@ -11,7 +11,6 @@ from megatron.core import mpu
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.fp8_utils import correct_amax_history_if_needed
-from megatron.core.models.gpt.gpt_model import ModelType
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import (
@@ -24,7 +23,7 @@ from megatron.core.utils import (
 
 def get_model(
     model_provider_func,
-    model_type=ModelType.encoder_or_decoder,
+    model_type=None,
     wrap_with_ddp=True,
     fp16: bool = False,
     bf16: bool = True,
@@ -50,10 +49,6 @@ def get_model(
             mpu.get_pipeline_model_parallel_world_size() > 1
             and virtual_pipeline_model_parallel_size is not None
         ):
-            if model_type == ModelType.encoder_and_decoder:
-                assert (
-                    encoder_pipeline_model_parallel_size == 0
-                ), "Interleaved schedule not supported for model with encoder on separate PP rank"
             model = []
             for i in range(virtual_pipeline_model_parallel_size):
                 # Set pre_process and post_process only after virtual rank is set.
@@ -79,29 +74,9 @@ def get_model(
         else:
             pre_process = mpu.is_pipeline_first_stage()
             post_process = mpu.is_pipeline_last_stage()
-            add_encoder = True
-            add_decoder = True
-            if model_type == ModelType.encoder_and_decoder:
-                if mpu.get_pipeline_model_parallel_world_size() > 1:
-                    rank = mpu.get_pipeline_model_parallel_rank()
-                    first_decoder_rank = encoder_pipeline_model_parallel_size
-                    world_size = mpu.get_pipeline_model_parallel_world_size()
-                    pre_process = rank == 0 or rank == first_decoder_rank
-                    post_process = (rank == (first_decoder_rank - 1)) or (
-                        rank == (world_size - 1)
-                    )
-                    add_encoder = mpu.is_inside_encoder(rank)
-                    add_decoder = mpu.is_inside_decoder(rank)
-                model = model_provider_func(
-                    pre_process=pre_process,
-                    post_process=post_process,
-                    add_encoder=add_encoder,
-                    add_decoder=add_decoder,
-                )
-            else:
-                model = model_provider_func(
-                    pre_process=pre_process, post_process=post_process
-                )
+            model = model_provider_func(
+                pre_process=pre_process, post_process=post_process
+            )
             model.model_type = model_type
         return model
 

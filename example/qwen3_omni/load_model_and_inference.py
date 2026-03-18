@@ -91,7 +91,11 @@ def main():
             num_layers_in_last_pipeline_stage=(first_last_layer + 1) // 2,
         )
     bridge.config.sequence_parallel = True
-    model = bridge.get_model(model_type=ModelType.encoder_and_decoder)
+    try:
+        model_type = ModelType.encoder_and_decoder
+    except:
+        model_type = None
+    model = bridge.get_model(model_type=model_type)
     assert len(model) == 1
     bridge.load_weights(model, hf_model_path, memory_efficient=True)
     print(f"rank{torch.distributed.get_rank()}: end load weight, start forward ...")
