@@ -80,6 +80,11 @@ class Qwen3_5VLModel(MegatronModule):
             if issubclass(layer_spec.submodules.self_attention.module, SelfAttention):
                 layer_spec.submodules.self_attention.module = Qwen3_5VLSelfAttention
 
+        if language_mtp_block_spec is not None:
+            for _, layer_spec in enumerate(language_mtp_block_spec.layer_specs):
+                if issubclass(layer_spec.submodules.transformer_layer.submodules.self_attention.module, SelfAttention):
+                    layer_spec.submodules.transformer_layer.submodules.self_attention.module = Qwen3_5VLSelfAttention
+
         self.pre_process = pre_process
         self.post_process = post_process
         self.add_encoder = add_encoder
@@ -364,8 +369,14 @@ class Qwen3_5VLModel(MegatronModule):
                 attention_mask = None
                 self.language_model.rotary_pos_emb.is_thd_format = True
 
+        sp_input_ids = input_ids
+        if input_ids is not None:
+            sp_input_ids = input_ids.permute(1, 0).contiguous()
+            sp_input_ids = tensor_parallel.scatter_to_sequence_parallel_region(sp_input_ids)
+            sp_input_ids = sp_input_ids.permute(1, 0).contiguous()
+
         output = self.language_model(
-            input_ids=None,
+            input_ids=sp_input_ids,
             position_ids=position_ids,  # None in encoder
             attention_mask=attention_mask,  # None in encoder
             decoder_input=combined_embeddings,  # only not None in the first decoder PP stage
