@@ -1,6 +1,7 @@
 import logging
 
 import torch
+
 from megatron.core import InferenceParams, mpu, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import MegatronModule
@@ -325,7 +326,12 @@ class Qwen3VLModel(MegatronModule):
 
             if vision_embeds is not None:
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
-                combined_embeddings[vision_mask] = vision_embeds
+                # [FIX] Clone mask so IndexPutBackward0 holds a stable copy;
+                # without this, if vision_mask is overwritten between forward and
+                # backward (e.g. by the next micro-batch), backward would index
+                # with the wrong mask count, causing a shape mismatch error.
+                _vm_bshd = vision_mask.clone()
+                combined_embeddings[_vm_bshd] = vision_embeds
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
 
             if (
@@ -349,7 +355,9 @@ class Qwen3VLModel(MegatronModule):
                     )
                     new_deepstack_feature_lists = []
                     for deepstack_visual_embed in deepstack_feature_lists:
-                        tmp_embeddings[vision_mask] = deepstack_visual_embed
+                        # [FIX] Clone mask for stable IndexPutBackward0 reference
+                        _vm_loop = vision_mask.clone()
+                        tmp_embeddings[_vm_loop] = deepstack_visual_embed
                         tmp_embeddings_thd = preprocess_packed_seqs(
                             tmp_embeddings.contiguous(),
                             attention_mask,

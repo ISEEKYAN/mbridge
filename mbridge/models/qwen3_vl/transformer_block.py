@@ -782,7 +782,13 @@ class Qwen3VLTransformerBlock(TransformerBlock):
         visual_embeds: torch.Tensor,
     ):
         hidden_states = hidden_states.transpose(0, 1).contiguous()
-        local_this = hidden_states[visual_pos_masks, :].clone() + visual_embeds
-        hidden_states[visual_pos_masks, :] = local_this
+        # [FIX] Clone the mask so IndexPutBackward0 holds a stable copy.
+        # Without this, if visual_pos_masks is overwritten in-place by the next
+        # micro-batch's forward (memory reuse / Python object reuse), backward
+        # would index with the wrong mask, causing a shape mismatch like
+        # "got [225, 2560] but expected [224, 2560]".
+        mask = visual_pos_masks.clone()
+        local_this = hidden_states[mask, :].clone() + visual_embeds
+        hidden_states[mask, :] = local_this
         hidden_states = hidden_states.transpose(0, 1).contiguous()
         return hidden_states

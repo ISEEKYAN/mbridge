@@ -296,11 +296,47 @@ def reorganize_inputs(
     if pixel_values is None:
         if video_input_mask is None and pixel_values_videos is not None:
             video_input_mask = (input_ids == video_token_id).contiguous()
+        # [FIX] Align video mask token count with video_grid_thw to eliminate
+        # the discrepancy between HF tokenizer placeholder count and ViT output count.
+        if video_input_mask is not None and video_grid_thw is not None:
+            expected_n = int(video_grid_thw.prod(-1).sum().item()) // square_merge_size
+            actual_n = int(video_input_mask.sum().item())
+            if actual_n != expected_n and actual_n > expected_n:
+                print(
+                    f"[REORGANIZE-WARN] pure-video: mask.sum={actual_n} != "
+                    f"grid_thw-implied {expected_n}; trimming mask",
+                    flush=True,
+                )
+                flat_idx = video_input_mask.reshape(-1).nonzero(as_tuple=False).squeeze(1)
+                trim_mask = torch.zeros(
+                    video_input_mask.numel(), dtype=torch.bool, device=video_input_mask.device
+                )
+                trim_mask[flat_idx[:expected_n]] = True
+                video_input_mask = trim_mask.reshape(video_input_mask.shape)
         return pixel_values_videos, video_grid_thw, video_input_mask
 
     if pixel_values_videos is None:
         if image_input_mask is None and pixel_values is not None:
             image_input_mask = (input_ids == image_token_id).contiguous()
+        # [FIX] Align image mask token count with image_grid_thw to eliminate
+        # the discrepancy between HF tokenizer placeholder count and ViT output count.
+        # The pure-image early-return bypasses the T*H*W consistency check that the
+        # mixed (image+video) path has at lines 325-331, so we add it here explicitly.
+        if image_input_mask is not None and image_grid_thw is not None:
+            expected_n = int(image_grid_thw.prod(-1).sum().item()) // square_merge_size
+            actual_n = int(image_input_mask.sum().item())
+            if actual_n != expected_n and actual_n > expected_n:
+                print(
+                    f"[REORGANIZE-WARN] pure-image: mask.sum={actual_n} != "
+                    f"grid_thw-implied {expected_n}; trimming mask",
+                    flush=True,
+                )
+                flat_idx = image_input_mask.reshape(-1).nonzero(as_tuple=False).squeeze(1)
+                trim_mask = torch.zeros(
+                    image_input_mask.numel(), dtype=torch.bool, device=image_input_mask.device
+                )
+                trim_mask[flat_idx[:expected_n]] = True
+                image_input_mask = trim_mask.reshape(image_input_mask.shape)
         return pixel_values, image_grid_thw, image_input_mask
 
     image_thw_cpu = image_grid_thw.tolist()
