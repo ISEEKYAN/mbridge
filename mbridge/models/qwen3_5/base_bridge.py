@@ -82,7 +82,6 @@ class Qwen3_5VlBaseBridge(VLMBridge):
                 **extra_args,
             )
         )
-        self.config.mtp_num_layers = 1
 
         mtp_block_spec = get_gpt_mtp_block_spec(
                             self.config,
@@ -91,6 +90,22 @@ class Qwen3_5VlBaseBridge(VLMBridge):
                             vp_stage=vp_stage,
                         )
         return mtp_block_spec
+
+    def _build_mtp_config(self):
+        # Add MTP configuration if present
+        mtp_args = {}
+        if hasattr(self.hf_config, "num_nextn_predict_layers") and \
+                self.hf_config.num_nextn_predict_layers is not None:
+            mtp_args["mtp_num_layers"] = self.hf_config.num_nextn_predict_layers
+            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get("mtp_loss_scaling_factor", 0.1)
+        elif hasattr(self.hf_config.text_config, "mtp_num_hidden_layers") and \
+                    self.hf_config.text_config.mtp_num_hidden_layers is not None and \
+                    self.hf_config.text_config.mtp_num_hidden_layers > 0:
+            mtp_args["mtp_num_layers"] = self.hf_config.text_config.mtp_num_hidden_layers
+            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get("mtp_loss_scaling_factor", 0.1)
+
+        print(f"qwen3.5 model --- mtp_args:{mtp_args}")
+        return mtp_args
 
 
     def _adjust_mapping_for_shared_weights(self):
@@ -934,7 +949,13 @@ class Qwen3_5VlBaseBridge(VLMBridge):
             vp_stage: Optional[int] = None,
         ):
             transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
-            mtp_block_spec = self._get_mtp_layer_spec(vp_stage)
+
+            mtp_block_spec = None
+            if (
+                self.config.mtp_num_layers is not None
+                and self.config.mtp_num_layers > 0
+            ):
+                mtp_block_spec = self._get_mtp_layer_spec(vp_stage)
 
             model = Qwen3_5VLModel(
                 language_transformer_config=self.config,

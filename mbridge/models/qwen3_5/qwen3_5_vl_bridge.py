@@ -191,6 +191,8 @@ class Qwen3_5VlBridge(Qwen3_5VlBaseBridge):
     }
 
     def _build_config(self):
+        mtp_args = self._build_mtp_config()
+
         return self._build_base_config(
             text_config_key="text_config",
             layernorm_epsilon=self.hf_config.text_config.rms_norm_eps,
@@ -230,6 +232,7 @@ class Qwen3_5VlBridge(Qwen3_5VlBaseBridge):
             num_position_embeddings=self.hf_config.vision_config.num_position_embeddings,
             out_hidden_size=self.hf_config.vision_config.out_hidden_size,
             apply_rotary_pos_emb_in_fp32=True,
+            **mtp_args,
         )
 
 
@@ -297,6 +300,8 @@ class Qwen3_5MoeVlBridge(Qwen3_5VlBaseBridge):
         return convert_names
 
     def _build_config(self):
+        mtp_args = self._build_mtp_config()
+
         return self._build_base_config(
             text_config_key="text_config",
             layernorm_epsilon=self.hf_config.text_config.rms_norm_eps,
@@ -353,4 +358,5 @@ class Qwen3_5MoeVlBridge(Qwen3_5VlBaseBridge):
             num_position_embeddings=self.hf_config.vision_config.num_position_embeddings,
             out_hidden_size=self.hf_config.vision_config.out_hidden_size,
             apply_rotary_pos_emb_in_fp32=True,
+            **mtp_args,
         )

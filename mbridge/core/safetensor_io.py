@@ -154,6 +154,18 @@ class SafeTensorIO:
                     save_file(to_save, safetensor_file)
                     for k in keys_for_file:
                         del states[k]
+
+        # Handle files not fully matched in the previous step,
+        # save remaining keys that partially overlap with each file's key set
+        for filename, keys_for_file in filename_to_keys_map.items():
+            left_keys = set(states.keys()) & keys_for_file
+            if left_keys:
+                to_save = {k: states[k] for k in left_keys}
+                safetensor_file = os.path.join(new_hf_dir, filename)
+                save_file(to_save, safetensor_file)
+                for k in left_keys:
+                    del states[k]
+
         if not set(states.keys()) == set(hf_shared_weight_keys):
             warnings.warn(
                 f"Some weights are not saved: {states.keys()} {hf_shared_weight_keys=}"
