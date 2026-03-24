@@ -34,7 +34,7 @@ class Glm4VLBridgeBase(VLMBridge):
             vocab_size=self.hf_config.vocab_size,
             max_sequence_length=self.hf_config.max_position_embeddings,
             position_embedding_type="mrope",
-            rotary_base=self.hf_config.rope_theta,
+            rotary_base=getattr(self.hf_config, "rope_theta", self.hf_config.rope_scaling.rope_theta),
             rotary_percent=self.hf_config.partial_rotary_factor,
         )
 

@@ -444,7 +444,7 @@ class Gemma3Bridge(VLMBridge):
                 img_h=self.config.image_size,
                 img_w=self.config.image_size,
                 patch_dim=self.config.patch_size,
-                language_rotary_base=self.hf_config.text_config.rope_theta,
+                language_rotary_base=getattr(self.hf_config.text_config, "rope_theta", self.hf_config.text_config.rope_scaling.rope_theta),
                 language_rope_scaling=False,
             )
 
