@@ -86,7 +86,7 @@ class LLaMABridge(LLMBridge):
                     self.hf_config.rope_scaling["factor"]
                 )
         # For transformer >= 5.0.0, use rope_theta from rope_parameters
-        rope_theta = getattr(self.hf_config, "rope_theta", self.hf_config.rope_scaling.rope_parameters.rope_theta)
+        rope_theta = getattr(self.hf_config, "rope_theta", self.hf_config.rope_scaling.rope_theta)
         ret = dict(
             vocab_size=self.hf_config.vocab_size,
             max_sequence_length=self.hf_config.max_position_embeddings,
