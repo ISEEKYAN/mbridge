@@ -7,6 +7,7 @@ import re
 from ..core import register_model
 from ..models import Qwen2Bridge, Qwen2MoEBridge
 from ..utils.layer import translate_first_k_dense_replace_to_moe_layer_freq
+from ..utils.hf_config import get_hf_rope_theta
 
 
 @register_model("glm4_moe")
@@ -163,6 +164,6 @@ class GLM4MoEBridge(Qwen2MoEBridge):
             vocab_size=self.hf_config.vocab_size,
             max_sequence_length=self.hf_config.max_position_embeddings,
             position_embedding_type="rope",
-            rotary_base=getattr(self.hf_config, "rope_theta", self.hf_config.rope_scaling.rope_theta),
+            rotary_base=get_hf_rope_theta(self.hf_config),
             rotary_percent=self.hf_config.partial_rotary_factor,
         )

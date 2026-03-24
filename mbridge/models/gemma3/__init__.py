@@ -18,6 +18,7 @@ from mbridge.models.gemma3.transformer_layer import (
     get_gemma3_layer_spec_te,
     get_layer_spec_te,
 )
+from mbridge.utils.hf_config import get_hf_rope_theta
 
 
 @register_model("gemma3")
@@ -444,7 +445,7 @@ class Gemma3Bridge(VLMBridge):
                 img_h=self.config.image_size,
                 img_w=self.config.image_size,
                 patch_dim=self.config.patch_size,
-                language_rotary_base=getattr(self.hf_config.text_config, "rope_theta", self.hf_config.text_config.rope_scaling.rope_theta),
+                language_rotary_base=get_hf_rope_theta(self.hf_config),
                 language_rope_scaling=False,
             )
 
