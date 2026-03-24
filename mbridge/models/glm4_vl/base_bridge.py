@@ -8,6 +8,8 @@ from ...core.util import unwrap_model
 from .model import Glm4VLModel
 from .transformer_config import GLM4VLTransformerConfig
 
+from mbridge.utils.hf_config import get_hf_rope_theta
+
 
 class Glm4VLBridgeBase(VLMBridge):
     """
@@ -34,7 +36,7 @@ class Glm4VLBridgeBase(VLMBridge):
             vocab_size=self.hf_config.vocab_size,
             max_sequence_length=self.hf_config.max_position_embeddings,
             position_embedding_type="mrope",
-            rotary_base=getattr(self.hf_config, "rope_theta", self.hf_config.rope_scaling.rope_theta),
+            rotary_base=get_hf_rope_theta(self.hf_config),
             rotary_percent=self.hf_config.partial_rotary_factor,
         )
 

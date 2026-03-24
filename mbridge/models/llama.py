@@ -3,6 +3,8 @@
 from ..core import LLMBridge, register_model
 from ..core.bridge import Bridge, register_model
 
+from mbridge.utils.hf_config import get_hf_rope_theta
+
 
 @register_model("llama")
 class LLaMABridge(LLMBridge):
@@ -85,18 +87,11 @@ class LLaMABridge(LLMBridge):
                 rope_scaling_args["seq_len_interpolation_factor"] = (
                     self.hf_config.rope_scaling["factor"]
                 )
-        # For transformer >= 5.0.0, use rope_theta from rope_parameters
-        if hasattr(self.hf_config, 'rope_parameters') and 'rope_theta' in self.hf_config.rope_parameters:
-            # for transformer >= 5.0.0
-            rotary_base = self.hf_config.rope_parameters['rope_theta']
-        else:
-            # for transformer ~= 4.57.3
-            rotary_base = self.hf_config.rope_theta
         ret = dict(
             vocab_size=self.hf_config.vocab_size,
             max_sequence_length=self.hf_config.max_position_embeddings,
             position_embedding_type="rope",
-            rotary_base=rope_theta,
+            rotary_base=get_hf_rope_theta(self.hf_config),
         )
         ret.update(rope_scaling_args)
         return ret

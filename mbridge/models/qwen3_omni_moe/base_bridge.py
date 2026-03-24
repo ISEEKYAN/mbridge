@@ -17,6 +17,7 @@ from mbridge.models.qwen3_vl.transformer_config import get_vision_model_config
 from mbridge.models.qwen3_vl.utils import PatchMergerSubmodules
 from mbridge.models.qwen3_omni_moe.model import Qwen3OmniMoeModel
 from mbridge.models.qwen3_omni_moe.transformer_config import get_audio_model_config
+from mbridge.utils.hf_config import get_hf_rope_theta_from_attribute
 
 
 class Qwen3OmniBaseBridge(VLMBridge):
@@ -393,8 +394,7 @@ class Qwen3OmniBaseBridge(VLMBridge):
 
             setattr(self, "audio_config", audio_transformer_config)
 
-            rope_theta = self.hf_config.thinker_config.text_config.rope_theta if hasattr(self.hf_config.thinker_config.text_config, "rope_theta") \
-                else self.hf_config.thinker_config.text_config.rope_scaling["rope_theta"]
+            rope_theta = get_hf_rope_theta_from_attribute(self.hf_config.thinker_config.text_config)
 
             model = Qwen3OmniMoeModel(
                 language_transformer_config=self.config,
