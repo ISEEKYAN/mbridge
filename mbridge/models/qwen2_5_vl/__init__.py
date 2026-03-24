@@ -528,7 +528,7 @@ class Qwen2_5VLBridge(VLMBridge):
                 vision_projection_config=vision_projection_config,
                 vision_projection_layer_spec=vision_projection_layer_spec,
                 vision_projection_type="mlp",
-                language_rotary_base=self.hf_config.rope_theta,
+                language_rotary_base=getattr(self.hf_config, "rope_theta", self.hf_config.rope_scaling.rope_theta),
                 pre_process=pre_process,
                 post_process=post_process,
                 add_decoder=add_decoder,

@@ -68,7 +68,7 @@ def apply_rope_megatron(q, k, bridge, position_ids):
     rotary_emb = MultimodalRotaryEmbedding(
         kv_channels=bridge.config.kv_channels,
         rotary_interleaved=bridge.config.rotary_interleaved,
-        rotary_base=bridge.hf_config.rope_theta,
+        rotary_base=getattr(bridge.hf_config, "rope_theta", bridge.hf_config.rope_scaling.rope_theta),
         rotary_percent=bridge.hf_config.partial_rotary_factor,
     ).cuda()
     rotary_pos_emb = rotary_emb(position_ids, bridge.config.mrope_section)

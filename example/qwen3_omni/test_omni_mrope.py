@@ -59,7 +59,7 @@ if __name__ == "__main__":
         rotary_percent=1.0,
         rotary_interleaved=False,
         seq_len_interpolation_factor=None,
-        rotary_base=hf_config.text_config.rope_theta,
+        rotary_base=getattr(hf_config.text_config, "rope_theta", hf_config.text_config.rope_scaling.rope_theta),
     )
     x = torch.randn([128, 256], dtype=torch.bfloat16, device="cuda:0")
     hf_cos, hf_sin = hf(x, position_ids)

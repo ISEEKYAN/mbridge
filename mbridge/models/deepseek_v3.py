@@ -154,7 +154,7 @@ class DeepseekV3Bridge(LLMBridge):
             "qk_head_dim": hf_config.qk_nope_head_dim,
             "qk_pos_emb_head_dim": hf_config.qk_rope_head_dim,
             "v_head_dim": hf_config.v_head_dim,
-            "rotary_base": hf_config.rope_theta,
+            "rotary_base": getattr(hf_config, "rope_theta", hf_config.rope_scaling.rope_theta),
             "rotary_scaling_factor": mla_rope_config["factor"],
             "rope_type": mla_rope_config["type"],
             "mscale": mla_rope_config["mscale"],
@@ -199,7 +199,7 @@ class DeepseekV3Bridge(LLMBridge):
             vocab_size=self.hf_config.vocab_size,
             max_sequence_length=self.hf_config.max_position_embeddings,
             position_embedding_type="rope",
-            rotary_base=self.hf_config.rope_theta,
+            rotary_base=getattr(self.hf_config, "rope_theta", self.hf_config.rope_scaling.rope_theta),
         )
 
         return ret
