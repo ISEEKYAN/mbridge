@@ -14,7 +14,7 @@ from megatron.core.models.common.embeddings.rope_utils import _apply_rotary_pos_
 from example.qwen3_omni.load_model_and_forward import get_sample_for_forward
 from mbridge.models.qwen3_vl.rope_utils import Qwen3VLMultimodalRotaryEmbedding
 from mbridge.models.qwen3_omni_moe.rope_utils import get_rope_index
-from mbridge.utils.hf_config import get_hf_rope_theta_from_attribute
+from mbridge.utils.hf_config import get_hf_rope_theta
 
 
 def init_q_k(hf_config, token_ids):
@@ -60,7 +60,7 @@ if __name__ == "__main__":
         rotary_percent=1.0,
         rotary_interleaved=False,
         seq_len_interpolation_factor=None,
-        rotary_base=get_hf_rope_theta_from_attribute(hf_config.text_config),
+        rotary_base=get_hf_rope_theta(hf_config.text_config),
     )
     x = torch.randn([128, 256], dtype=torch.bfloat16, device="cuda:0")
     hf_cos, hf_sin = hf(x, position_ids)
