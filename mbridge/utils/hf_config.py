@@ -1,6 +1,8 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
 
+from transformers import PretrainedConfig
+
 def get_hf_rope_theta(hf_config: PretrainedConfig) -> float:
     """Return RoPE base frequency theta.
 
