@@ -23,6 +23,7 @@ from transformers.models.glm4v.modeling_glm4v import (
 
 from mbridge import AutoBridge
 from mbridge.models.glm4_vl.vl_mixin import VLMixin
+from mbridge.utils.hf_config import get_hf_rope_theta
 
 messages = [
     {
@@ -68,7 +69,7 @@ def apply_rope_megatron(q, k, bridge, position_ids):
     rotary_emb = MultimodalRotaryEmbedding(
         kv_channels=bridge.config.kv_channels,
         rotary_interleaved=bridge.config.rotary_interleaved,
-        rotary_base=bridge.hf_config.rope_theta,
+        rotary_base=get_hf_rope_theta(bridge.hf_config),
         rotary_percent=bridge.hf_config.partial_rotary_factor,
     ).cuda()
     rotary_pos_emb = rotary_emb(position_ids, bridge.config.mrope_section)

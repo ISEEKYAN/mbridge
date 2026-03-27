@@ -16,6 +16,7 @@ from .util import (
     unwrap_model,
 )
 
+from mbridge.utils.hf_config import get_hf_rope_theta
 
 class LLMBridge(Bridge):
     """
@@ -117,11 +118,13 @@ class LLMBridge(Bridge):
         Returns:
             dict: A dictionary of arguments for GPTModel initialization
         """
+        rotary_base = get_hf_rope_theta(self.hf_config)
+
         return dict(
             vocab_size=self.hf_config.vocab_size,
             max_sequence_length=self.hf_config.max_position_embeddings,
             position_embedding_type="rope",
-            rotary_base=self.hf_config.rope_theta,
+            rotary_base=rotary_base,
         )
 
     def _get_transformer_layer_spec(self, vp_stage: Optional[int] = None):

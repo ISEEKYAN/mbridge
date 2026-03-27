@@ -307,7 +307,7 @@ def apply_rotary_pos_emb_absolute(
             )
 
 
-def mrope_forward_thd_cp(self, position_ids: torch.Tensor, mrope_section: list[int]):
+def mrope_forward_thd_cp(self, position_ids: torch.Tensor, mrope_section: list[int], cp_group=None):
     """Forward pass of multimodal RoPE embedding.
 
     Args:

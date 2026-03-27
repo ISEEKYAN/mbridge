@@ -340,19 +340,9 @@ class Qwen3VLModel(MegatronModule):
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True
                 )
-                _, _, vision_mask_thd = reorganize_inputs(
-                    input_ids=input_ids_thd,
-                    pixel_values=pixel_values,
-                    pixel_values_videos=pixel_values_videos,
-                    image_grid_thw=image_grid_thw,
-                    video_grid_thw=video_grid_thw,
-                    image_input_mask=image_input_mask,
-                    video_input_mask=video_input_mask,
-                    image_token_id=self.image_token_id,
-                    video_token_id=self.video_token_id,
-                    square_merge_size=self.square_merge_size,
+                vision_mask_thd = (input_ids_thd == self.image_token_id) | (
+                    input_ids_thd == self.video_token_id
                 )
-
                 if deepstack_feature_lists is not None:
                     tmp_embeddings = torch.zeros_like(
                         combined_embeddings.transpose(0, 1)
@@ -405,6 +395,7 @@ class Qwen3VLModel(MegatronModule):
                     tp_rank=mpu.get_tensor_model_parallel_rank(),
                     cp_size=cp_size,
                     cp_rank=mpu.get_context_parallel_rank(),
+                    sequence_parallel=self.config.sequence_parallel,
                 )
             elif self.config.sequence_parallel:  # THD and SP
                 visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
@@ -414,6 +405,7 @@ class Qwen3VLModel(MegatronModule):
                     tp_rank=mpu.get_tensor_model_parallel_rank(),
                     cp_size=1,
                     cp_rank=0,
+                    sequence_parallel=self.config.sequence_parallel,
                 )
 
         if position_ids is None:
