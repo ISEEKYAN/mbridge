@@ -10,6 +10,7 @@ from megatron.core.transformer import TransformerConfig
 
 @dataclass
 class Qwen3VLTransformerConfig(TransformerConfig):
+    enable_routing_replay: bool = False
     patch_size: int = 14
     temporal_patch_size: int = 2
     in_channels: int = 3

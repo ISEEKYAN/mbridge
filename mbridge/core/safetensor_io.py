@@ -14,7 +14,7 @@ from safetensors.torch import save_file
 class SafeTensorIO:
     def __init__(self, hf_dir: str):
         index_file = os.path.join(hf_dir, "model.safetensors.index.json")
-        config = AutoConfig.from_pretrained(hf_dir)
+        config = AutoConfig.from_pretrained(hf_dir, trust_remote_code=True)
 
         self.index = {}
         self.origin_index = {}
@@ -185,6 +185,7 @@ class SafeTensorIO:
         new_hf_dir: str,
         rank: int = 0,
         world_size: int = 1,
+        strict: bool = True,
     ):
         assert self.index, "index file is required for memory efficient saving"
 
@@ -200,22 +201,31 @@ class SafeTensorIO:
             end_idx = min(num_files, (rank + 1) * num_files_rank)
             filename_list = filename_list[begin_idx:end_idx]
 
+        hf_missing_keys = []
         for filename in filename_list:
             keys_for_file = filename_to_keys_map[filename]
             states = {}
             old_keys_for_file, _ = self._mapping_weight_names_new2old(keys_for_file)
             for old_key, key in zip(old_keys_for_file, keys_for_file):
                 tmp_filename = f"{new_hf_dir}/{old_key}.safetensors"
+                if not strict and not os.path.exists(tmp_filename):
+                    hf_missing_keys.append(old_key)
+                    continue
                 with safe_open(tmp_filename, framework="pt", device="cpu") as f:
                     states[key] = f.get_tensor(old_key)
                     os.remove(tmp_filename)
             save_file(states, os.path.join(new_hf_dir, filename))
+
+        if len(hf_missing_keys) > 0:
+            warnings.warn(f"Some weights are not saved: {hf_missing_keys=}")
+
         return
 
     def save_hf_weight_memory_efficient(
         self,
         per_tensor_generator: Generator[tuple[str, torch.Tensor], None, None],
         new_hf_dir: str,
+        strict: bool,
     ):
         """
         This function is used to save weights in a memory efficient way.
@@ -225,7 +235,7 @@ class SafeTensorIO:
         assert self.index, "index file is required for memory efficient saving"
 
         self.save_tmp_hf_weights(per_tensor_generator, new_hf_dir)
-        self.save_hf_weight_merge(new_hf_dir)
+        self.save_hf_weight_merge(new_hf_dir, strict=strict)
         return
 
     def save_index(self, new_hf_dir: str):
@@ -237,3 +247,81 @@ class SafeTensorIO:
         else:
             warnings.warn("No index file found, saving index file failed")
         return
+
+    def save_batch_weights(
+        self,
+        tensors: dict[str, torch.Tensor],
+        filepath: str,
+    ):
+        """
+        Save multiple tensors into a single safetensors file.
+        This reduces IO overhead by batching multiple tensors together.
+
+        Args:
+            tensors: Dict mapping tensor names to tensor data
+            filepath: Path to save the safetensors file
+        """
+        if not tensors:
+            return
+        assert self.index, "index file is required for memory efficient saving"
+        save_file({k: v.cpu() if v.is_cuda else v for k, v in tensors.items()}, filepath)
+
+    def save_hf_weight_merge_from_batches(
+        self,
+        new_hf_dir: str,
+        rank: int = 0,
+        world_size: int = 1,
+        batch_file_pattern: str = "hf_batch_*.safetensors",
+        strict: bool = True,
+    ):
+        """
+        Merge HF weights from batch files (each containing multiple tensors)
+        into final safetensors shards matching the original index layout.
+
+        Args:
+            new_hf_dir: Directory containing batch files and where final files will be saved
+            rank: Current rank
+            world_size: Total number of ranks
+            batch_file_pattern: Glob pattern to find batch files
+        """
+        assert self.index, "index file is required for memory efficient saving"
+
+        filename_to_keys_map = defaultdict(set)
+        for key, filename in self.index.items():
+            filename_to_keys_map[filename].add(key)
+
+        # Build reverse index: key -> which batch file contains it
+        batch_files = glob(os.path.join(new_hf_dir, batch_file_pattern))
+        key_to_batch_file = {}
+        for bf in batch_files:
+            with safe_open(bf, framework="pt", device="cpu") as f:
+                for key in f.keys():
+                    key_to_batch_file[key] = bf
+
+        filename_list = sorted(list(filename_to_keys_map.keys()))
+        if world_size > 1:
+            num_files = len(filename_list)
+            num_files_rank = (num_files + world_size - 1) // world_size
+            begin_idx = min(num_files, rank * num_files_rank)
+            end_idx = min(num_files, (rank + 1) * num_files_rank)
+            filename_list = filename_list[begin_idx:end_idx]
+
+        # For each final shard, collect tensors from batch files and write
+        hf_missing_keys = []
+        for filename in filename_list:
+            keys_for_file = filename_to_keys_map[filename]
+            states = {}
+            old_keys_for_file, _ = self._mapping_weight_names_new2old(keys_for_file)
+            for old_key, key in zip(old_keys_for_file, keys_for_file):
+                if not strict and old_key not in key_to_batch_file:
+                    hf_missing_keys.append(old_key)
+                    continue
+                bf = key_to_batch_file[old_key]
+                with safe_open(bf, framework="pt", device="cpu") as f:
+                    states[key] = f.get_tensor(old_key)
+            save_file(states, os.path.join(new_hf_dir, filename))
+
+        if len(hf_missing_keys) > 0:
+            warnings.warn(f"Some weights are not saved: {hf_missing_keys=}")
+
+        return batch_files

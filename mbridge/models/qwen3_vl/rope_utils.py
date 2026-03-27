@@ -72,7 +72,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         if rotary_percent < 1.0:
             dim = int(dim * rotary_percent)
         self.rotary_interleaved = rotary_interleaved
-        assert not self.rotary_interleaved, "only support qwen3vl"
+        # assert not self.rotary_interleaved, "only support qwen3vl"
 
         self.seq_len_interpolation_factor = seq_len_interpolation_factor
         self.inv_freq = 1.0 / (
@@ -103,13 +103,16 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             freqs_t[..., idx] = freqs[dim, ..., idx]
         return freqs_t
 
-    def forward(self, position_ids: torch.Tensor, mrope_section: List[int]) -> Tensor:
+    def forward(
+        self, position_ids: torch.Tensor, mrope_section: List[int], **kwargs
+    ) -> Tensor:
         """Forward pass of multimodal RoPE embedding.
 
         Args:
             position_ids (torch.Tensor): A postion_id tensor with shape [3, batchsize, seqlens]
             mrope_section (list[int]): Multimodal rope section is for channel dimension of temporal,
                 height and width in rope calculation.
+            **kwargs: Additional keyword arguments (ignored, for Megatron Core compatibility).
 
         Returns:
             Tensor: Embeddings after applying RoPE.

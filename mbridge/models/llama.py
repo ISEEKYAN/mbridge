@@ -3,6 +3,8 @@
 from ..core import LLMBridge, register_model
 from ..core.bridge import Bridge, register_model
 
+from mbridge.utils.hf_config import get_hf_rope_theta
+
 
 @register_model("llama")
 class LLaMABridge(LLMBridge):
@@ -89,7 +91,7 @@ class LLaMABridge(LLMBridge):
             vocab_size=self.hf_config.vocab_size,
             max_sequence_length=self.hf_config.max_position_embeddings,
             position_embedding_type="rope",
-            rotary_base=self.hf_config.rope_theta,
+            rotary_base=get_hf_rope_theta(self.hf_config),
         )
         ret.update(rope_scaling_args)
         return ret
