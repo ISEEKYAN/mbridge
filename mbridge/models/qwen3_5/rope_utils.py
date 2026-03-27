@@ -163,7 +163,7 @@ def get_rope_index(
 
             llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
             position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(
-                position_ids.device
+                device=position_ids.device, dtype=position_ids.dtype
             )
             mrope_position_deltas.append(
                 llm_positions.max() + 1 - len(total_input_ids[i])
