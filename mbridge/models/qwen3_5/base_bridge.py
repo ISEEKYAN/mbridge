@@ -8,7 +8,6 @@ import torch
 from mbridge.core import VLMBridge
 from mbridge.core.util import unwrap_model
 from mbridge.models.qwen3_5.qwen3_5_safetensor import Qwen3_5SafeTensorIO
-from mbridge.utils.hf_config import hf_moe_checkpoint_uses_stacked_expert_weights
 
 
 class Qwen3_5VlBaseBridge(VLMBridge):
@@ -253,7 +252,7 @@ class Qwen3_5VlBaseBridge(VLMBridge):
 
             # moe: transformers>=5 uses stacked gate_up_proj / down_proj tensors
             if ".mlp.experts.linear_fc" in mcore_weights_name:
-                if hf_moe_checkpoint_uses_stacked_expert_weights():
+                if self._hf_moe_stacked_layout():
                     experts_key = hf_names[0]
                     experts_idx = int(mcore_weights_name.split(".weight")[-1])
 
@@ -430,7 +429,7 @@ class Qwen3_5VlBaseBridge(VLMBridge):
                 experts_idx = (
                     local_experts_idx + num_experts_per_rank * self.mpu.ep_rank
                 )
-                if hf_moe_checkpoint_uses_stacked_expert_weights():
+                if self._hf_moe_stacked_layout():
                     return hf_weights[0][experts_idx].clone().contiguous()
                 return hf_weights[0].clone().contiguous()
             elif "self_attention.out_norm.weight" in mcore_weights_name:

@@ -3,7 +3,6 @@
 import torch
 
 from ..core import LLMBridge, register_model
-from mbridge.utils.hf_config import hf_moe_checkpoint_uses_stacked_expert_weights
 
 
 @register_model("qwen2_moe")
@@ -98,7 +97,7 @@ class Qwen2MoEBridge(LLMBridge):
     def _weight_name_mapping_mlp(self, name: str) -> list[str]:
         layer_number = name.split(".")[2]
         if (
-            hf_moe_checkpoint_uses_stacked_expert_weights()
+            self._hf_moe_stacked_layout()
             and "mlp.experts.linear_fc" in name
         ):
             split_name = name.split(".")
@@ -134,7 +133,7 @@ class Qwen2MoEBridge(LLMBridge):
     ) -> tuple[list[str], list[torch.Tensor]]:
         hf_names = self._weight_name_mapping_mcore_to_hf(mcore_weights_name)
         if (
-            hf_moe_checkpoint_uses_stacked_expert_weights()
+            self._hf_moe_stacked_layout()
             and "mlp.experts.linear_fc" in mcore_weights_name
             and len(hf_names) == 1
         ):
@@ -169,7 +168,7 @@ class Qwen2MoEBridge(LLMBridge):
                 w.to(self.dtype) if w.dtype != self.dtype else w for w in hf_weights
             ]
         if (
-            hf_moe_checkpoint_uses_stacked_expert_weights()
+            self._hf_moe_stacked_layout()
             and "mlp.experts.linear_fc" in mcore_weights_name
             and len(hf_weights) == 1
         ):

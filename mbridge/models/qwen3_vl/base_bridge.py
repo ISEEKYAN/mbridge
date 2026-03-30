@@ -16,10 +16,7 @@ from mbridge.core.util import unwrap_model
 from mbridge.models.qwen3_vl.model import Qwen3VLModel
 from mbridge.models.qwen3_vl.transformer_config import get_vision_model_config
 from mbridge.models.qwen3_vl.utils import PatchMergerSubmodules
-from mbridge.utils.hf_config import (
-    get_hf_rope_theta,
-    hf_moe_checkpoint_uses_stacked_expert_weights,
-)
+from mbridge.utils.hf_config import get_hf_rope_theta
 
 
 class Qwen3VBaseBridge(VLMBridge):
@@ -182,7 +179,7 @@ class Qwen3VBaseBridge(VLMBridge):
 
             # moe: transformers>=5 fuses experts as stacked gate_up_proj / down_proj
             if ".mlp.experts.linear_fc" in mcore_weights_name:
-                if hf_moe_checkpoint_uses_stacked_expert_weights():
+                if self._hf_moe_stacked_layout():
                     experts_key = hf_names[0]
                     experts_idx = int(mcore_weights_name.split(".weight")[-1])
 
@@ -333,7 +330,7 @@ class Qwen3VBaseBridge(VLMBridge):
                 experts_idx = (
                     local_experts_idx + num_experts_per_rank * self.mpu.ep_rank
                 )
-                if hf_moe_checkpoint_uses_stacked_expert_weights():
+                if self._hf_moe_stacked_layout():
                     return hf_weights[0][experts_idx].T.clone().contiguous()
                 return hf_weights[0].T.clone().contiguous()
 

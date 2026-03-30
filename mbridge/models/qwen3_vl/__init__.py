@@ -3,7 +3,6 @@ from copy import deepcopy
 from mbridge.core import register_model
 from mbridge.models.qwen3_vl.base_bridge import Qwen3VBaseBridge
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-from mbridge.utils.hf_config import hf_moe_checkpoint_uses_stacked_expert_weights
 
 _QWEN3VIT_DIRECT_MAPPING = {
     "vision_model.patch_embed.proj.weight": "model.visual.patch_embed.proj.weight",
@@ -264,7 +263,7 @@ class Qwen3VLMoEBridge(Qwen3VBaseBridge):
         split_name[3] = "{layer_number}"
         key = ".".join(split_name)
         convert_names = []
-        if hf_moe_checkpoint_uses_stacked_expert_weights():
+        if self._hf_moe_stacked_layout():
             key = key.split(".weight")[0] + ".weight"
             mapping_names = self._MLP_MAPPING[key]
             convert_names.extend(

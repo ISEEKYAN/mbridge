@@ -21,7 +21,10 @@ from .util import (
     unwrap_model,
 )
 
-from mbridge.utils.hf_config import hf_moe_checkpoint_uses_stacked_expert_weights
+from mbridge.utils.hf_config import (
+    hf_moe_export_should_use_stacked_state_dict,
+    hf_moe_use_stacked_weights_for_checkpoint,
+)
 
 
 class Bridge(ABC):
@@ -46,6 +49,12 @@ class Bridge(ABC):
             hf_config: Hugging Face model configuration
             dtype: Data type for model parameters
             parallel_states: Parallel processing states, or None to use default
+
+        MoE HuggingFace **export** layout (Megatron → HF state_dict) follows the installed
+        transformers version (stacked ``gate_up_proj`` / ``down_proj`` when ≥5) unless
+        overridden via :meth:`set_extra_args` with
+        ``hf_moe_export_stacked_expert_weights`` (``True``/``False``). **Load** infers
+        stacked vs per-expert ``experts.{{i}}.*`` keys from the safetensors index.
         """
         self.hf_config = hf_config
         self.extra_args = {}
@@ -66,10 +75,27 @@ class Bridge(ABC):
         # Some moe models require multiple weights to be combined into one,
         # such as qwen3vl. It will cache it into this buff until all weights are collected.
         self.export_weights_buff = {}
+        # "load" while resolving HF names in load_weights (checkpoint-driven layout);
+        # "export" for Megatron→HF (target layout from transformers version or extra_args).
+        self._hf_moe_mapping_phase = "export"
+
+    def _hf_moe_stacked_layout(self) -> bool:
+        """True → fused ``gate_up_proj`` / ``down_proj``; False → ``experts.{i}.gate_proj`` …"""
+        if getattr(self, "_hf_moe_mapping_phase", "export") == "load":
+            io = getattr(self, "safetensor_io", None)
+            keys = (
+                set(io.index.keys())
+                if io is not None and getattr(io, "index", None)
+                else None
+            )
+            return hf_moe_use_stacked_weights_for_checkpoint(keys)
+        return hf_moe_export_should_use_stacked_state_dict(
+            getattr(self, "extra_args", None)
+        )
 
     def _hf_moe_uses_stacked_expert_checkpoint_layout(self) -> bool:
-        """Whether HF MoE checkpoints use stacked ``gate_up_proj`` / ``down_proj`` (transformers >= 5)."""
-        return hf_moe_checkpoint_uses_stacked_expert_weights()
+        """Backward-compatible alias for :meth:`_hf_moe_stacked_layout`."""
+        return self._hf_moe_stacked_layout()
 
     def get_model(
         self,
@@ -172,7 +198,18 @@ class Bridge(ABC):
             weights_path: Path to the weights file or Hugging Face model identifier
         """
         self.safetensor_io = self._get_safetensor_io(weights_path)
+        self._hf_moe_mapping_phase = "load"
+        try:
+            self._load_weights_impl(models, weights_path, memory_efficient)
+        finally:
+            self._hf_moe_mapping_phase = "export"
 
+    def _load_weights_impl(
+        self,
+        models: list[torch.nn.Module],
+        weights_path: str,
+        memory_efficient: bool = False,
+    ) -> None:
         for i, model in enumerate(models):
             # map local weight names to global weight names
             local_to_global_map = self._weight_name_mapping_mcore_local_to_global(model)
@@ -540,7 +577,10 @@ class Bridge(ABC):
         Set additional configuration arguments.
 
         Args:
-            **kwargs: Key-value pairs of additional arguments
+            **kwargs: Key-value pairs of additional arguments.
+                ``hf_moe_export_stacked_expert_weights`` (bool): when set, forces Megatron→HF
+                MoE export to fused keys (``gate_up_proj`` / ``down_proj``) or per-expert
+                ``experts.{i}.*`` regardless of other heuristics.
         """
         self.extra_args.update(kwargs)
         self.config = self._build_config()
@@ -552,6 +592,7 @@ class Bridge(ABC):
         assert (
             len(self.export_weights_buff) == 0
         ), f"should be empty {self.export_weights_buff=}"
+        self._hf_moe_mapping_phase = "export"
         models = [unwrap_model(model) for model in models]
 
         def get_model_chunk_generator():
@@ -615,7 +656,7 @@ class Bridge(ABC):
             name = broadcast_str_from_megatron_pp(name)
             broad_pp_param = broadcast_from_megatron_pp(param)
 
-            # EP
+            # EP; HF key layout from :meth:`_hf_moe_stacked_layout` (export phase).
             if ".mlp.experts.linear_fc" in name:
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size
@@ -713,6 +754,7 @@ class Bridge(ABC):
               tp_size is 0: is not tp tensor
               ep_size is 0: is not ep tensor
         """
+        self._hf_moe_mapping_phase = "export"
         models = [unwrap_model(model) for model in models]
 
         def get_model_chunk_generator():
@@ -769,7 +811,7 @@ class Bridge(ABC):
 
             assert iter_pp_rank == self.mpu.pp_rank
 
-            # EP: see export_weights comment on MoE HF layout vs transformers version.
+            # EP; HF MoE names from :meth:`_hf_moe_stacked_layout` (export phase).
             if ".mlp.experts.linear_fc" in name and self.mpu.ep_size >= 1:
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size
