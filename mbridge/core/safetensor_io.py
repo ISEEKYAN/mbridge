@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import warnings
 from collections import defaultdict
 from glob import glob
@@ -58,45 +57,6 @@ class SafeTensorIO:
         mapping_hf_weight_names = {k: k for k in hf_weight_names}
         return hf_weight_names, mapping_hf_weight_names
 
-    def _collect_similar_keys(self, name: str, available_keys: set[str]) -> list[str]:
-        """Heuristic: keys for the same transformer layer / MoE region as ``name``."""
-        m = re.search(r"layers\.(\d+)", name)
-        layer = m.group(1) if m else None
-        needle = f"layers.{layer}." if layer is not None else None
-        hits: list[str] = []
-        for k in available_keys:
-            if needle is not None and needle not in k:
-                continue
-            kl = k.lower()
-            if "expert" in kl or "gate_up" in kl or "gate_proj" in kl or "down_proj" in kl:
-                hits.append(k)
-        hits.sort()
-        return hits
-
-    def _format_missing_key_debug(self, name: str, available_keys: set[str]) -> str:
-        n = len(available_keys)
-        lines = [f"Checkpoint dir: {self.hf_dir!r}", f"Index key count: {n}"]
-        similar = self._collect_similar_keys(name, available_keys)
-        if similar:
-            cap = 48
-            lines.append(
-                f"Heuristic matches (same layer + expert/MoE-related), showing up to {cap}:"
-            )
-            for k in similar[:cap]:
-                lines.append(f"  {k}")
-            if len(similar) > cap:
-                lines.append(f"  ... and {len(similar) - cap} more.")
-        else:
-            sample = sorted(available_keys)[:32]
-            lines.append(
-                "No heuristic matches; sorted sample of index keys (first 32):"
-            )
-            for k in sample:
-                lines.append(f"  {k}")
-            if n > 32:
-                lines.append(f"  ... ({n - 32} more keys omitted).")
-        return "\n".join(lines)
-
     def _resolve_hf_weight_key(self, name: str, available_keys: set[str]) -> str:
         """Map logical HF name to a key present in the checkpoint (handles ``.weight`` mismatch)."""
         candidates = [name]
@@ -117,10 +77,8 @@ class SafeTensorIO:
         for c in ordered:
             if c in available_keys:
                 return c
-        debug = self._format_missing_key_debug(name, available_keys)
         raise KeyError(
-            f"Safetensors index has no key matching {name!r} "
-            f"(tried: {ordered}).\n{debug}"
+            f"Safetensors index has no key matching {name!r} (tried: {ordered})."
         )
 
     def load_some_hf_weight(self, hf_weight_names: list[str]) -> dict:
