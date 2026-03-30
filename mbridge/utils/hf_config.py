@@ -2,6 +2,7 @@
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
 
 import importlib.metadata
+import re
 from functools import lru_cache
 from typing import Optional
 
@@ -85,6 +86,10 @@ def hf_moe_checkpoint_uses_stacked_expert_weights() -> bool:
     return is_transformers_version_in_range("5.0.0", None)
 
 
+# Any MoE layer index (not only 0): first layers may be dense while MoE starts later.
+_MOE_PER_EXPERT_GATE_RE = re.compile(r"mlp\.experts\.\d+\.gate_proj\.weight")
+
+
 def hf_moe_use_stacked_weights_for_checkpoint(
     index_keys: Optional[set[str]],
 ) -> bool:
@@ -96,27 +101,18 @@ def hf_moe_use_stacked_weights_for_checkpoint(
     **Current / transformers ≥5 style:** fused tensors
     ``…mlp.experts.gate_up_proj`` (and optional ``.weight``) and ``…mlp.experts.down_proj``.
 
-    If ``index_keys`` is non-empty, presence of either pattern on layer 0 decides; otherwise
-    fall back to :func:`hf_moe_checkpoint_uses_stacked_expert_weights`.
+    Scans **all** index keys for these substrings/patterns so layer 0 need not be MoE
+    (e.g. dense bottom layers). If neither pattern appears, falls back to
+    :func:`hf_moe_checkpoint_uses_stacked_expert_weights`.
     """
     if index_keys:
-        stacked = (
-            "model.layers.0.mlp.experts.gate_up_proj",
-            "model.layers.0.mlp.experts.gate_up_proj.weight",
-            "model.language_model.layers.0.mlp.experts.gate_up_proj",
-            "model.language_model.layers.0.mlp.experts.gate_up_proj.weight",
-            "thinker.model.layers.0.mlp.experts.gate_up_proj",
-            "thinker.model.layers.0.mlp.experts.gate_up_proj.weight",
-        )
-        if any(k in index_keys for k in stacked):
-            return True
-        per_expert = (
-            "model.layers.0.mlp.experts.0.gate_proj.weight",
-            "model.language_model.layers.0.mlp.experts.0.gate_proj.weight",
-            "thinker.model.layers.0.mlp.experts.0.gate_proj.weight",
-        )
-        if any(k in index_keys for k in per_expert):
-            return False
+        needle = "mlp.experts.gate_up_proj"
+        for k in index_keys:
+            if needle in k:
+                return True
+        for k in index_keys:
+            if _MOE_PER_EXPERT_GATE_RE.search(k):
+                return False
     return hf_moe_checkpoint_uses_stacked_expert_weights()
 
 
