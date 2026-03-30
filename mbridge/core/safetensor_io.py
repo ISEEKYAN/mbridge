@@ -57,6 +57,20 @@ class SafeTensorIO:
         mapping_hf_weight_names = {k: k for k in hf_weight_names}
         return hf_weight_names, mapping_hf_weight_names
 
+    @staticmethod
+    def _resolve_hf_weight_key(name: str, available_keys: set[str]) -> str:
+        """Map logical HF name to a key present in the checkpoint (handles ``.weight`` mismatch)."""
+        if name in available_keys:
+            return name
+        w = f"{name}.weight"
+        if w in available_keys:
+            return w
+        if name.endswith(".weight"):
+            base = name[: -len(".weight")]
+            if base in available_keys:
+                return base
+        raise KeyError(name)
+
     def load_some_hf_weight(self, hf_weight_names: list[str]) -> dict:
         hf_weight_names, mapping_hf_weight_names = self._mapping_weight_names_old2new(
             hf_weight_names
@@ -66,28 +80,36 @@ class SafeTensorIO:
         ret = {}
 
         if index:
+            available = set(index.keys())
             file_to_weight_map = defaultdict(list)
             for name in hf_weight_names:
-                filename = index[name]
-                file_to_weight_map[filename].append(name)
-            for filename, weight_names in file_to_weight_map.items():
+                resolved = self._resolve_hf_weight_key(name, available)
+                filename = index[resolved]
+                file_to_weight_map[filename].append((name, resolved))
+            for filename, name_pairs in file_to_weight_map.items():
                 safetensor_file = os.path.join(hf_dir, filename)
                 with safe_open(safetensor_file, framework="pt", device="cpu") as f:
-                    for name in weight_names:
-                        ret[name] = f.get_tensor(name)
+                    for logical, resolved in name_pairs:
+                        ret[logical] = f.get_tensor(resolved)
             return {mapping_hf_weight_names[k]: v for k, v in ret.items()}
         # Search all safetensors files
         safetensor_files = glob(os.path.join(hf_dir, "*.safetensors"))
         # If there are safetensors files
         if safetensor_files:
             # Iterate through each safetensors file
+            remaining = set(hf_weight_names)
             for safetensor_file in safetensor_files:
+                if not remaining:
+                    break
                 with safe_open(safetensor_file, framework="pt", device="cpu") as f:
-                    to_load = set(hf_weight_names) & set(f.keys())
-                    if to_load:
-                        for name in to_load:
-                            ret[name] = f.get_tensor(name)
-                            # print(f"{name} {ret[name].shape}")
+                    keys = set(f.keys())
+                    for name in list(remaining):
+                        try:
+                            resolved = self._resolve_hf_weight_key(name, keys)
+                            ret[name] = f.get_tensor(resolved)
+                            remaining.discard(name)
+                        except KeyError:
+                            pass
             if len(ret) != len(hf_weight_names):
                 raise ValueError(
                     f"Weights {set(hf_weight_names)-set(ret.keys())} not found in safetensors files in {hf_dir}"
