@@ -811,7 +811,7 @@ class Bridge(ABC):
 
             assert iter_pp_rank == self.mpu.pp_rank
 
-            # EP; HF MoE names from :meth:`_hf_moe_stacked_layout` (export phase).
+            # EP: see export_weights comment on MoE HF layout vs transformers version.
             if ".mlp.experts.linear_fc" in name and self.mpu.ep_size >= 1:
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size
