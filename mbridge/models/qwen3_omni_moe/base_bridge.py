@@ -151,6 +151,27 @@ class Qwen3OmniBaseBridge(VLMBridge):
         """
         hf_names = self._weight_name_mapping_mcore_to_hf(mcore_weights_name)
         if len(hf_names) == 1:
+            if (
+                self._hf_moe_stacked_layout()
+                and ".mlp.experts.linear_fc" in mcore_weights_name
+            ):
+                experts_key = hf_names[0]
+                experts_idx = int(mcore_weights_name.split(".weight")[-1])
+                if experts_key not in self.export_weights_buff:
+                    self.export_weights_buff[experts_key] = {}
+                assert experts_idx not in self.export_weights_buff[experts_key]
+                self.export_weights_buff[experts_key][experts_idx] = mcore_weights
+                if (
+                    len(self.export_weights_buff[experts_key])
+                    < self.config.num_moe_experts
+                ):
+                    return [], []
+                ordered = [
+                    self.export_weights_buff[experts_key].pop(i)
+                    for i in range(self.config.num_moe_experts)
+                ]
+                self.export_weights_buff.pop(experts_key)
+                return [experts_key], [torch.stack(ordered)]
             # vision model
             tmp_config = self.hf_config.thinker_config.vision_config
             vision_hidden_size = tmp_config.hidden_size
@@ -248,8 +269,19 @@ class Qwen3OmniBaseBridge(VLMBridge):
             NotImplementedError: If the parameter name is unsupported
         """
         if len(hf_weights) == 1:
-            # vision model
             hf_names = self._weight_name_mapping_mcore_to_hf(mcore_weights_name)
+            if (
+                self._hf_moe_stacked_layout()
+                and ".mlp.experts.linear_fc" in mcore_weights_name
+            ):
+                local_experts_idx = int(mcore_weights_name.split(".weight")[-1])
+                num_experts = self.config.num_moe_experts
+                num_experts_per_rank = num_experts // self.mpu.ep_size
+                experts_idx = (
+                    local_experts_idx + num_experts_per_rank * self.mpu.ep_rank
+                )
+                return hf_weights[0][experts_idx].clone().contiguous()
+            # vision model
             tmp_config = self.hf_config.thinker_config.vision_config
             vision_hidden_size = tmp_config.hidden_size
             vision_num_query_groups = tmp_config.num_heads

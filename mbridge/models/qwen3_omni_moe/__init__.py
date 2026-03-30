@@ -210,6 +210,15 @@ class Qwen3OmniMoeBridge(Qwen3OmniBaseBridge):
         ],
     }
 
+    _MLP_MAPPING_MOE_FUSED = {
+        "language_model.decoder.layers.{layer_number}.mlp.experts.linear_fc1.weight": [
+            "thinker.model.layers.{layer_number}.mlp.experts.gate_up_proj",
+        ],
+        "language_model.decoder.layers.{layer_number}.mlp.experts.linear_fc2.weight": [
+            "thinker.model.layers.{layer_number}.mlp.experts.down_proj",
+        ],
+    }
+
     _OTHER_MAPPING = {
         **_QWEN3AUDIO_ATTENTION_MAPPING,
         **_QWEN3VIT_OTHER_MAPPING,
@@ -228,14 +237,26 @@ class Qwen3OmniMoeBridge(Qwen3OmniBaseBridge):
         layer_number = split_name[3]
         split_name[3] = "{layer_number}"
         key = ".".join(split_name)
-        split_name = key.split(".weight")
-        expert_number = split_name[1]
-        key = split_name[0] + ".weight{expert_number}"
         convert_names = []
-        mapping_names = self._MLP_MAPPING[key]
-        convert_names.extend(
-            [x.format(layer_number=layer_number, expert_number=expert_number) for x in mapping_names]
-        )
+        if self._hf_moe_stacked_layout():
+            key = key.split(".weight")[0] + ".weight"
+            mapping_names = self._MLP_MAPPING_MOE_FUSED[key]
+            convert_names.extend(
+                [x.format(layer_number=layer_number) for x in mapping_names]
+            )
+        else:
+            split_parts = key.split(".weight")
+            expert_number = split_parts[1]
+            template_key = split_parts[0] + ".weight{expert_number}"
+            mapping_names = self._MLP_MAPPING[template_key]
+            convert_names.extend(
+                [
+                    x.format(
+                        layer_number=layer_number, expert_number=expert_number
+                    )
+                    for x in mapping_names
+                ]
+            )
         if len(convert_names) == 0:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names

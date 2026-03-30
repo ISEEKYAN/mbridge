@@ -88,6 +88,20 @@ class Glm4VLBridgeBase(VLMBridge):
     # adapted from deepseek v3
     def _weight_name_mapping_mlp(self, name: str) -> list[str]:
         layer_number = name.split(".")[3]
+        fused = getattr(self, "_MLP_MAPPING_MOE_FUSED", None)
+        if (
+            fused
+            and self._hf_moe_stacked_layout()
+            and "mlp.experts.linear_fc" in name
+        ):
+            split_name = name.split(".")
+            split_name[3] = "{layer_number}"
+            key = ".".join(split_name)
+            pre, _expert = key.split(".weight", 1)
+            stacked_key = pre + ".weight"
+            mapping_names = fused[stacked_key]
+            return [x.format(layer_number=layer_number) for x in mapping_names]
+
         convert_names = []
         for keyword, mapping_names in self._MLP_MAPPING.items():
             if keyword in name:
@@ -143,6 +157,28 @@ class Glm4VLBridgeBase(VLMBridge):
         """
         hf_names = self._weight_name_mapping_mcore_to_hf(mcore_weights_name)
         if len(hf_names) == 1:
+            if (
+                getattr(self, "_MLP_MAPPING_MOE_FUSED", None)
+                and self._hf_moe_stacked_layout()
+                and ".mlp.experts.linear_fc" in mcore_weights_name
+            ):
+                experts_key = hf_names[0]
+                experts_idx = int(mcore_weights_name.split(".weight")[-1])
+                if experts_key not in self.export_weights_buff:
+                    self.export_weights_buff[experts_key] = {}
+                assert experts_idx not in self.export_weights_buff[experts_key]
+                self.export_weights_buff[experts_key][experts_idx] = mcore_weights
+                if (
+                    len(self.export_weights_buff[experts_key])
+                    < self.config.num_moe_experts
+                ):
+                    return [], []
+                ordered = [
+                    self.export_weights_buff[experts_key].pop(i)
+                    for i in range(self.config.num_moe_experts)
+                ]
+                self.export_weights_buff.pop(experts_key)
+                return [experts_key], [torch.stack(ordered)]
             return [hf_names[0]], [mcore_weights]
         if (
             "self_attention.linear_qkv." in mcore_weights_name
@@ -207,6 +243,19 @@ class Glm4VLBridgeBase(VLMBridge):
         Raises:
             NotImplementedError: If the parameter name is unsupported
         """
+        if (
+            getattr(self, "_MLP_MAPPING_MOE_FUSED", None)
+            and self._hf_moe_stacked_layout()
+            and ".mlp.experts.linear_fc" in mcore_weights_name
+            and len(hf_weights) == 1
+        ):
+            local_experts_idx = int(mcore_weights_name.split(".weight")[-1])
+            num_experts = self.config.num_moe_experts
+            num_experts_per_rank = num_experts // self.mpu.ep_size
+            experts_idx = (
+                local_experts_idx + num_experts_per_rank * self.mpu.ep_rank
+            )
+            return hf_weights[0][experts_idx].clone().contiguous()
         if len(hf_weights) == 1:
             return hf_weights[0]
         if (

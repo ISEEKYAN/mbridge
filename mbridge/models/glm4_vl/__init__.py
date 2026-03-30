@@ -266,6 +266,15 @@ class Glm4VLBridgeMoe(Glm4VLBridgeBase):
         ],
     }
 
+    _MLP_MAPPING_MOE_FUSED = {
+        "language_model.decoder.layers.{layer_number}.mlp.experts.linear_fc1.weight": [
+            "model.language_model.layers.{layer_number}.mlp.experts.gate_up_proj",
+        ],
+        "language_model.decoder.layers.{layer_number}.mlp.experts.linear_fc2.weight": [
+            "model.language_model.layers.{layer_number}.mlp.experts.down_proj",
+        ],
+    }
+
     def _build_config(self):
         kwargs = {}
         kwargs["image_start_token_id"] = self.hf_config.image_start_token_id
