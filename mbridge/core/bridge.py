@@ -21,6 +21,8 @@ from .util import (
     unwrap_model,
 )
 
+from mbridge.utils.hf_config import hf_moe_checkpoint_uses_stacked_expert_weights
+
 
 class Bridge(ABC):
     """
@@ -64,6 +66,10 @@ class Bridge(ABC):
         # Some moe models require multiple weights to be combined into one,
         # such as qwen3vl. It will cache it into this buff until all weights are collected.
         self.export_weights_buff = {}
+
+    def _hf_moe_uses_stacked_expert_checkpoint_layout(self) -> bool:
+        """Whether HF MoE checkpoints use stacked ``gate_up_proj`` / ``down_proj`` (transformers >= 5)."""
+        return hf_moe_checkpoint_uses_stacked_expert_weights()
 
     def get_model(
         self,
@@ -763,7 +769,7 @@ class Bridge(ABC):
 
             assert iter_pp_rank == self.mpu.pp_rank
 
-            # EP
+            # EP: see export_weights comment on MoE HF layout vs transformers version.
             if ".mlp.experts.linear_fc" in name and self.mpu.ep_size >= 1:
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size

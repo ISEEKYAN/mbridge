@@ -8,6 +8,7 @@ import torch
 from mbridge.core import VLMBridge
 from mbridge.core.util import unwrap_model
 from mbridge.models.qwen3_5.qwen3_5_safetensor import Qwen3_5SafeTensorIO
+from mbridge.utils.hf_config import hf_moe_checkpoint_uses_stacked_expert_weights
 
 
 class Qwen3_5VlBaseBridge(VLMBridge):
@@ -250,30 +251,31 @@ class Qwen3_5VlBaseBridge(VLMBridge):
 
                 return [hf_names[0]], [mcore_weights[: self.vocab_size]]
 
-            # moe
+            # moe: transformers>=5 uses stacked gate_up_proj / down_proj tensors
             if ".mlp.experts.linear_fc" in mcore_weights_name:
-                # get export index
-                experts_key = hf_names[0]
-                experts_idx = int(mcore_weights_name.split(".weight")[-1])
+                if hf_moe_checkpoint_uses_stacked_expert_weights():
+                    experts_key = hf_names[0]
+                    experts_idx = int(mcore_weights_name.split(".weight")[-1])
 
-                if experts_key not in self.export_weights_buff:
-                    self.export_weights_buff[experts_key] = {}
-                assert experts_idx not in self.export_weights_buff[experts_key]
-                self.export_weights_buff[experts_key][experts_idx] = mcore_weights
+                    if experts_key not in self.export_weights_buff:
+                        self.export_weights_buff[experts_key] = {}
+                    assert experts_idx not in self.export_weights_buff[experts_key]
+                    self.export_weights_buff[experts_key][experts_idx] = mcore_weights
 
-                if (
-                    len(self.export_weights_buff[experts_key])
-                    < self.config.num_moe_experts
-                ):
-                    return [], []
+                    if (
+                        len(self.export_weights_buff[experts_key])
+                        < self.config.num_moe_experts
+                    ):
+                        return [], []
 
-                mcore_weights_list = []
-                for idx in range(self.config.num_moe_experts):
-                    mcore_weights_list.append(
-                        self.export_weights_buff[experts_key].pop(idx)
-                    )
-                self.export_weights_buff.pop(experts_key)
-                return [hf_names[0]], [torch.stack(mcore_weights_list)]
+                    mcore_weights_list = []
+                    for idx in range(self.config.num_moe_experts):
+                        mcore_weights_list.append(
+                            self.export_weights_buff[experts_key].pop(idx)
+                        )
+                    self.export_weights_buff.pop(experts_key)
+                    return [hf_names[0]], [torch.stack(mcore_weights_list)]
+                return [hf_names[0]], [mcore_weights.clone().contiguous()]
             elif "self_attention.out_norm.weight" in mcore_weights_name:
                 return [hf_names[0]], [mcore_weights + 1]
 
@@ -422,15 +424,15 @@ class Qwen3_5VlBaseBridge(VLMBridge):
 
             # moe
             if ".mlp.experts.linear_fc" in mcore_weights_name:
-                # get export index
                 local_experts_idx = int(mcore_weights_name.split(".weight")[-1])
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size
                 experts_idx = (
                     local_experts_idx + num_experts_per_rank * self.mpu.ep_rank
                 )
-                return hf_weights[0][experts_idx].clone().contiguous()
-                # return hf_weights[0][experts_idx].T.clone().contiguous()
+                if hf_moe_checkpoint_uses_stacked_expert_weights():
+                    return hf_weights[0][experts_idx].clone().contiguous()
+                return hf_weights[0].clone().contiguous()
             elif "self_attention.out_norm.weight" in mcore_weights_name:
                 return hf_weights[0] - 1
 

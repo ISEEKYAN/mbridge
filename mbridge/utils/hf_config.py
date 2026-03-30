@@ -1,6 +1,11 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
 
+import importlib.metadata
+from functools import lru_cache
+from typing import Optional
+
+from packaging import version
 from transformers import PretrainedConfig
 
 def get_hf_rope_theta(hf_config: PretrainedConfig) -> float:
@@ -49,3 +54,32 @@ def get_hf_rope_theta_from_attribute(hf_config: PretrainedConfig) -> str:
         f"{type(hf_config).__name__} has no rope_theta and no rope_parameters['rope_theta'] — "
         "cannot determine RoPE base."
     )
+
+@lru_cache
+def is_transformers_version_in_range(min_version: Optional[str] = None, max_version: Optional[str] = None) -> bool:
+    try:
+        # Get the installed version of the transformers library
+        transformers_version_str = importlib.metadata.version("transformers")
+    except importlib.metadata.PackageNotFoundError as e:
+        raise ModuleNotFoundError("The `transformers` package is not installed.") from e
+
+    transformers_version = version.parse(transformers_version_str)
+
+    lower_bound_check = True
+    if min_version is not None:
+        lower_bound_check = version.parse(min_version) <= transformers_version
+
+    upper_bound_check = True
+    if max_version is not None:
+        upper_bound_check = transformers_version <= version.parse(max_version)
+
+    return lower_bound_check and upper_bound_check
+
+
+def hf_moe_checkpoint_uses_stacked_expert_weights() -> bool:
+    """True when Hugging Face MoE checkpoints use fused expert tensors (transformers >= 5.0.0).
+
+    In that layout, ``gate_up_proj`` has shape ``(num_experts, 2 * ffn_dim, hidden)`` and
+    ``down_proj`` has shape ``(num_experts, hidden, ffn_dim)`` instead of per-expert modules.
+    """
+    return is_transformers_version_in_range("5.0.0", None)

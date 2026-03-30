@@ -3,6 +3,7 @@ from copy import deepcopy
 from mbridge.core import register_model
 from mbridge.models.qwen3_vl.base_bridge import Qwen3VBaseBridge
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from mbridge.utils.hf_config import hf_moe_checkpoint_uses_stacked_expert_weights
 
 _QWEN3VIT_DIRECT_MAPPING = {
     "vision_model.patch_embed.proj.weight": "model.visual.patch_embed.proj.weight",
@@ -235,6 +236,16 @@ class Qwen3VLMoEBridge(Qwen3VBaseBridge):
         ],
     }
 
+    _MLP_MAPPING_MOE_EXPERT_LEGACY = {
+        "language_model.decoder.layers.{layer_number}.mlp.experts.linear_fc1.weight{expert_number}": [
+            "model.language_model.layers.{layer_number}.mlp.experts.{expert_number}.gate_proj.weight",
+            "model.language_model.layers.{layer_number}.mlp.experts.{expert_number}.up_proj.weight",
+        ],
+        "language_model.decoder.layers.{layer_number}.mlp.experts.linear_fc2.weight{expert_number}": [
+            "model.language_model.layers.{layer_number}.mlp.experts.{expert_number}.down_proj.weight",
+        ],
+    }
+
     _OTHER_MAPPING = {
         **_QWEN3VIT_OTHER_MAPPING,
     }
@@ -252,12 +263,25 @@ class Qwen3VLMoEBridge(Qwen3VBaseBridge):
         layer_number = split_name[3]
         split_name[3] = "{layer_number}"
         key = ".".join(split_name)
-        key = key.split(".weight")[0] + ".weight"
         convert_names = []
-        mapping_names = self._MLP_MAPPING[key]
-        convert_names.extend(
-            [x.format(layer_number=layer_number) for x in mapping_names]
-        )
+        if hf_moe_checkpoint_uses_stacked_expert_weights():
+            key = key.split(".weight")[0] + ".weight"
+            mapping_names = self._MLP_MAPPING[key]
+            convert_names.extend(
+                [x.format(layer_number=layer_number) for x in mapping_names]
+            )
+        else:
+            pre, expert_number = key.split(".weight")
+            template_key = pre + ".weight{expert_number}"
+            mapping_names = self._MLP_MAPPING_MOE_EXPERT_LEGACY[template_key]
+            convert_names.extend(
+                [
+                    x.format(
+                        layer_number=layer_number, expert_number=expert_number
+                    )
+                    for x in mapping_names
+                ]
+            )
         if len(convert_names) == 0:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names

@@ -16,7 +16,10 @@ from mbridge.core.util import unwrap_model
 from mbridge.models.qwen3_vl.model import Qwen3VLModel
 from mbridge.models.qwen3_vl.transformer_config import get_vision_model_config
 from mbridge.models.qwen3_vl.utils import PatchMergerSubmodules
-from mbridge.utils.hf_config import get_hf_rope_theta
+from mbridge.utils.hf_config import (
+    get_hf_rope_theta,
+    hf_moe_checkpoint_uses_stacked_expert_weights,
+)
 
 
 class Qwen3VBaseBridge(VLMBridge):
@@ -177,30 +180,32 @@ class Qwen3VBaseBridge(VLMBridge):
                     .contiguous()
                 )
 
-            # moe
+            # moe: transformers>=5 fuses experts as stacked gate_up_proj / down_proj
             if ".mlp.experts.linear_fc" in mcore_weights_name:
-                # get export index
-                experts_key = hf_names[0]
-                experts_idx = int(mcore_weights_name.split(".weight")[-1])
+                if hf_moe_checkpoint_uses_stacked_expert_weights():
+                    experts_key = hf_names[0]
+                    experts_idx = int(mcore_weights_name.split(".weight")[-1])
 
-                if experts_key not in self.export_weights_buff:
-                    self.export_weights_buff[experts_key] = {}
-                assert experts_idx not in self.export_weights_buff
-                self.export_weights_buff[experts_key][experts_idx] = mcore_weights.T
+                    if experts_key not in self.export_weights_buff:
+                        self.export_weights_buff[experts_key] = {}
+                    assert experts_idx not in self.export_weights_buff[experts_key]
+                    self.export_weights_buff[experts_key][experts_idx] = mcore_weights.T
 
-                if (
-                    len(self.export_weights_buff[experts_key])
-                    < self.config.num_moe_experts
-                ):
-                    return [], []
+                    if (
+                        len(self.export_weights_buff[experts_key])
+                        < self.config.num_moe_experts
+                    ):
+                        return [], []
 
-                mcore_weights_list = []
-                for idx in range(self.config.num_moe_experts):
-                    mcore_weights_list.append(
-                        self.export_weights_buff[experts_key].pop(idx)
-                    )
-                self.export_weights_buff.pop(experts_key)
-                return [hf_names[0]], [torch.stack(mcore_weights_list)]
+                    mcore_weights_list = []
+                    for idx in range(self.config.num_moe_experts):
+                        mcore_weights_list.append(
+                            self.export_weights_buff[experts_key].pop(idx)
+                        )
+                    self.export_weights_buff.pop(experts_key)
+                    return [hf_names[0]], [torch.stack(mcore_weights_list)]
+                # transformers < 5: per-expert down_proj only reaches this branch (one hf name)
+                return [hf_names[0]], [mcore_weights.T.clone().contiguous()]
 
             return [hf_names[0]], [mcore_weights]
 
@@ -328,7 +333,9 @@ class Qwen3VBaseBridge(VLMBridge):
                 experts_idx = (
                     local_experts_idx + num_experts_per_rank * self.mpu.ep_rank
                 )
-                return hf_weights[0][experts_idx].T.clone().contiguous()
+                if hf_moe_checkpoint_uses_stacked_expert_weights():
+                    return hf_weights[0][experts_idx].T.clone().contiguous()
+                return hf_weights[0].T.clone().contiguous()
 
             return hf_weights[0]
 
