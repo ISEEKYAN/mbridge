@@ -77,7 +77,7 @@ def is_transformers_version_in_range(min_version: Optional[str] = None, max_vers
     return lower_bound_check and upper_bound_check
 
 
-def hf_moe_stacked_layout_default_from_transformers_version() -> bool:
+def hf_moe_stacked_layout_default_from_transformers() -> bool:
     """Version-based default: stacked/fused MoE layout for current transformers version.
 
     In that layout, ``gate_up_proj`` has shape ``(num_experts, 2 * ffn_dim, hidden)`` and
@@ -113,4 +113,9 @@ def hf_moe_stacked_layout_from_checkpoint_keys(
         for k in index_keys:
             if _MOE_PER_EXPERT_GATE_RE.search(k):
                 return False
+    return hf_moe_stacked_layout_default_from_transformers()
+
+
+# Backward-compatible alias for previous rename.
+def hf_moe_stacked_layout_default_from_transformers_version() -> bool:
     return hf_moe_stacked_layout_default_from_transformers()

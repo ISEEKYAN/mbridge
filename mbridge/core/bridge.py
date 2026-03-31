@@ -22,7 +22,7 @@ from .util import (
 )
 
 from mbridge.utils.hf_config import (
-    hf_moe_stacked_layout_default_from_transformers,
+    hf_moe_stacked_layout_default_from_transformers_version,
     hf_moe_stacked_layout_from_checkpoint_keys,
 )
 
@@ -83,7 +83,7 @@ class Bridge(ABC):
         if self._hf_moe_mapping_phase == "load":
             keys = set(self.safetensor_io.index.keys())
             return hf_moe_stacked_layout_from_checkpoint_keys(keys)
-        return hf_moe_stacked_layout_default_from_transformers()
+        return hf_moe_stacked_layout_default_from_transformers_version()
 
     def get_model(
         self,
