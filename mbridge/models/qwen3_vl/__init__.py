@@ -162,7 +162,6 @@ class Qwen3VLBridge(Qwen3VBaseBridge):
             bias_dropout_fusion=True,
             masked_softmax_fusion=False,
             deallocate_pipeline_outputs=True,
-            async_tensor_model_parallel_allreduce=True,
             distribute_saved_activations=False,
             cp_comm_type="p2p",
             # qwen3vl specific
@@ -285,7 +284,6 @@ class Qwen3VLMoEBridge(Qwen3VBaseBridge):
             bias_dropout_fusion=True,
             masked_softmax_fusion=False,
             deallocate_pipeline_outputs=True,
-            async_tensor_model_parallel_allreduce=True,
             distribute_saved_activations=False,
             cp_comm_type="p2p",
             # Qwen specific
