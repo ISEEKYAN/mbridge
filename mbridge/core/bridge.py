@@ -81,21 +81,10 @@ class Bridge(ABC):
 
     def _hf_moe_stacked_layout(self) -> bool:
         """True → fused ``gate_up_proj`` / ``down_proj``; False → ``experts.{i}.gate_proj`` …"""
-        if getattr(self, "_hf_moe_mapping_phase", "export") == "load":
-            io = getattr(self, "safetensor_io", None)
-            keys = (
-                set(io.index.keys())
-                if io is not None and getattr(io, "index", None)
-                else None
-            )
+        if self._hf_moe_mapping_phase == "load":
+            keys = set(self.safetensor_io.index.keys())
             return hf_moe_use_stacked_weights_for_checkpoint(keys)
-        return hf_moe_export_should_use_stacked_state_dict(
-            getattr(self, "extra_args", None)
-        )
-
-    def _hf_moe_uses_stacked_expert_checkpoint_layout(self) -> bool:
-        """Backward-compatible alias for :meth:`_hf_moe_stacked_layout`."""
-        return self._hf_moe_stacked_layout()
+        return hf_moe_export_should_use_stacked_state_dict(self.extra_args)
 
     def get_model(
         self,
