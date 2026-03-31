@@ -77,8 +77,8 @@ def is_transformers_version_in_range(min_version: Optional[str] = None, max_vers
     return lower_bound_check and upper_bound_check
 
 
-def hf_moe_checkpoint_uses_stacked_expert_weights() -> bool:
-    """True when Hugging Face MoE checkpoints use fused expert tensors (transformers >= 5.0.0).
+def hf_moe_stacked_layout_default_from_transformers_version() -> bool:
+    """Version-based default: stacked/fused MoE layout for current transformers version.
 
     In that layout, ``gate_up_proj`` has shape ``(num_experts, 2 * ffn_dim, hidden)`` and
     ``down_proj`` has shape ``(num_experts, hidden, ffn_dim)`` instead of per-expert modules.
@@ -90,7 +90,7 @@ def hf_moe_checkpoint_uses_stacked_expert_weights() -> bool:
 _MOE_PER_EXPERT_GATE_RE = re.compile(r"mlp\.experts\.\d+\.gate_proj\.weight")
 
 
-def hf_moe_use_stacked_weights_for_checkpoint(
+def hf_moe_stacked_layout_from_checkpoint_keys(
     index_keys: Optional[set[str]],
 ) -> bool:
     """Infer MoE layout from **on-disk** safetensors keys (used during :meth:`Bridge.load_weights`).
@@ -103,7 +103,7 @@ def hf_moe_use_stacked_weights_for_checkpoint(
 
     Scans **all** index keys for these substrings/patterns so layer 0 need not be MoE
     (e.g. dense bottom layers). If neither pattern appears, falls back to
-    :func:`hf_moe_checkpoint_uses_stacked_expert_weights`.
+    :func:`hf_moe_stacked_layout_default_from_transformers`.
     """
     if index_keys:
         needle = "mlp.experts.gate_up_proj"
@@ -113,17 +113,4 @@ def hf_moe_use_stacked_weights_for_checkpoint(
         for k in index_keys:
             if _MOE_PER_EXPERT_GATE_RE.search(k):
                 return False
-    return hf_moe_checkpoint_uses_stacked_expert_weights()
-
-
-def hf_moe_export_should_use_stacked_state_dict(extra_args: Optional[dict]) -> bool:
-    """Target HuggingFace **state_dict** layout for Megatron → HF export (not load).
-
-    - If ``extra_args`` contains ``hf_moe_export_stacked_expert_weights`` (bool), that value
-      is used (force stacked fused tensors vs per-expert ``experts.{i}.*`` keys).
-    - Otherwise: stacked when :func:`hf_moe_checkpoint_uses_stacked_expert_weights` is True
-      (typically transformers ≥ 5), else legacy per-expert names.
-    """
-    if extra_args is not None and "hf_moe_export_stacked_expert_weights" in extra_args:
-        return bool(extra_args["hf_moe_export_stacked_expert_weights"])
-    return hf_moe_checkpoint_uses_stacked_expert_weights()
+    return hf_moe_stacked_layout_default_from_transformers()

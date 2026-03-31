@@ -22,8 +22,8 @@ from .util import (
 )
 
 from mbridge.utils.hf_config import (
-    hf_moe_export_should_use_stacked_state_dict,
-    hf_moe_use_stacked_weights_for_checkpoint,
+    hf_moe_stacked_layout_default_from_transformers,
+    hf_moe_stacked_layout_from_checkpoint_keys,
 )
 
 
@@ -51,10 +51,9 @@ class Bridge(ABC):
             parallel_states: Parallel processing states, or None to use default
 
         MoE HuggingFace **export** layout (Megatron → HF state_dict) follows the installed
-        transformers version (stacked ``gate_up_proj`` / ``down_proj`` when ≥5) unless
-        overridden via :meth:`set_extra_args` with
-        ``hf_moe_export_stacked_expert_weights`` (``True``/``False``). **Load** infers
-        stacked vs per-expert ``experts.{{i}}.*`` keys from the safetensors index.
+        transformers version (stacked ``gate_up_proj`` / ``down_proj`` when ≥5).
+        **Load** infers stacked vs per-expert ``experts.{{i}}.*`` keys from the
+        safetensors index.
         """
         self.hf_config = hf_config
         self.extra_args = {}
@@ -76,15 +75,15 @@ class Bridge(ABC):
         # such as qwen3vl. It will cache it into this buff until all weights are collected.
         self.export_weights_buff = {}
         # "load" while resolving HF names in load_weights (checkpoint-driven layout);
-        # "export" for Megatron→HF (target layout from transformers version or extra_args).
+        # "export" for Megatron→HF (target layout from transformers version).
         self._hf_moe_mapping_phase = "export"
 
     def _hf_moe_stacked_layout(self) -> bool:
         """True → fused ``gate_up_proj`` / ``down_proj``; False → ``experts.{i}.gate_proj`` …"""
         if self._hf_moe_mapping_phase == "load":
             keys = set(self.safetensor_io.index.keys())
-            return hf_moe_use_stacked_weights_for_checkpoint(keys)
-        return hf_moe_export_should_use_stacked_state_dict(self.extra_args)
+            return hf_moe_stacked_layout_from_checkpoint_keys(keys)
+        return hf_moe_stacked_layout_default_from_transformers()
 
     def get_model(
         self,
@@ -563,13 +562,10 @@ class Bridge(ABC):
 
     def set_extra_args(self, **kwargs):
         """
-        Set additional configuration arguments.
+        Set additional configuration arguments for model-specific bridge behavior.
 
         Args:
             **kwargs: Key-value pairs of additional arguments.
-                ``hf_moe_export_stacked_expert_weights`` (bool): when set, forces Megatron→HF
-                MoE export to fused keys (``gate_up_proj`` / ``down_proj``) or per-expert
-                ``experts.{i}.*`` regardless of other heuristics.
         """
         self.extra_args.update(kwargs)
         self.config = self._build_config()

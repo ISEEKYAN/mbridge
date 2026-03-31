@@ -88,9 +88,9 @@ class Glm4VLBridgeBase(VLMBridge):
     # adapted from deepseek v3
     def _weight_name_mapping_mlp(self, name: str) -> list[str]:
         layer_number = name.split(".")[3]
-        fused = getattr(self, "_MLP_MAPPING_MOE_FUSED", None)
+        fused_moe_weights = getattr(self, "_MLP_MAPPING_MOE_FUSED", None)
         if (
-            fused
+            fused_moe_weights
             and self._hf_moe_stacked_layout()
             and "mlp.experts.linear_fc" in name
         ):
