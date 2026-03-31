@@ -172,10 +172,11 @@ class Qwen2MoEBridge(LLMBridge):
             and "mlp.experts.linear_fc" in mcore_weights_name
             and len(hf_weights) == 1
         ):
-            ep_size, ep_rank = self._ep_size_and_rank()
             local_experts_idx = int(mcore_weights_name.split(".weight")[-1])
             num_experts = self.config.num_moe_experts
-            num_experts_per_rank = num_experts // ep_size
-            experts_idx = local_experts_idx + num_experts_per_rank * ep_rank
+            num_experts_per_rank = num_experts // self.mpu.ep_size
+            experts_idx = (
+                local_experts_idx + num_experts_per_rank * self.mpu.ep_rank
+            )
             return hf_weights[0][experts_idx].clone().contiguous()
         return super()._weight_to_mcore_format(mcore_weights_name, hf_weights)
