@@ -153,17 +153,6 @@ _QWEN3p5TEXT_MOE_MLP_MAPPING = {
     ],
 }
 
-_QWEN3p5TEXT_MOE_MLP_MAPPING_LEGACY = {
-    "language_model.decoder.layers.{layer_number}.mlp.experts.linear_fc1.weight{expert_number}": [
-        "model.language_model.layers.{layer_number}.mlp.experts.{expert_number}.gate_proj.weight",
-        "model.language_model.layers.{layer_number}.mlp.experts.{expert_number}.up_proj.weight",
-    ],
-    "language_model.decoder.layers.{layer_number}.mlp.experts.linear_fc2.weight{expert_number}": [
-        "model.language_model.layers.{layer_number}.mlp.experts.{expert_number}.down_proj.weight",
-    ],
-}
-
-
 @register_model("qwen3_5")
 class Qwen3_5VlBridge(Qwen3_5VlBaseBridge):
     try:
@@ -296,25 +285,9 @@ class Qwen3_5MoeVlBridge(Qwen3_5VlBaseBridge):
         layer_number = split_name[3]
         split_name[3] = "{layer_number}"
         key = ".".join(split_name)
-        convert_names = []
-        if self._hf_moe_stacked_layout():
-            key = key.split(".weight")[0] + ".weight"
-            mapping_names = self._MLP_MAPPING[key]
-            convert_names.extend(
-                [x.format(layer_number=layer_number) for x in mapping_names]
-            )
-        else:
-            pre, expert_number = key.split(".weight")
-            template_key = pre + ".weight{expert_number}"
-            mapping_names = _QWEN3p5TEXT_MOE_MLP_MAPPING_LEGACY[template_key]
-            convert_names.extend(
-                [
-                    x.format(
-                        layer_number=layer_number, expert_number=expert_number
-                    )
-                    for x in mapping_names
-                ]
-            )
+        key = key.split(".weight")[0] + ".weight"
+        mapping_names = self._MLP_MAPPING[key]
+        convert_names = [x.format(layer_number=layer_number) for x in mapping_names]
         if len(convert_names) == 0:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names
