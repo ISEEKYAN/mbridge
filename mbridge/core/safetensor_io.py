@@ -57,28 +57,35 @@ class SafeTensorIO:
         mapping_hf_weight_names = {k: k for k in hf_weight_names}
         return hf_weight_names, mapping_hf_weight_names
 
-    def _resolve_hf_weight_key(self, name: str, available_keys: set[str]) -> str:
-        """Map logical HF name to a key present in the checkpoint (handles ``.weight`` mismatch)."""
-        candidates = [name]
-        if not name.endswith(".weight"):
-            candidates.append(f"{name}.weight")
+    def _resolve_hf_weight_key(self, requested_key: str, available_keys: set[str]) -> str:
+        """Resolve a requested HF key to an actual checkpoint key.
+
+        Example:
+        - requested: ``model.layers.12.mlp.experts.gate_up_proj``
+        - stored in index: ``model.layers.12.mlp.experts.gate_up_proj.weight``
+        This helper resolves that mismatch (and the reverse case).
+        """
+        candidate_keys = [requested_key]
+        if not requested_key.endswith(".weight"):
+            candidate_keys.append(f"{requested_key}.weight")
         else:
-            candidates.append(name[: -len(".weight")])
+            candidate_keys.append(requested_key[: -len(".weight")])
         # HF sometimes nests Parameter-like leaves (e.g. …experts.gate_up_proj → …gate_up_proj.weight)
-        for base in list(candidates):
+        for base in list(candidate_keys):
             if base.endswith("gate_up_proj") or base.endswith("down_proj"):
-                candidates.append(f"{base}.weight")
+                candidate_keys.append(f"{base}.weight")
         seen: set[str] = set()
-        ordered: list[str] = []
-        for c in candidates:
+        ordered_candidates: list[str] = []
+        for c in candidate_keys:
             if c not in seen:
                 seen.add(c)
-                ordered.append(c)
-        for c in ordered:
+                ordered_candidates.append(c)
+        for c in ordered_candidates:
             if c in available_keys:
                 return c
         raise KeyError(
-            f"Safetensors index has no key matching {name!r} (tried: {ordered})."
+            f"Safetensors index has no key matching {requested_key!r} "
+            f"(tried: {ordered_candidates})."
         )
 
     def load_some_hf_weight(self, hf_weight_names: list[str]) -> dict:
