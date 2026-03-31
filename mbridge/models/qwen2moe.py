@@ -61,7 +61,7 @@ class Qwen2MoEBridge(LLMBridge):
     }
 
     # transformers>=5: fused expert tensors [num_experts, ...]
-    _MLP_MAPPING_MOE_STACKED = {
+    _MLP_MAPPING_MOE_FUSED = {
         "decoder.layers.{layer_number}.mlp.experts.linear_fc1.weight": [
             "model.layers.{layer_number}.mlp.experts.gate_up_proj",
         ],
@@ -105,7 +105,7 @@ class Qwen2MoEBridge(LLMBridge):
             key = ".".join(split_name)
             pre, _expert = key.split(".weight", 1)
             stacked_key = pre + ".weight"
-            mapping_names = self._MLP_MAPPING_MOE_STACKED[stacked_key]
+            mapping_names = self._MLP_MAPPING_MOE_FUSED[stacked_key]
             return [x.format(layer_number=layer_number) for x in mapping_names]
 
         convert_names = []
@@ -172,11 +172,10 @@ class Qwen2MoEBridge(LLMBridge):
             and "mlp.experts.linear_fc" in mcore_weights_name
             and len(hf_weights) == 1
         ):
+            ep_size, ep_rank = self._ep_size_and_rank()
             local_experts_idx = int(mcore_weights_name.split(".weight")[-1])
             num_experts = self.config.num_moe_experts
-            num_experts_per_rank = num_experts // self.mpu.ep_size
-            experts_idx = (
-                local_experts_idx + num_experts_per_rank * self.mpu.ep_rank
-            )
+            num_experts_per_rank = num_experts // ep_size
+            experts_idx = local_experts_idx + num_experts_per_rank * ep_rank
             return hf_weights[0][experts_idx].clone().contiguous()
         return super()._weight_to_mcore_format(mcore_weights_name, hf_weights)
