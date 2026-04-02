@@ -211,11 +211,12 @@ class Bridge(ABC):
                     mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
                 else:
                     mcore_weight = None
-                if hf_names[0] in {"lm_head.weight", "model.embed_tokens.weight"}:
+                if hf_names[0] in {"lm_head.weight", "model.embed_tokens.weight", "model.language_model.embed_tokens.weight"}:
                     if param.shape[0] == 1 and (
                         mcore_weight is None or mcore_weight.shape[0] != 1
                     ):
                         # skip lm_head.weight when the model is a value model
+                        print(f"[WARNING] value model skip loading {local_name} from hf_names: {hf_names}")
                         continue
 
                 param_to_load = torch.empty_like(param)
