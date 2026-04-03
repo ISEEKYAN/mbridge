@@ -16,6 +16,7 @@ from mbridge.models.internvl3.transformer_layer import (
     get_internvl2b_vit_layer_specs,
     get_mlp_module_spec,
 )
+from mbridge.utils.hf_config import get_hf_rope_theta
 
 
 @register_model("internvl_chat")
@@ -541,7 +542,7 @@ class InternVL3Bridge(VLMBridge):
                 post_process=post_process,
                 add_encoder=pre_process,
                 add_decoder=True,
-                language_rotary_base=self.hf_config.llm_config.rope_theta,
+                language_rotary_base=get_hf_rope_theta(self.hf_config.llm_config),
                 language_rope_scaling=False,
             )
 

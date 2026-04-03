@@ -16,6 +16,7 @@ from .util import (
     unwrap_model,
 )
 
+from mbridge.utils.hf_config import get_hf_rope_theta
 
 class LLMBridge(Bridge):
     """
@@ -117,12 +118,7 @@ class LLMBridge(Bridge):
         Returns:
             dict: A dictionary of arguments for GPTModel initialization
         """
-        if hasattr(self.hf_config, 'rope_parameters') and 'rope_theta' in self.hf_config.rope_parameters:
-            # for transformer >= 5.0.0
-            rotary_base = self.hf_config.rope_parameters['rope_theta']
-        else:
-            # for transformer ~= 4.57.3
-            rotary_base = self.hf_config.rope_theta
+        rotary_base = get_hf_rope_theta(self.hf_config)
 
         return dict(
             vocab_size=self.hf_config.vocab_size,

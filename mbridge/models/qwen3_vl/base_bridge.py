@@ -16,6 +16,7 @@ from mbridge.core.util import unwrap_model
 from mbridge.models.qwen3_vl.model import Qwen3VLModel
 from mbridge.models.qwen3_vl.transformer_config import get_vision_model_config
 from mbridge.models.qwen3_vl.utils import PatchMergerSubmodules
+from mbridge.utils.hf_config import get_hf_rope_theta
 
 
 class Qwen3VBaseBridge(VLMBridge):
@@ -418,8 +419,7 @@ class Qwen3VBaseBridge(VLMBridge):
 
             setattr(self, "vision_config", vision_transformer_config)
 
-            rope_theta = self.hf_config.text_config.rope_theta if hasattr(self.hf_config.text_config, "rope_theta") \
-                else self.hf_config.text_config.rope_scaling["rope_theta"]
+            rope_theta = get_hf_rope_theta(self.hf_config.text_config)
 
             model = Qwen3VLModel(
                 language_transformer_config=self.config,
