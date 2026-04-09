@@ -153,7 +153,6 @@ _QWEN3p5TEXT_MOE_MLP_MAPPING = {
     ],
 }
 
-
 @register_model("qwen3_5")
 class Qwen3_5VlBridge(Qwen3_5VlBaseBridge):
     try:
@@ -286,11 +285,8 @@ class Qwen3_5MoeVlBridge(Qwen3_5VlBaseBridge):
         split_name[3] = "{layer_number}"
         key = ".".join(split_name)
         key = key.split(".weight")[0] + ".weight"
-        convert_names = []
         mapping_names = self._MLP_MAPPING[key]
-        convert_names.extend(
-            [x.format(layer_number=layer_number) for x in mapping_names]
-        )
+        convert_names = [x.format(layer_number=layer_number) for x in mapping_names]
         if len(convert_names) == 0:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names

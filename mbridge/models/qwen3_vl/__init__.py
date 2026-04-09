@@ -234,6 +234,16 @@ class Qwen3VLMoEBridge(Qwen3VBaseBridge):
         ],
     }
 
+    _MLP_MAPPING_MOE_EXPERT_LEGACY = {
+        "language_model.decoder.layers.{layer_number}.mlp.experts.linear_fc1.weight{expert_number}": [
+            "model.language_model.layers.{layer_number}.mlp.experts.{expert_number}.gate_proj.weight",
+            "model.language_model.layers.{layer_number}.mlp.experts.{expert_number}.up_proj.weight",
+        ],
+        "language_model.decoder.layers.{layer_number}.mlp.experts.linear_fc2.weight{expert_number}": [
+            "model.language_model.layers.{layer_number}.mlp.experts.{expert_number}.down_proj.weight",
+        ],
+    }
+
     _OTHER_MAPPING = {
         **_QWEN3VIT_OTHER_MAPPING,
     }
@@ -251,12 +261,25 @@ class Qwen3VLMoEBridge(Qwen3VBaseBridge):
         layer_number = split_name[3]
         split_name[3] = "{layer_number}"
         key = ".".join(split_name)
-        key = key.split(".weight")[0] + ".weight"
         convert_names = []
-        mapping_names = self._MLP_MAPPING[key]
-        convert_names.extend(
-            [x.format(layer_number=layer_number) for x in mapping_names]
-        )
+        if self._hf_moe_stacked_layout():
+            key = key.split(".weight")[0] + ".weight"
+            mapping_names = self._MLP_MAPPING[key]
+            convert_names.extend(
+                [x.format(layer_number=layer_number) for x in mapping_names]
+            )
+        else:
+            pre, expert_number = key.split(".weight")
+            template_key = pre + ".weight{expert_number}"
+            mapping_names = self._MLP_MAPPING_MOE_EXPERT_LEGACY[template_key]
+            convert_names.extend(
+                [
+                    x.format(
+                        layer_number=layer_number, expert_number=expert_number
+                    )
+                    for x in mapping_names
+                ]
+            )
         if len(convert_names) == 0:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names

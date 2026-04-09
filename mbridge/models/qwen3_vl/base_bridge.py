@@ -177,15 +177,14 @@ class Qwen3VBaseBridge(VLMBridge):
                     .contiguous()
                 )
 
-            # moe
+            # moe: transformers>=5 fuses experts as stacked gate_up_proj / down_proj
             if ".mlp.experts.linear_fc" in mcore_weights_name:
-                # get export index
                 experts_key = hf_names[0]
                 experts_idx = int(mcore_weights_name.split(".weight")[-1])
 
                 if experts_key not in self.export_weights_buff:
                     self.export_weights_buff[experts_key] = {}
-                assert experts_idx not in self.export_weights_buff
+                assert experts_idx not in self.export_weights_buff[experts_key]
                 self.export_weights_buff[experts_key][experts_idx] = mcore_weights.T
 
                 if (

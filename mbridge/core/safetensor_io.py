@@ -57,6 +57,37 @@ class SafeTensorIO:
         mapping_hf_weight_names = {k: k for k in hf_weight_names}
         return hf_weight_names, mapping_hf_weight_names
 
+    def _resolve_hf_weight_key(self, requested_key: str, available_keys: set[str]) -> str:
+        """Resolve a requested HF key to an actual checkpoint key.
+
+        Example:
+        - requested: ``model.layers.12.mlp.experts.gate_up_proj``
+        - stored in index: ``model.layers.12.mlp.experts.gate_up_proj.weight``
+        This helper resolves that mismatch (and the reverse case).
+        """
+        candidate_keys = [requested_key]
+        if not requested_key.endswith(".weight"):
+            candidate_keys.append(f"{requested_key}.weight")
+        else:
+            candidate_keys.append(requested_key[: -len(".weight")])
+        # HF sometimes nests Parameter-like leaves (e.g. …experts.gate_up_proj → …gate_up_proj.weight)
+        for base in list(candidate_keys):
+            if base.endswith("gate_up_proj") or base.endswith("down_proj"):
+                candidate_keys.append(f"{base}.weight")
+        seen: set[str] = set()
+        ordered_candidates: list[str] = []
+        for c in candidate_keys:
+            if c not in seen:
+                seen.add(c)
+                ordered_candidates.append(c)
+        for c in ordered_candidates:
+            if c in available_keys:
+                return c
+        raise KeyError(
+            f"Safetensors index has no key matching {requested_key!r} "
+            f"(tried: {ordered_candidates})."
+        )
+
     def load_some_hf_weight(self, hf_weight_names: list[str]) -> dict:
         hf_weight_names, mapping_hf_weight_names = self._mapping_weight_names_old2new(
             hf_weight_names
@@ -66,28 +97,36 @@ class SafeTensorIO:
         ret = {}
 
         if index:
+            available = set(index.keys())
             file_to_weight_map = defaultdict(list)
             for name in hf_weight_names:
-                filename = index[name]
-                file_to_weight_map[filename].append(name)
-            for filename, weight_names in file_to_weight_map.items():
+                resolved = self._resolve_hf_weight_key(name, available)
+                filename = index[resolved]
+                file_to_weight_map[filename].append((name, resolved))
+            for filename, name_pairs in file_to_weight_map.items():
                 safetensor_file = os.path.join(hf_dir, filename)
                 with safe_open(safetensor_file, framework="pt", device="cpu") as f:
-                    for name in weight_names:
-                        ret[name] = f.get_tensor(name)
+                    for logical, resolved in name_pairs:
+                        ret[logical] = f.get_tensor(resolved)
             return {mapping_hf_weight_names[k]: v for k, v in ret.items()}
         # Search all safetensors files
         safetensor_files = glob(os.path.join(hf_dir, "*.safetensors"))
         # If there are safetensors files
         if safetensor_files:
             # Iterate through each safetensors file
+            remaining = set(hf_weight_names)
             for safetensor_file in safetensor_files:
+                if not remaining:
+                    break
                 with safe_open(safetensor_file, framework="pt", device="cpu") as f:
-                    to_load = set(hf_weight_names) & set(f.keys())
-                    if to_load:
-                        for name in to_load:
-                            ret[name] = f.get_tensor(name)
-                            # print(f"{name} {ret[name].shape}")
+                    keys = set(f.keys())
+                    for name in list(remaining):
+                        try:
+                            resolved = self._resolve_hf_weight_key(name, keys)
+                            ret[name] = f.get_tensor(resolved)
+                            remaining.discard(name)
+                        except KeyError:
+                            pass
             if len(ret) != len(hf_weight_names):
                 raise ValueError(
                     f"Weights {set(hf_weight_names)-set(ret.keys())} not found in safetensors files in {hf_dir}"

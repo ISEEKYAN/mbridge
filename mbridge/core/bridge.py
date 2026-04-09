@@ -21,6 +21,11 @@ from .util import (
     unwrap_model,
 )
 
+from mbridge.utils.hf_config import (
+    hf_moe_stacked_layout_default_from_transformers_version,
+    hf_moe_stacked_layout_from_checkpoint_keys,
+)
+
 
 class Bridge(ABC):
     """
@@ -44,6 +49,11 @@ class Bridge(ABC):
             hf_config: Hugging Face model configuration
             dtype: Data type for model parameters
             parallel_states: Parallel processing states, or None to use default
+
+        MoE HuggingFace **export** layout (Megatron → HF state_dict) follows the installed
+        transformers version (stacked ``gate_up_proj`` / ``down_proj`` when ≥5).
+        **Load** infers stacked vs per-expert ``experts.{{i}}.*`` keys from the
+        safetensors index.
         """
         self.hf_config = hf_config
         self.extra_args = {}
@@ -64,6 +74,16 @@ class Bridge(ABC):
         # Some moe models require multiple weights to be combined into one,
         # such as qwen3vl. It will cache it into this buff until all weights are collected.
         self.export_weights_buff = {}
+        # "load" while resolving HF names in load_weights (checkpoint-driven layout);
+        # "export" for Megatron→HF (target layout from transformers version).
+        self._hf_moe_mapping_phase = "export"
+
+    def _hf_moe_stacked_layout(self) -> bool:
+        """True → fused ``gate_up_proj`` / ``down_proj``; False → ``experts.{i}.gate_proj`` …"""
+        if self._hf_moe_mapping_phase == "load":
+            keys = set(self.safetensor_io.index.keys())
+            return hf_moe_stacked_layout_from_checkpoint_keys(keys)
+        return hf_moe_stacked_layout_default_from_transformers_version()
 
     def get_model(
         self,
@@ -166,7 +186,18 @@ class Bridge(ABC):
             weights_path: Path to the weights file or Hugging Face model identifier
         """
         self.safetensor_io = self._get_safetensor_io(weights_path)
+        self._hf_moe_mapping_phase = "load"
+        try:
+            self._load_weights_impl(models, weights_path, memory_efficient)
+        finally:
+            self._hf_moe_mapping_phase = "export"
 
+    def _load_weights_impl(
+        self,
+        models: list[torch.nn.Module],
+        weights_path: str,
+        memory_efficient: bool = False,
+    ) -> None:
         for i, model in enumerate(models):
             # map local weight names to global weight names
             local_to_global_map = self._weight_name_mapping_mcore_local_to_global(model)
@@ -532,10 +563,10 @@ class Bridge(ABC):
 
     def set_extra_args(self, **kwargs):
         """
-        Set additional configuration arguments.
+        Set additional configuration arguments for model-specific bridge behavior.
 
         Args:
-            **kwargs: Key-value pairs of additional arguments
+            **kwargs: Key-value pairs of additional arguments.
         """
         self.extra_args.update(kwargs)
         self.config = self._build_config()
@@ -547,6 +578,7 @@ class Bridge(ABC):
         assert (
             len(self.export_weights_buff) == 0
         ), f"should be empty {self.export_weights_buff=}"
+        self._hf_moe_mapping_phase = "export"
         models = [unwrap_model(model) for model in models]
 
         def get_model_chunk_generator():
@@ -610,7 +642,7 @@ class Bridge(ABC):
             name = broadcast_str_from_megatron_pp(name)
             broad_pp_param = broadcast_from_megatron_pp(param)
 
-            # EP
+            # EP; HF key layout from :meth:`_hf_moe_stacked_layout` (export phase).
             if ".mlp.experts.linear_fc" in name:
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size
@@ -708,6 +740,7 @@ class Bridge(ABC):
               tp_size is 0: is not tp tensor
               ep_size is 0: is not ep tensor
         """
+        self._hf_moe_mapping_phase = "export"
         models = [unwrap_model(model) for model in models]
 
         def get_model_chunk_generator():
@@ -764,7 +797,7 @@ class Bridge(ABC):
 
             assert iter_pp_rank == self.mpu.pp_rank
 
-            # EP
+            # EP: see export_weights comment on MoE HF layout vs transformers version.
             if ".mlp.experts.linear_fc" in name and self.mpu.ep_size >= 1:
                 num_experts = self.config.num_moe_experts
                 num_experts_per_rank = num_experts // self.mpu.ep_size
