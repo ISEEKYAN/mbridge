@@ -145,8 +145,10 @@ class SafeTensorIO:
 
         filename_to_keys_map = self.get_keys_maps_to_save()
         states = {}
+        received_weight_keys = set()
         for hf_weight_name, tensor in per_tensor_generator:
             states[hf_weight_name] = tensor.cpu()
+            received_weight_keys.add(hf_weight_name)
             for filename, keys_for_file in filename_to_keys_map.items():
                 if keys_for_file.issubset(states.keys()):
                     to_save = {k: states[k] for k in keys_for_file}
@@ -154,7 +156,28 @@ class SafeTensorIO:
                     save_file(to_save, safetensor_file)
                     for k in keys_for_file:
                         del states[k]
-        if not set(states.keys()) == set(hf_shared_weight_keys):
+
+        # Fallback: group remaining states by filename from index and save them.
+        fallback_filename_to_states = defaultdict(dict)
+        for key in list(states.keys()):
+            filename = self.index.get(key)
+            if filename is not None:
+                fallback_filename_to_states[filename][key] = states[key]
+                del states[key]
+
+        for filename, to_save in fallback_filename_to_states.items():
+            safetensor_file = os.path.join(new_hf_dir, filename)
+            save_file(to_save, safetensor_file)
+
+        # Warn if some keys declared in original index are never provided by input.
+        missing_index_keys = set(self.index.keys()) - received_weight_keys
+        if missing_index_keys:
+            warnings.warn(
+                f"Some keys in original model.safetensors.index.json were not loaded: "
+                f"{sorted(missing_index_keys)}"
+            )
+
+        if states:
             warnings.warn(
                 f"Some weights are not saved: {states.keys()} {hf_shared_weight_keys=}"
             )
