@@ -435,7 +435,7 @@ class Bridge(ABC):
             else:
                 # gather tp
                 if w_files[0][4] is not None and w_files[0][4] > 0:
-                    assert len(w_files) == w_files[0][3]
+                    assert len(w_files) == w_files[0][3], f"len(w_files):{len(w_files)}, w_files[0][3]:{w_files[0][3]}"
                     params = [load_tensor_from_file(w_file) for w_file in w_files]
                     infer_params = self._weight_merge_across_tp(w_name, params, params[0])
                 else:

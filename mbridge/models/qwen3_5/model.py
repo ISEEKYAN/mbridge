@@ -27,6 +27,39 @@ from mbridge.models.qwen3_5.rope_utils import (
 )
 
 
+class _SPScatterEmbeddingWrapper:
+    """Thin callable that wraps a LanguageModelEmbedding and optionally scatters its output.
+
+    Stored in the instance ``__dict__`` of ``Qwen3_5GPTModel`` (via
+    ``object.__setattr__``), shadowing the real ``nn.Module`` registered in
+    ``self._modules['embedding']``.  This means:
+    - ``self.embedding(...)`` → wrapper (used by MTP, scatter-aware).
+    - ``self._modules['embedding'](...)`` → real module, full unscattered output
+      (used by ``Qwen3_5VLModel.forward`` before vision-token insertion).
+    - Parameter names stay as ``language_model.embedding.*`` (weight loading intact).
+
+    ``do_scatter`` is immutable after construction.  If the training-job data
+    format is not known at ``__init__`` time, create with ``do_scatter=True``
+    (the default) and replace the wrapper once on the first forward call via
+    ``Qwen3_5GPTModel.init_mtp_embedding_scatter``.
+    """
+
+    def __init__(self, real_embedding, do_scatter: bool):
+        self._real_embedding = real_embedding
+        self._do_scatter = do_scatter
+
+    def __call__(self, **kwargs):
+        out = self._real_embedding(**kwargs)
+        if self._do_scatter:
+            out = tensor_parallel.scatter_to_sequence_parallel_region(out)
+            out = out.contiguous()
+        return out
+
+    # Proxy attribute access so code that does ``self.embedding.weight`` still works.
+    def __getattr__(self, name):
+        return getattr(self._real_embedding, name)
+
+
 class Qwen3_5GPTModel(GPTModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -45,6 +78,47 @@ class Qwen3_5GPTModel(GPTModel):
             self.mrope_section is not None
         ), "mrope require mrope_section setting, but we got None from TransformerConfig"
 
+        # ``self.embedding`` (LanguageModelEmbedding) only exists on PP stages where
+        # pre_process or mtp_process is True; it is None on all other stages.
+        # Guard to avoid wrapping None.
+        if self._modules.get("embedding") is not None:
+            # VL models initialise their language model with
+            # ``scatter_embedding_sequence_parallel=False`` so that Qwen3_5VLModel.forward
+            # can obtain the full [s, b, h] embedding before inserting vision tokens and
+            # manually packing/scattering it.  The side-effect is that MTP also receives
+            # a full (unscattered) embedding that mismatches the SP-sharded hidden_states
+            # produced by the decoder, causing a size-mismatch in _concat_embeddings.
+            #
+            # Fix: shadow ``self.embedding`` in the instance __dict__ with a wrapper
+            # that applies SP-scatter on output.  The real nn.Module stays registered
+            # in ``self._modules['embedding']`` so that parameter names (used by weight
+            # loading) remain ``language_model.embedding.*`` unchanged.
+            # The scatter behaviour is determined by the data format (THD vs BSHD) which
+            # is not known at __init__ time, so we start with do_scatter=True (THD default)
+            # and let Qwen3_5VLModel.forward replace the wrapper once on the first call.
+            object.__setattr__(
+                self,
+                "embedding",
+                _SPScatterEmbeddingWrapper(self._modules["embedding"], do_scatter=self.config.sequence_parallel),
+            )
+
+    def init_mtp_embedding_scatter(self, do_scatter: bool) -> None:
+        """Replace the MTP embedding wrapper with the correct scatter setting.
+
+        Called once by ``Qwen3_5VLModel.forward`` on the first forward pass, after
+        the data format (THD vs BSHD) is known.  Subsequent calls are no-ops.
+        """
+        wrapper = object.__getattribute__(self, "embedding")  # bypasses __getattr__
+        if not isinstance(wrapper, _SPScatterEmbeddingWrapper):
+            return
+        if wrapper._do_scatter == do_scatter:
+            return  # already correct, nothing to do
+        object.__setattr__(
+            self,
+            "embedding",
+            _SPScatterEmbeddingWrapper(wrapper._real_embedding, do_scatter=do_scatter),
+        )
+
 
 class Qwen3_5VLModel(MegatronModule):
     """Qwen3_5VLModel model"""
@@ -53,11 +127,11 @@ class Qwen3_5VLModel(MegatronModule):
         self,
         language_transformer_config: Qwen3_5VLTransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
-        language_mtp_block_spec: ModuleSpec,
         language_vocab_size: int,
         language_max_sequence_length: int,
         hf_config: AutoConfig,
         hf_vision_cls: type,
+        language_mtp_block_spec: Optional[ModuleSpec] = None,
         parallel_output: bool = True,
         language_rotary_percent: float = 1.0,
         pre_process: bool = True,
@@ -79,6 +153,11 @@ class Qwen3_5VLModel(MegatronModule):
             # only replace SelfAttention
             if issubclass(layer_spec.submodules.self_attention.module, SelfAttention):
                 layer_spec.submodules.self_attention.module = Qwen3_5VLSelfAttention
+
+        if language_mtp_block_spec is not None:
+            for _, layer_spec in enumerate(language_mtp_block_spec.layer_specs):
+                if issubclass(layer_spec.submodules.transformer_layer.submodules.self_attention.module, SelfAttention):
+                    layer_spec.submodules.transformer_layer.submodules.self_attention.module = Qwen3_5VLSelfAttention
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -231,6 +310,9 @@ class Qwen3_5VLModel(MegatronModule):
         # TODO: this approach may need rethinking
         cp_size = mpu.get_context_parallel_world_size()
 
+        # Track packed input_ids (THD format) for MTP use when remove_padding is enabled
+        input_ids_packed = None
+
         if self.pre_process:
             # can reorganize_inputs at dataset
             vision_data, vision_grid_thw, vision_mask = reorganize_inputs(
@@ -291,7 +373,7 @@ class Qwen3_5VLModel(MegatronModule):
                         seqlen_on_cp_ranks,
                     )
 
-            combined_embeddings = self.language_model.embedding(
+            combined_embeddings = self.language_model._modules["embedding"](
                 input_ids=input_ids,
                 position_ids=None,  # NOTE: disable
             ).clone()  # [text_seq_len, b, h_language]
@@ -313,18 +395,27 @@ class Qwen3_5VLModel(MegatronModule):
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True
                 )
+                # Save packed input_ids for MTP use outside this block
+                input_ids_packed = input_ids_thd
                 vision_mask_thd = (input_ids_thd == self.image_token_id) | (
                     input_ids_thd == self.video_token_id
                 )
 
                 vision_mask = vision_mask_thd
+                # combined_embeddings is [s, b, h] (SBH); convert to THD format [total_tokens, 1, h]:
+                # 1. transpose to [b, s, h], then preprocess_packed_seqs → [1, total_tokens, h]
+                #    (preprocess_packed_seqs always unsqueeze(0) before return)
+                # 2. squeeze(0) → [total_tokens, h]
+                # 3. unsqueeze(1) → [total_tokens, 1, h] (THD format), so scatter_to_sequence_parallel
+                #    acts on the token dim (dim 0) and produces [total_tokens//tp, 1, h]
                 combined_embeddings_thd = (
                     preprocess_packed_seqs(
                         combined_embeddings.transpose(0, 1).contiguous(),
                         attention_mask,
                         pre_process=True,
                     )[0]
-                    .transpose(0, 1)
+                    .squeeze(0)
+                    .unsqueeze(1)
                     .contiguous()
                 )
                 combined_embeddings = combined_embeddings_thd
@@ -339,6 +430,10 @@ class Qwen3_5VLModel(MegatronModule):
 
         else:
             combined_embeddings = None
+
+        # Save the original attention_mask before it may be set to None in the THD branch
+        # below. Non-pre_process stages need it to generate packed input_ids for MTP.
+        attention_mask_orig = attention_mask
 
         if position_ids is None:
             # BSHD
@@ -364,8 +459,47 @@ class Qwen3_5VLModel(MegatronModule):
                 attention_mask = None
                 self.language_model.rotary_pos_emb.is_thd_format = True
 
-        output = self.language_model(
-            input_ids=None,
+        # Prepare input_ids for language_model (needed by MTP).
+        # When packed_seq_params is not None (remove_padding enabled), use the already-packed
+        # input_ids whose total token count is aligned to tp_size (guaranteed by
+        # preprocess_packed_seqs). Scattering the original padded input_ids would fail because
+        # padded seq_len is not guaranteed to be divisible by tp_size.
+        # When packed_seq_params is None, scatter the padded input_ids along the sequence dim
+        # so each TP rank holds seq_len // tp_size tokens, consistent with SP hidden_states.
+        if packed_seq_params is not None:
+            # THD mode: use packed input_ids whose total token count is aligned to tp_size.
+            if input_ids_packed is not None:
+                sp_input_ids = input_ids_packed
+            elif attention_mask_orig is not None:
+                # pre_process=False (non-first PP stage): input_ids_packed was not generated
+                # in the pre_process block above, but MTP still needs packed input_ids whose
+                # token count matches the THD hidden_states.  Re-pack here using the original
+                # attention_mask (before it was cleared to None for the decoder).
+                sp_input_ids, _ = preprocess_packed_seqs(
+                    input_ids, attention_mask_orig, pre_process=True
+                )
+            else:
+                sp_input_ids = input_ids
+            # THD mode: embedding wrapper must scatter (do_scatter=True).
+            self.language_model.init_mtp_embedding_scatter(do_scatter=True)
+        else:
+            sp_input_ids = input_ids
+            if input_ids is not None and combined_embeddings is not None:
+                # BSHD mode: input_ids may arrive already SP-scattered (shape [B, S/TP])
+                # or still full-length (shape [B, S]).  combined_embeddings has already been
+                # scattered by this point, so its dim-0 equals the SP-local sequence length.
+                # Compare input_ids.shape[1] with combined_embeddings.shape[0]:
+                #   - not equal → input_ids is full [B, S]; scatter it now to [B, S/TP]
+                #   - equal     → input_ids is already [B, S/TP]; skip scatter
+                if input_ids.shape[1] != combined_embeddings.shape[0]:
+                    sp_input_ids = input_ids.permute(1, 0).contiguous()
+                    sp_input_ids = tensor_parallel.scatter_to_sequence_parallel_region(sp_input_ids)
+                    sp_input_ids = sp_input_ids.permute(1, 0).contiguous()
+                # sp_input_ids is now [B, S/TP]: embedding wrapper must NOT scatter again.
+                self.language_model.init_mtp_embedding_scatter(do_scatter=False)
+
+        return self.language_model(
+            input_ids=sp_input_ids,
             position_ids=position_ids,  # None in encoder
             attention_mask=attention_mask,  # None in encoder
             decoder_input=combined_embeddings,  # only not None in the first decoder PP stage
@@ -377,8 +511,6 @@ class Qwen3_5VLModel(MegatronModule):
             **(extra_block_kwargs or {}),
             **kwargs,
         )
-
-        return output
 
     def verify_vision_weights_consistency(self, step: int = -1):
         """

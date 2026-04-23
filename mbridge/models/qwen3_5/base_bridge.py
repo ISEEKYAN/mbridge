@@ -5,6 +5,14 @@ from typing import Callable, Optional
 
 import torch
 
+from megatron.core.models.gpt.gpt_layer_specs import (
+    get_gpt_layer_with_transformer_engine_spec,
+    get_gpt_mtp_block_spec,
+)
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+                get_transformer_block_with_experimental_attention_variant_spec,
+                is_linear_attention_variant,
+            )
 from mbridge.core import VLMBridge
 from mbridge.core.util import unwrap_model
 from mbridge.models.qwen3_5.qwen3_5_safetensor import Qwen3_5SafeTensorIO
@@ -29,15 +37,6 @@ class Qwen3_5VlBaseBridge(VLMBridge):
             self.config.normalization == "RMSNorm"
         ), "only RMSNorm is supported for now"
 
-        try:
-            from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-                get_transformer_block_with_experimental_attention_variant_spec,
-                is_linear_attention_variant,
-            )
-        except ImportError:
-            is_linear_attention_variant = None
-            get_transformer_block_with_experimental_attention_variant_spec = None
-
         if is_linear_attention_variant is not None and is_linear_attention_variant(
             getattr(self.config, "experimental_attention_variant", None)
         ):
@@ -59,12 +58,55 @@ class Qwen3_5VlBaseBridge(VLMBridge):
                     **extra_args,
                 )
             )
+            
         else:
             raise ImportError(
                 "experimental_attention_variant is not supported, please megatron-lm dev branch"
             )
 
         return transformer_layer_spec
+
+    def _get_mtp_layer_spec(self, vp_stage: Optional[int] = None):
+        config = deepcopy(self.config)
+        config.num_layers = 1
+        config.linear_attention_freq = [0]
+        config.num_layers_in_last_pipeline_stage = 1
+
+        extra_args = {}
+        if self.has_vp_stage:
+            extra_args["vp_stage"] = vp_stage
+
+        mtp_layer_spec = (
+            get_transformer_block_with_experimental_attention_variant_spec(
+                config,
+                **extra_args,
+            )
+        )
+
+        mtp_block_spec = get_gpt_mtp_block_spec(
+                            self.config,
+                            mtp_layer_spec,
+                            use_transformer_engine=True,
+                            vp_stage=vp_stage,
+                        )
+        return mtp_block_spec
+
+    def _build_mtp_config(self):
+        # Add MTP configuration if present
+        mtp_args = {}
+        if hasattr(self.hf_config, "num_nextn_predict_layers") and \
+                self.hf_config.num_nextn_predict_layers is not None:
+            mtp_args["mtp_num_layers"] = self.hf_config.num_nextn_predict_layers
+            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get("mtp_loss_scaling_factor", 0.1)
+        elif hasattr(self.hf_config.text_config, "mtp_num_hidden_layers") and \
+                    self.hf_config.text_config.mtp_num_hidden_layers is not None and \
+                    self.hf_config.text_config.mtp_num_hidden_layers > 0:
+            mtp_args["mtp_num_layers"] = self.hf_config.text_config.mtp_num_hidden_layers
+            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get("mtp_loss_scaling_factor", 0.1)
+
+        print(f"qwen3.5 model --- mtp_args:{mtp_args}")
+        return mtp_args
+
 
     def _adjust_mapping_for_shared_weights(self):
         if getattr(self.hf_config.text_config, "tie_word_embeddings", False):
@@ -83,7 +125,7 @@ class Qwen3_5VlBaseBridge(VLMBridge):
     def _get_safetensor_io(self, weights_path: str):
         # TODO: MTP layers are not handled yet
         return Qwen3_5SafeTensorIO(
-            self._get_actual_hf_path(weights_path), ignore_mtp=True
+            self._get_actual_hf_path(weights_path), ignore_mtp=False
         )
 
     def _weight_name_mapping_mcore_local_to_global(
@@ -187,6 +229,93 @@ class Qwen3_5VlBaseBridge(VLMBridge):
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names
 
+    _MTP_MAPPING = {
+        "language_model.mtp.layers.0.enorm.weight": [
+            "mtp.pre_fc_norm_embedding.weight",
+        ],
+        "language_model.mtp.layers.0.hnorm.weight": [
+            "mtp.pre_fc_norm_hidden.weight",
+        ],
+        "language_model.mtp.layers.0.eh_proj.weight": [
+            "mtp.fc.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.self_attention.linear_proj.weight": [
+            "mtp.layers.0.self_attn.o_proj.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.self_attention.linear_qkv.layer_norm_weight": [
+            "mtp.layers.0.input_layernorm.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.self_attention.linear_qkv.weight": [
+            "mtp.layers.0.self_attn.q_proj.weight",
+            "mtp.layers.0.self_attn.k_proj.weight",
+            "mtp.layers.0.self_attn.v_proj.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.self_attention.q_layernorm.weight": [
+            "mtp.layers.0.self_attn.q_norm.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.self_attention.k_layernorm.weight": [
+            "mtp.layers.0.self_attn.k_norm.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.pre_mlp_layernorm.weight": [
+            "mtp.layers.0.post_attention_layernorm.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.mlp.router.weight": [
+            "mtp.layers.0.mlp.gate.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.mlp.shared_experts.linear_fc1.weight": [
+            "mtp.layers.0.mlp.shared_expert.gate_proj.weight",
+            "mtp.layers.0.mlp.shared_expert.up_proj.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.mlp.shared_experts.linear_fc2.weight": [
+            "mtp.layers.0.mlp.shared_expert.down_proj.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.mlp.shared_experts.gate_weight": [
+            "mtp.layers.0.mlp.shared_expert_gate.weight",
+        ],
+        "language_model.mtp.layers.0.final_layernorm.weight": [
+            "mtp.norm.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.mlp.experts.linear_fc1.weight{expert_index}": [
+            "mtp.layers.0.mlp.experts.{expert_index}.gate_proj.weight",
+            "mtp.layers.0.mlp.experts.{expert_index}.up_proj.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.mlp.experts.linear_fc2.weight{expert_index}": [
+            "mtp.layers.0.mlp.experts.{expert_index}.down_proj.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.mlp.linear_fc1.weight": [
+            "mtp.layers.0.mlp.gate_proj.weight",
+            "mtp.layers.0.mlp.up_proj.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.mlp.linear_fc1.layer_norm_weight": [
+            "mtp.layers.0.post_attention_layernorm.weight",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.mlp.linear_fc2.weight": [
+            "mtp.layers.0.mlp.down_proj.weight",
+        ],
+    }
+
+
+    def _convert_mtp_param(self, name: str) -> list[str]:
+        assert self.config.mtp_num_layers == 1, "only support one mtp layer for now"
+
+        # Handle MoE expert weights: extract expert_index from the suffix
+        # e.g. language_model.mtp.layers.0.transformer_layer.mlp.experts.linear_fc1.weight3
+        #   -> key = "...linear_fc1.weight{expert_index}", expert_index = 3
+        if ".mlp.experts.linear_fc" in name:
+            # split off the numeric expert_index suffix after ".weight"
+            prefix, expert_index_str = name.split(".weight", 1)
+            expert_index = int(expert_index_str)
+            key = prefix + ".weight{expert_index}"
+            mapping_names = self._MTP_MAPPING[key]
+            return [x.format(expert_index=expert_index) for x in mapping_names]
+
+        # All other MTP weights: direct lookup in _MTP_MAPPING
+        if name not in self._MTP_MAPPING:
+            raise NotImplementedError(f"Unsupported MTP parameter name: {name}")
+        return self._MTP_MAPPING[name]
+
+
+
     def _weight_name_mapping_mcore_to_hf(self, mcore_weights_name: str) -> list[str]:
         """
         Map MCore weight names to Hugging Face weight names.
@@ -203,6 +332,9 @@ class Qwen3_5VlBaseBridge(VLMBridge):
 
         if mcore_weights_name in self._DIRECT_MAPPING:
             return [self._DIRECT_MAPPING[mcore_weights_name]]
+
+        if "mtp" in mcore_weights_name:
+            return self._convert_mtp_param(mcore_weights_name)
 
         if "vision_model" in mcore_weights_name:
             return self._weight_name_mapping_visual(mcore_weights_name)
@@ -249,6 +381,9 @@ class Qwen3_5VlBaseBridge(VLMBridge):
                 assert self.vocab_size is not None
 
                 return [hf_names[0]], [mcore_weights[: self.vocab_size]]
+
+            if 'mtp' in mcore_weights_name:
+                return [hf_names[0]], [mcore_weights]
 
             # moe
             if ".mlp.experts.linear_fc" in mcore_weights_name:
@@ -422,6 +557,8 @@ class Qwen3_5VlBaseBridge(VLMBridge):
 
             # moe
             if ".mlp.experts.linear_fc" in mcore_weights_name:
+                if "mtp" in mcore_weights_name:
+                    return hf_weights[0]
                 # get export index
                 local_experts_idx = int(mcore_weights_name.split(".weight")[-1])
                 num_experts = self.config.num_moe_experts
@@ -813,10 +950,17 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         ):
             transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
 
+            mtp_block_spec = None
+            if (
+                self.config.mtp_num_layers is not None
+                and self.config.mtp_num_layers > 0
+            ):
+                mtp_block_spec = self._get_mtp_layer_spec(vp_stage)
+
             model = Qwen3_5VLModel(
                 language_transformer_config=self.config,
                 language_transformer_layer_spec=transformer_layer_spec,
-                language_mtp_block_spec=None,
+                language_mtp_block_spec=mtp_block_spec,
                 language_vocab_size=self.hf_config.text_config.vocab_size,
                 language_max_sequence_length=self.hf_config.text_config.max_position_embeddings,
                 hf_config=self.hf_config,
