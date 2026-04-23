@@ -575,12 +575,10 @@ class Bridge(ABC):
             for rank_shards in gathered_shards_by_rank
         ]
 
-        comm_flat = torch.empty(group_size * max_chunk_numel, dtype=dtype, device=device)
-        comm_buffers = [
-            comm_flat[rank * max_chunk_numel : (rank + 1) * max_chunk_numel]
-            for rank in range(group_size)
-        ]
         send_buffer = torch.empty(max_chunk_numel, dtype=dtype, device=device)
+        recv_buffer = torch.empty(
+            group_size * max_chunk_numel, dtype=dtype, device=device
+        )
 
         tensor_idx = 0
         tensor_offset = 0
@@ -600,15 +598,15 @@ class Bridge(ABC):
                     tensor_idx += 1
                     tensor_offset = 0
 
-            recv_views = [buffer[:chunk_numel] for buffer in comm_buffers]
-            torch.distributed.all_gather(
-                recv_views,
+            recv_view = recv_buffer[: group_size * chunk_numel]
+            torch.distributed.all_gather_into_tensor(
+                recv_view,
                 send_buffer[:chunk_numel],
                 group=group,
             )
 
             for rank in range(group_size):
-                recv_view = recv_views[rank]
+                rank_recv_view = recv_view[rank * chunk_numel : (rank + 1) * chunk_numel]
                 for (
                     seg_tensor_idx,
                     seg_tensor_offset,
@@ -617,9 +615,11 @@ class Bridge(ABC):
                 ) in chunk_segments:
                     gathered_flat_views[rank][seg_tensor_idx][
                         seg_tensor_offset : seg_tensor_offset + seg_numel
-                    ].copy_(recv_view[seg_chunk_offset : seg_chunk_offset + seg_numel])
+                    ].copy_(
+                        rank_recv_view[seg_chunk_offset : seg_chunk_offset + seg_numel]
+                    )
 
-        del send_buffer, comm_buffers, comm_flat
+        del send_buffer, recv_buffer
 
         gathered_bucket = []
         for idx, (name, param) in enumerate(bucket):
