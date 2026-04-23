@@ -697,24 +697,6 @@ class Bridge(ABC):
                 _, param = None, None
             yield local_to_global_map[iter_name], param
 
-    def _build_local_export_param_manifest(
-        self, models: list[torch.nn.Module]
-    ) -> list[tuple[int, str, tuple[int, ...], str, bool | None, int | None, int]]:
-        manifest = []
-        for name, param in self._iter_local_stage_named_params(models):
-            manifest.append(
-                (
-                    self.mpu.pp_rank,
-                    name,
-                    tuple(param.shape),
-                    str(param.dtype).split(".", maxsplit=1)[1],
-                    getattr(param, "tensor_model_parallel", None),
-                    getattr(param, "partition_dim", None),
-                    param.numel(),
-                )
-            )
-        return manifest
-
     def _iter_pp_bucket_broadcast_outputs(
         self,
         bucket: list[
@@ -737,7 +719,7 @@ class Bridge(ABC):
             output_tensors = [tensor for _, _, _, _, _, _, tensor in bucket]
             if any(tensor is None for tensor in output_tensors):
                 raise RuntimeError("source pp bucket is missing local tensors")
-            flat_views = [tensor.view(-1) for tensor in output_tensors]
+            flat_views = [tensor.reshape(-1) for tensor in output_tensors]
         else:
             output_tensors = []
             flat_views = []
@@ -801,14 +783,26 @@ class Bridge(ABC):
             yield from self._iter_local_stage_named_params(models)
             return
 
-        local_param_manifest = self._build_local_export_param_manifest(models)
+        local_named_params_list = list(self._iter_local_stage_named_params(models))
+        local_param_manifest = [
+            (
+                self.mpu.pp_rank,
+                name,
+                tuple(param.shape),
+                str(param.dtype).split(".", maxsplit=1)[1],
+                getattr(param, "tensor_model_parallel", None),
+                getattr(param, "partition_dim", None),
+                param.numel(),
+            )
+            for name, param in local_named_params_list
+        ]
         param_manifest_all_pp = [None] * self.mpu.pp_size
         torch.distributed.all_gather_object(
             object_list=param_manifest_all_pp,
             obj=local_param_manifest,
             group=self.mpu.pp_group,
         )
-        local_named_params = self._iter_local_stage_named_params(models)
+        local_named_params = iter(local_named_params_list)
         pp_bucket_limit_bytes = self.export_weights_buffer_max_size_bytes
         element_size_cache: dict[str, int] = {}
         for iter_pp_rank, stage_manifest in enumerate(param_manifest_all_pp):
