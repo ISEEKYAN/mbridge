@@ -61,7 +61,7 @@ class Bridge(ABC):
         self.export_weights_buff = {}
         # 4GB max gather buffer size for export weights
         # TODO: make this configurable
-        self.export_weights_buffer_max_size_bytes = 4 * 1024**3
+        self.export_weights_buffer_max_size_bytes = 2 * 1024**3
 
     def get_model(
         self,
