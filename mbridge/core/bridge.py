@@ -615,6 +615,8 @@ class Bridge(ABC):
                         seg_tensor_offset : seg_tensor_offset + seg_numel
                     ].copy_(recv_view[seg_chunk_offset : seg_chunk_offset + seg_numel])
 
+        del send_buffer, comm_buffers
+
         gathered_bucket = []
         for idx, (name, param) in enumerate(bucket):
             shards = [gathered_shards_by_rank[rank][idx] for rank in range(group_size)]
@@ -772,6 +774,8 @@ class Bridge(ABC):
                 flat_views[seg_tensor_idx][
                     seg_tensor_offset : seg_tensor_offset + seg_numel
                 ].copy_(chunk_view[seg_chunk_offset : seg_chunk_offset + seg_numel])
+
+        del buffer
 
         for (name, _, _, _, _, _, _), tensor in zip(bucket, output_tensors):
             yield name, tensor
