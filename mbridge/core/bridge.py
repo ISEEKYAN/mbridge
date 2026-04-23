@@ -776,8 +776,12 @@ class Bridge(ABC):
                 ].copy_(chunk_view[seg_chunk_offset : seg_chunk_offset + seg_numel])
 
         del buffer
+        del flat_views
 
-        for (name, _, _, _, _, _, _), tensor in zip(bucket, output_tensors):
+        for i in range(len(bucket)):
+            name = bucket[i][0]
+            tensor = output_tensors[i]
+            output_tensors[i] = None
             yield name, tensor
 
     def _iter_all_ranks_named_params(
@@ -897,9 +901,13 @@ class Bridge(ABC):
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
         if gathered_bucket is None:
             return
-        for bname, bparam, shards in gathered_bucket:
+        for i in range(len(gathered_bucket)):
+            bname, bparam, shards = gathered_bucket[i]
+            gathered_bucket[i] = None  # type: ignore[call-overload]
             merged = self._weight_merge_across_tp(bname, shards, bparam)
+            del shards, bparam
             yield from self._iter_converted_export_outputs(bname, merged)
+            del merged
 
     def _iter_bucketed_export_outputs(
         self,
@@ -946,7 +954,9 @@ class Bridge(ABC):
                 etp_subbucket_bytes = 0
                 yield from self._iter_merged_bucket_outputs(gathered_etp_bucket)
 
-            for name, param in etp_bucket:
+            for i in range(len(etp_bucket)):
+                name, param = etp_bucket[i]
+                etp_bucket[i] = None  # type: ignore[call-overload]
                 param_bytes = param.nelement() * param.element_size()
                 if _should_flush_bucket(
                     etp_subbucket,
@@ -958,6 +968,7 @@ class Bridge(ABC):
 
                 etp_subbucket.append((name, param))
                 etp_subbucket_bytes += param_bytes
+                del param
 
                 if etp_subbucket_bytes >= etp_bucket_limit_bytes:
                     yield from _flush_etp_subbucket()
@@ -984,17 +995,17 @@ class Bridge(ABC):
             num_experts = self.config.num_moe_experts
             num_experts_per_rank = num_experts // self.mpu.ep_size
             etp_bucket: list[tuple[str, torch.Tensor]] = []
-            for bname, _, ep_shards in gathered_ep_bucket:
+            for i in range(len(gathered_ep_bucket)):
+                bname, _, ep_shards = gathered_ep_bucket[i]
+                gathered_ep_bucket[i] = None  # type: ignore[call-overload]
                 name_prefix, local_expert_id = bname.split(".weight")
                 local_expert_id = int(local_expert_id)
-                global_expert_ids = [
-                    num_experts_per_rank * ep_rank + local_expert_id
-                    for ep_rank in range(self.mpu.ep_size)
-                ]
-                for global_expert_id, expert_param in zip(global_expert_ids, ep_shards):
+                for ep_rank, expert_param in enumerate(ep_shards):
+                    global_expert_id = num_experts_per_rank * ep_rank + local_expert_id
                     etp_bucket.append(
                         (f"{name_prefix}.weight{global_expert_id}", expert_param)
                     )
+                del ep_shards
 
             yield from _iter_etp_bucket_outputs(etp_bucket)
 
