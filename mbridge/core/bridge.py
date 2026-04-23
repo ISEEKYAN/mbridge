@@ -59,7 +59,7 @@ class Bridge(ABC):
         # Some moe models require multiple weights to be combined into one,
         # such as qwen3vl. It will cache it into this buff until all weights are collected.
         self.export_weights_buff = {}
-        # 4GB max gather buffer size for export weights
+        # 2GB max gather buffer size for export weights
         # TODO: make this configurable
         self.export_weights_buffer_max_size_bytes = 2 * 1024**3
 
