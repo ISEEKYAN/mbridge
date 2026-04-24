@@ -156,8 +156,11 @@ class Qwen3_5VLModel(MegatronModule):
 
         if language_mtp_block_spec is not None:
             for _, layer_spec in enumerate(language_mtp_block_spec.layer_specs):
-                if issubclass(layer_spec.submodules.transformer_layer.submodules.self_attention.module, SelfAttention):
-                    layer_spec.submodules.transformer_layer.submodules.self_attention.module = Qwen3_5VLSelfAttention
+                # 'mtp_model_layer' is the new name in megatron (renamed from 'transformer_layer')
+                mtp_inner = getattr(layer_spec.submodules, 'mtp_model_layer', None) or getattr(layer_spec.submodules, 'transformer_layer', None)
+                if mtp_inner is not None and issubclass(mtp_inner.submodules.self_attention.module, SelfAttention):
+                    mtp_inner.submodules.self_attention.module = Qwen3_5VLSelfAttention
+
 
         self.pre_process = pre_process
         self.post_process = post_process

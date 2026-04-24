@@ -298,6 +298,13 @@ class Qwen3_5VlBaseBridge(VLMBridge):
     def _convert_mtp_param(self, name: str) -> list[str]:
         assert self.config.mtp_num_layers == 1, "only support one mtp layer for now"
 
+        # Normalize: new megatron versions use "mtp_model_layer", old ones use "transformer_layer".
+        # Canonicalize to "transformer_layer" so a single _MTP_MAPPING covers both.
+        name = name.replace(
+            "language_model.mtp.layers.0.mtp_model_layer.",
+            "language_model.mtp.layers.0.transformer_layer.",
+        )
+
         # Handle MoE expert weights: extract expert_index from the suffix
         # e.g. language_model.mtp.layers.0.transformer_layer.mlp.experts.linear_fc1.weight3
         #   -> key = "...linear_fc1.weight{expert_index}", expert_index = 3
