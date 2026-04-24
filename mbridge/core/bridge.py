@@ -14,7 +14,13 @@ from safetensors import safe_open
 
 from .parallel_states import ParallelStates
 from .safetensor_io import SafeTensorIO
-from .util import get_model, unwrap_model
+from .util import (
+    bucketed_all_gather_into_tensor,
+    bucketed_pp_broadcast,
+    get_model,
+    iter_model_named_params,
+    unwrap_model,
+)
 
 
 class Bridge(ABC):
@@ -31,6 +37,7 @@ class Bridge(ABC):
         dtype: torch.dtype = torch.bfloat16,
         parallel_states: ParallelStates = None,
         make_vocab_size_divisible_by: int = None,
+        export_weights_buffer_max_size_bytes: int = 2 * 1024**3,
     ):
         """
         Initialize a bridge instance.
@@ -39,6 +46,7 @@ class Bridge(ABC):
             hf_config: Hugging Face model configuration
             dtype: Data type for model parameters
             parallel_states: Parallel processing states, or None to use default
+            export_weights_buffer_max_size_bytes: Max size of buffer for gather/broadcast in export weights
         """
         self.hf_config = hf_config
         self.extra_args = {}
@@ -60,8 +68,7 @@ class Bridge(ABC):
         # such as qwen3vl. It will cache it into this buff until all weights are collected.
         self.export_weights_buff = {}
         # 2GB max gather buffer size for export weights
-        # TODO: make this configurable
-        self.export_weights_buffer_max_size_bytes = 2 * 1024**3
+        self.export_weights_buffer_max_size_bytes = export_weights_buffer_max_size_bytes
 
     def get_model(
         self,
@@ -543,254 +550,23 @@ class Bridge(ABC):
             return self.export_weights_buffer_max_size_bytes
         return max(self.export_weights_buffer_max_size_bytes // group_size, 1)
 
-    def _collect_export_bucket(
-        self,
-        bucket: list[tuple[str, torch.Tensor]],
-        group: torch.distributed.ProcessGroup,
-        group_size: int,
-    ) -> list[tuple[str, torch.Tensor, list[torch.Tensor]]] | None:
-        if not bucket:
-            return []
-
-        if group_size <= 1:
-            return [(name, param, [param]) for name, param in bucket]
-
-        dtype = bucket[0][1].dtype
-        device = bucket[0][1].device
-        if any(param.dtype != dtype for _, param in bucket):
-            raise ValueError("bucket tensors must share the same dtype")
-
-        per_rank_bucket_size_bytes = self._get_collective_bucket_size_bytes(group_size)
-        max_chunk_numel = max(
-            1, per_rank_bucket_size_bytes // bucket[0][1].element_size()
-        )
-
-        flat_shards = [param.reshape(-1) for _, param in bucket]
-        numel_per_tensor = [flat.numel() for flat in flat_shards]
-        gathered_shards_by_rank = [
-            [torch.empty_like(param) for _, param in bucket] for _ in range(group_size)
-        ]
-        gathered_flat_views = [
-            [tensor.view(-1) for tensor in rank_shards]
-            for rank_shards in gathered_shards_by_rank
-        ]
-
-        send_buffer = torch.empty(max_chunk_numel, dtype=dtype, device=device)
-        recv_buffer = torch.empty(
-            group_size * max_chunk_numel, dtype=dtype, device=device
-        )
-
-        tensor_idx = 0
-        tensor_offset = 0
-        while tensor_idx < len(bucket):
-            chunk_segments = []
-            chunk_numel = 0
-            while tensor_idx < len(bucket) and chunk_numel < max_chunk_numel:
-                available = numel_per_tensor[tensor_idx] - tensor_offset
-                take_numel = min(available, max_chunk_numel - chunk_numel)
-                send_buffer[chunk_numel : chunk_numel + take_numel].copy_(
-                    flat_shards[tensor_idx][tensor_offset : tensor_offset + take_numel]
-                )
-                chunk_segments.append((tensor_idx, tensor_offset, chunk_numel, take_numel))
-                chunk_numel += take_numel
-                tensor_offset += take_numel
-                if tensor_offset == numel_per_tensor[tensor_idx]:
-                    tensor_idx += 1
-                    tensor_offset = 0
-
-            recv_view = recv_buffer[: group_size * chunk_numel]
-            torch.distributed.all_gather_into_tensor(
-                recv_view,
-                send_buffer[:chunk_numel],
-                group=group,
-            )
-
-            for rank in range(group_size):
-                rank_recv_view = recv_view[rank * chunk_numel : (rank + 1) * chunk_numel]
-                for (
-                    seg_tensor_idx,
-                    seg_tensor_offset,
-                    seg_chunk_offset,
-                    seg_numel,
-                ) in chunk_segments:
-                    gathered_flat_views[rank][seg_tensor_idx][
-                        seg_tensor_offset : seg_tensor_offset + seg_numel
-                    ].copy_(
-                        rank_recv_view[seg_chunk_offset : seg_chunk_offset + seg_numel]
-                    )
-
-        del send_buffer, recv_buffer
-
-        gathered_bucket = []
-        for idx, (name, param) in enumerate(bucket):
-            shards = [gathered_shards_by_rank[rank][idx] for rank in range(group_size)]
-            gathered_bucket.append((name, param, shards))
-        return gathered_bucket
-
-    def _all_gather_export_bucket(
-        self,
-        bucket: list[tuple[str, torch.Tensor]],
-        group: torch.distributed.ProcessGroup,
-        group_size: int,
-    ) -> list[tuple[str, torch.Tensor, list[torch.Tensor]]] | None:
-        return self._collect_export_bucket(
-            bucket=bucket,
-            group=group,
-            group_size=group_size,
-        )
-
-    def _iter_model_chunks(
-        self, models: list[torch.nn.Module]
-    ) -> Generator[tuple[str, torch.Tensor], None, None]:
-        for model in models:
-            existing_keys = set()
-            for name, param in model.named_parameters():
-                existing_keys.add(name)
-                yield name, param
-
-            # note
-            # there is a bug in megatron GPTModel
-            # decoder.layers[n].mlp.router.expert_bias" in GPTModel is not registered in named_parameter, but in state_dict().
-            # for now we patch it by adding those keys to extra_keys.
-            extra_keys = [
-                x
-                for x in model.state_dict().keys()
-                if "_extra_state" not in x
-                and "expert_bias" in x
-                and x not in existing_keys
-            ]
-            for name in extra_keys:
-                yield name, model.state_dict()[name].to(torch.cuda.current_device())
-
-    def _build_export_weight_entries(
-        self, models: list[torch.nn.Module]
-    ) -> list[tuple[int, str]]:
-        weight_entries = []
-        for vpp_rank, model in enumerate(models):
-            existing_keys = set()
-            for name, _ in model.named_parameters():
-                existing_keys.add(name)
-                weight_entries.append((vpp_rank, name))
-            extra_keys = [
-                x
-                for x in model.state_dict().keys()
-                if "_extra_state" not in x
-                and "expert_bias" in x
-                and x not in existing_keys
-            ]
-            for name in extra_keys:
-                weight_entries.append((vpp_rank, name))
-        return weight_entries
-
-    def _get_export_local_to_global_maps(
-        self, models: list[torch.nn.Module]
-    ) -> list[dict[str, str]]:
-        return [
-            self._weight_name_mapping_mcore_local_to_global(model, consider_ep=False)
-            for model in models
-        ]
-
     def _iter_local_stage_named_params(
         self, models: list[torch.nn.Module]
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
-        model_chunk_generator = self._iter_model_chunks(models)
-        local_to_global_maps = self._get_export_local_to_global_maps(models)
-        for iter_vpp_rank, iter_name in self._build_export_weight_entries(models):
-            local_to_global_map = local_to_global_maps[iter_vpp_rank]
-            try:
-                _, param = next(model_chunk_generator)
-            except StopIteration:
-                _, param = None, None
-            yield local_to_global_map[iter_name], param
-
-    def _iter_pp_bucket_broadcast_outputs(
-        self,
-        bucket: list[
-            tuple[str, tuple[int, ...], str, bool | None, int | None, int, torch.Tensor | None]
-        ],
-        src_pp_rank: int,
-        bucket_size_bytes: int,
-    ) -> Generator[tuple[str, torch.Tensor], None, None]:
-        if not bucket:
-            return
-
-        dtype = getattr(torch, bucket[0][2])
-        element_size = torch.empty((), dtype=dtype).element_size()
-        max_chunk_numel = max(1, bucket_size_bytes // element_size)
-        src_global_rank = torch.distributed.get_global_rank(
-            group=self.mpu.pp_group, group_rank=src_pp_rank
-        )
-
-        if self.mpu.pp_rank == src_pp_rank:
-            output_tensors = [tensor for _, _, _, _, _, _, tensor in bucket]
-            if any(tensor is None for tensor in output_tensors):
-                raise RuntimeError("source pp bucket is missing local tensors")
-            flat_views = [tensor.reshape(-1) for tensor in output_tensors]
-        else:
-            output_tensors = []
-            flat_views = []
-            for name, shape, _, tensor_parallel, partition_dim, _, _ in bucket:
-                tensor = torch.empty(
-                    size=shape,
-                    dtype=dtype,
-                    device=torch.cuda.current_device(),
-                )
-                if tensor_parallel is not None:
-                    tensor.tensor_model_parallel = tensor_parallel
-                if partition_dim is not None:
-                    tensor.partition_dim = partition_dim
-                output_tensors.append(tensor)
-                flat_views.append(tensor.view(-1))
-
-        buffer = torch.empty(
-            max_chunk_numel, dtype=dtype, device=torch.cuda.current_device()
-        )
-        tensor_idx = 0
-        tensor_offset = 0
-        while tensor_idx < len(bucket):
-            chunk_segments = []
-            chunk_numel = 0
-            while tensor_idx < len(bucket) and chunk_numel < max_chunk_numel:
-                available = bucket[tensor_idx][5] - tensor_offset
-                take_numel = min(available, max_chunk_numel - chunk_numel)
-                if self.mpu.pp_rank == src_pp_rank:
-                    buffer[chunk_numel : chunk_numel + take_numel].copy_(
-                        flat_views[tensor_idx][tensor_offset : tensor_offset + take_numel]
-                    )
-                chunk_segments.append((tensor_idx, tensor_offset, chunk_numel, take_numel))
-                chunk_numel += take_numel
-                tensor_offset += take_numel
-                if tensor_offset == bucket[tensor_idx][5]:
-                    tensor_idx += 1
-                    tensor_offset = 0
-
-            chunk_view = buffer[:chunk_numel]
-            torch.distributed.broadcast(
-                tensor=chunk_view,
-                src=src_global_rank,
-                group=self.mpu.pp_group,
-            )
-
-            if self.mpu.pp_rank == src_pp_rank:
-                continue
-
-            for seg_tensor_idx, seg_tensor_offset, seg_chunk_offset, seg_numel in chunk_segments:
-                flat_views[seg_tensor_idx][
-                    seg_tensor_offset : seg_tensor_offset + seg_numel
-                ].copy_(chunk_view[seg_chunk_offset : seg_chunk_offset + seg_numel])
-
-        del buffer
-        del flat_views
-
-        for i in range(len(bucket)):
-            name = bucket[i][0]
-            tensor = output_tensors[i]
-            output_tensors[i] = None
-            yield name, tensor
+        local_to_global_maps = [
+            self._weight_name_mapping_mcore_local_to_global(model, consider_ep=False)
+            for model in models
+        ]
+        for vpp_rank, name, param in iter_model_named_params(models):
+            yield local_to_global_maps[vpp_rank][name], param
 
     def _iter_all_ranks_named_params(
         self, models: list[torch.nn.Module], is_distributed: bool
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
+        """
+        Iterate over all named parameters of all models, and yield the name and parameter.
+        If using pp, all_gather the named parameters across all pp ranks.
+        """
         if not is_distributed or self.mpu.pp_size <= 1:
             yield from self._iter_local_stage_named_params(models)
             return
@@ -833,9 +609,11 @@ class Bridge(ABC):
 
             def _flush_pp_bucket():
                 nonlocal pp_bucket, pp_bucket_bytes
-                yield from self._iter_pp_bucket_broadcast_outputs(
+                yield from bucketed_pp_broadcast(
                     pp_bucket,
                     src_pp_rank=iter_pp_rank,
+                    pp_group=self.mpu.pp_group,
+                    pp_rank=self.mpu.pp_rank,
                     bucket_size_bytes=pp_bucket_limit_bytes,
                 )
                 pp_bucket = []
@@ -890,15 +668,6 @@ class Bridge(ABC):
 
             yield from _flush_pp_bucket()
 
-    def _iter_converted_export_outputs(
-        self, name: str, tensor: torch.Tensor
-    ) -> Generator[tuple[str, torch.Tensor], None, None]:
-        converted_names, converted_params = self._weight_to_hf_format(name, tensor)
-        if len(converted_names) == 0:
-            return
-        for out_name, out_param in zip(converted_names, converted_params):
-            yield out_name, out_param.detach()
-
     def _iter_merged_bucket_outputs(
         self,
         gathered_bucket: list[tuple[str, torch.Tensor, list[torch.Tensor]]] | None,
@@ -910,7 +679,8 @@ class Bridge(ABC):
             gathered_bucket[i] = None  # type: ignore[call-overload]
             merged = self._weight_merge_across_tp(bname, shards, bparam)
             del shards, bparam
-            yield from self._iter_converted_export_outputs(bname, merged)
+            for out_name, out_param in zip(*self._weight_to_hf_format(bname, merged)):
+                yield out_name, out_param.detach()
             del merged
 
     def _iter_bucketed_export_outputs(
@@ -1047,7 +817,8 @@ class Bridge(ABC):
                 continue
 
             yield from _flush_tp_bucket()
-            yield from self._iter_converted_export_outputs(name, param)
+            for out_name, out_param in zip(*self._weight_to_hf_format(name, param)):
+                yield out_name, out_param.detach()
 
         # last clean up
         yield from _flush_ep_bucket()
@@ -1065,26 +836,24 @@ class Bridge(ABC):
             torch.distributed.is_available() and torch.distributed.is_initialized()
         )
 
+        groups_by_mode = {
+            "tp": (self.mpu.tp_group, self.mpu.tp_size),
+            "ep": (self.mpu.ep_group, self.mpu.ep_size),
+            "etp": (self.mpu.etp_group, self.mpu.etp_size),
+        }
+
         def _collect_bucket(bucket: list[tuple[str, torch.Tensor]], parallel_mode: str):
-            if parallel_mode == "tp":
-                return self._all_gather_export_bucket(
-                    bucket,
-                    self.mpu.tp_group,
-                    self.mpu.tp_size,
-                )
-            if parallel_mode == "ep":
-                return self._all_gather_export_bucket(
-                    bucket,
-                    self.mpu.ep_group,
-                    self.mpu.ep_size,
-                )
-            if parallel_mode == "etp":
-                return self._all_gather_export_bucket(
-                    bucket,
-                    self.mpu.etp_group,
-                    self.mpu.etp_size,
-                )
-            raise ValueError(f"Unsupported parallel_mode: {parallel_mode}")
+            if parallel_mode not in groups_by_mode:
+                raise ValueError(f"Unsupported parallel_mode: {parallel_mode}")
+            group, group_size = groups_by_mode[parallel_mode]
+            return bucketed_all_gather_into_tensor(
+                bucket,
+                group=group,
+                group_size=group_size,
+                per_rank_bucket_size_bytes=self._get_collective_bucket_size_bytes(
+                    group_size
+                ),
+            )
         # broadcast inside pp group
         named_params = self._iter_all_ranks_named_params(models, is_distributed)
         # allgather inside tp/ep/etp groups
