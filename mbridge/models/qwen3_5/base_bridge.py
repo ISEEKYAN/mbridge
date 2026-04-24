@@ -981,6 +981,7 @@ class Qwen3_5VlBaseBridge(VLMBridge):
                 image_token_id=self.hf_config.image_token_id,
                 video_token_id=self.hf_config.video_token_id,
                 vision_start_token_id=self.hf_config.vision_start_token_id,
+                vp_stage=vp_stage,
             )
 
             for callback in post_model_creation_callbacks:

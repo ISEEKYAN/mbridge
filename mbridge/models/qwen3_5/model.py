@@ -1,3 +1,4 @@
+import inspect
 import logging
 from typing import Optional
 
@@ -145,6 +146,7 @@ class Qwen3_5VLModel(MegatronModule):
         image_token_id: int = 151655,
         video_token_id: int = 151656,
         vision_start_token_id: int = 151652,
+        vp_stage: Optional[int] = None,
         rope_scaling: bool = False,
     ) -> None:
         super().__init__(config=language_transformer_config)
@@ -179,7 +181,7 @@ class Qwen3_5VLModel(MegatronModule):
             self._hook_fp32_rotary_emb(self.vision_model)
             self._hook_vision_params_avg_grad_across_tp(self.vision_model)
 
-        self.language_model = Qwen3_5GPTModel(
+        language_model_kwargs = dict(
             config=language_transformer_config,
             transformer_layer_spec=language_transformer_layer_spec,
             vocab_size=language_vocab_size,
@@ -196,6 +198,10 @@ class Qwen3_5VLModel(MegatronModule):
             mtp_block_spec=language_mtp_block_spec,
             scatter_embedding_sequence_parallel=False,
         )
+        if "vp_stage" in inspect.signature(GPTModel.__init__).parameters:
+            language_model_kwargs["vp_stage"] = vp_stage
+
+        self.language_model = Qwen3_5GPTModel(**language_model_kwargs)
 
     @staticmethod
     def _hook_fp32_rotary_emb(module: torch.nn.Module):
