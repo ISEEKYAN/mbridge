@@ -131,7 +131,10 @@ class Qwen3OmniBaseBridge(VLMBridge):
         return convert_names
 
     def _weight_to_hf_format(
-        self, mcore_weights_name: str, mcore_weights: torch.Tensor
+        self,
+        mcore_weights_name: str,
+        mcore_weights: torch.Tensor,
+        keep_stacked_experts: bool = True,
     ) -> tuple[list[str], list[torch.Tensor]]:
         """
         Export MCore weights to Hugging Face format.
@@ -142,6 +145,9 @@ class Qwen3OmniBaseBridge(VLMBridge):
         Args:
             mcore_weights_name: MCore weight name
             mcore_weights: MCore weight tensor
+            keep_stacked_experts: Accepted for signature compatibility with the base
+                class. This bridge does not currently differentiate behavior; the
+                parameter is forwarded but otherwise unused.
 
         Returns:
             tuple: (hf_names, hf_weights) - lists of Hugging Face weight names and tensors

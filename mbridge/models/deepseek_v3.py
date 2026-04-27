@@ -311,7 +311,10 @@ class DeepseekV3Bridge(LLMBridge):
             )
 
     def _weight_to_hf_format(
-        self, mcore_weights_name: str, mcore_weights: torch.Tensor
+        self,
+        mcore_weights_name: str,
+        mcore_weights: torch.Tensor,
+        keep_stacked_experts: bool = True,
     ) -> tuple[list[str], list[torch.Tensor]]:
 
         # note: only support one mtp layer for now
@@ -322,7 +325,11 @@ class DeepseekV3Bridge(LLMBridge):
         ):
             hf_names = self._SHARED_STATE_DICT_MAPPING[mcore_weights_name]
             return hf_names, [mcore_weights] * len(hf_names)
-        return super()._weight_to_hf_format(mcore_weights_name, mcore_weights)
+        return super()._weight_to_hf_format(
+            mcore_weights_name,
+            mcore_weights,
+            keep_stacked_experts=keep_stacked_experts,
+        )
 
     def _get_safetensor_io(self, weights_path: str):
         if self.dtype == torch.bfloat16:

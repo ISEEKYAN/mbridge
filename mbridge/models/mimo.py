@@ -135,10 +135,17 @@ class MimoBridge(Qwen2Bridge):
         return weight
 
     def _weight_to_hf_format(
-        self, mcore_weights_name: str, mcore_weights: torch.Tensor
+        self,
+        mcore_weights_name: str,
+        mcore_weights: torch.Tensor,
+        keep_stacked_experts: bool = True,
     ) -> tuple[list[str], list[torch.Tensor]]:
         """Swap halves back when exporting eh_proj weights to HuggingFace format."""
         if mcore_weights_name.endswith("eh_proj.weight"):
             first_half, second_half = mcore_weights.chunk(2, dim=1)
             mcore_weights = torch.cat([second_half, first_half], dim=1)
-        return super()._weight_to_hf_format(mcore_weights_name, mcore_weights)
+        return super()._weight_to_hf_format(
+            mcore_weights_name,
+            mcore_weights,
+            keep_stacked_experts=keep_stacked_experts,
+        )

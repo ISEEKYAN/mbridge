@@ -352,7 +352,7 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         self,
         mcore_weights_name: str,
         mcore_weights: torch.Tensor,
-        keep_stacked_experts: bool = False, # it is default to False now
+        keep_stacked_experts: bool = True,
     ) -> tuple[list[str], list[torch.Tensor]]:
         """
         Export MCore weights to Hugging Face format.
@@ -363,9 +363,10 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         Args:
             mcore_weights_name: MCore weight name
             mcore_weights: MCore weight tensor
-            keep_stacked_experts: If True, buffer per-expert MoE weights and emit a single fused
-                tensor (shape `[num_experts, ...]`) keyed by the HF fused name. If False
-                (default), emit each expert as a separate HF key
+            keep_stacked_experts: If True (default), buffer per-expert MoE weights and emit a
+                single fused tensor (shape ``[num_experts, ...]``) keyed by the HF fused name,
+                matching the official HF checkpoint layout. If False, emit each expert as a
+                separate HF key
                 ``...mlp.experts.{expert_id}.{fused_proj_name}.weight``.
 
         Returns:
