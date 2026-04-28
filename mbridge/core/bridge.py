@@ -854,6 +854,16 @@ class Bridge(ABC):
         models: list[torch.nn.Module],
         keep_stacked_experts: bool = True,
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
+        """
+        Export weights from models.
+
+        Args:
+            models: List of models to export weights from
+            keep_stacked_experts: If True (default), keep hf format of stacked experts; else emit each expert as its own hf key, yet keep gate_up_proj fused
+
+        Returns:
+            Generator[tuple[str, torch.Tensor]]: Generator of (name, tensor) tuples.
+        """
         assert (
             len(self.export_weights_buff) == 0
         ), f"should be empty {self.export_weights_buff=}"
