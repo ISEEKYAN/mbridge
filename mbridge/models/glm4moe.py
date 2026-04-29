@@ -59,6 +59,11 @@ class GLM4MoEBridge(Qwen2MoEBridge):
                     f"model.layers.{num_layers+mtp_layer_index}",
                     name,
                 )
+                name_ = re.sub(
+                     r"^mtp\.layers.\d+.mtp_model_layer",
+                    f"model.layers.{num_layers+mtp_layer_index}",
+                    name_,
+                    )
                 convert_names = self._weight_name_mapping_mlp(name_)
                 break
             elif "self_attention" in name:
@@ -68,6 +73,12 @@ class GLM4MoEBridge(Qwen2MoEBridge):
                     f"model.layers.{num_layers+mtp_layer_index}",
                     name,
                 )
+                name_ = re.sub(
+                    r"^mtp\.layers.\d+.mtp_model_layer",
+                    f"model.layers.{num_layers+mtp_layer_index}",
+                    name_,
+                )
+
                 convert_names = self._weight_name_mapping_attention(name_)
                 break
 
