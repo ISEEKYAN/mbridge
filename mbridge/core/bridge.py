@@ -1207,9 +1207,13 @@ class Bridge(ABC):
 
         if mcore_weights_name in self._DIRECT_MAPPING:
             return [self._DIRECT_MAPPING[mcore_weights_name]]
-
+        layer_number = mcore_weights_name.split(".")[2]
         if ".self_attention." in mcore_weights_name:
             return self._weight_name_mapping_attention(mcore_weights_name)
+        elif "input_layernorm" in mcore_weights_name:
+            return [f"model.layers.{layer_number}.input_layernorm.weight"]
+        elif "pre_mlp_layernorm" in mcore_weights_name:
+            return [f"model.layers.{layer_number}.post_attention_layernorm.weight"]
         elif "mlp" in mcore_weights_name:
             return self._weight_name_mapping_mlp(mcore_weights_name)
         else:
