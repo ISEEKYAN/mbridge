@@ -162,7 +162,8 @@ class SafeTensorIO:
             if left_keys:
                 to_save = {k: states[k] for k in left_keys}
                 safetensor_file = os.path.join(new_hf_dir, filename)
-                save_file(to_save, safetensor_file)
+                if not os.path.exists(safetensor_file):
+                    save_file(to_save, safetensor_file)
                 for k in left_keys:
                     del states[k]
 
