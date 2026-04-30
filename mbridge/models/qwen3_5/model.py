@@ -108,6 +108,8 @@ class Qwen3_5GPTModel(GPTModel):
         Called once by ``Qwen3_5VLModel.forward`` on the first forward pass, after
         the data format (THD vs BSHD) is known.  Subsequent calls are no-ops.
         """
+        if "embedding" not in self.__dict__:
+            return
         wrapper = object.__getattribute__(self, "embedding")  # bypasses __getattr__
         if not isinstance(wrapper, _SPScatterEmbeddingWrapper):
             return
@@ -469,37 +471,51 @@ class Qwen3_5VLModel(MegatronModule):
         # padded seq_len is not guaranteed to be divisible by tp_size.
         # When packed_seq_params is None, scatter the padded input_ids along the sequence dim
         # so each TP rank holds seq_len // tp_size tokens, consistent with SP hidden_states.
-        if packed_seq_params is not None:
-            # THD mode: use packed input_ids whose total token count is aligned to tp_size.
-            if input_ids_packed is not None:
-                sp_input_ids = input_ids_packed
-            elif attention_mask_orig is not None:
-                # pre_process=False (non-first PP stage): input_ids_packed was not generated
-                # in the pre_process block above, but MTP still needs packed input_ids whose
-                # token count matches the THD hidden_states.  Re-pack here using the original
-                # attention_mask (before it was cleared to None for the decoder).
-                sp_input_ids, _ = preprocess_packed_seqs(
-                    input_ids, attention_mask_orig, pre_process=True
-                )
+        
+        if not self.language_model.config.mtp_num_layers:
+            # MTP is not enabled; skip all input_ids preparation for MTP.
+            sp_input_ids = None
+        else:
+            if packed_seq_params is not None:
+                # THD mode: use packed input_ids whose total token count is aligned to tp_size.
+                if input_ids_packed is not None:
+                    sp_input_ids = input_ids_packed
+                elif attention_mask_orig is not None:
+                    # pre_process=False (non-first PP stage): input_ids_packed was not generated
+                    # in the pre_process block above, but MTP still needs packed input_ids whose
+                    # token count matches the THD hidden_states.  Re-pack here using the original
+                    # attention_mask (before it was cleared to None for the decoder).
+                    sp_input_ids, _ = preprocess_packed_seqs(
+                        input_ids, attention_mask_orig, pre_process=True
+                    )
+                else:
+                    sp_input_ids = input_ids
+
+                # THD mode: embedding wrapper must scatter (do_scatter=True).
+                self.language_model.init_mtp_embedding_scatter(do_scatter=True)
             else:
                 sp_input_ids = input_ids
-            # THD mode: embedding wrapper must scatter (do_scatter=True).
-            self.language_model.init_mtp_embedding_scatter(do_scatter=True)
-        else:
-            sp_input_ids = input_ids
-            if input_ids is not None and combined_embeddings is not None:
-                # BSHD mode: input_ids may arrive already SP-scattered (shape [B, S/TP])
-                # or still full-length (shape [B, S]).  combined_embeddings has already been
-                # scattered by this point, so its dim-0 equals the SP-local sequence length.
-                # Compare input_ids.shape[1] with combined_embeddings.shape[0]:
-                #   - not equal → input_ids is full [B, S]; scatter it now to [B, S/TP]
-                #   - equal     → input_ids is already [B, S/TP]; skip scatter
-                if input_ids.shape[1] != combined_embeddings.shape[0]:
-                    sp_input_ids = input_ids.permute(1, 0).contiguous()
-                    sp_input_ids = tensor_parallel.scatter_to_sequence_parallel_region(sp_input_ids)
-                    sp_input_ids = sp_input_ids.permute(1, 0).contiguous()
-                # sp_input_ids is now [B, S/TP]: embedding wrapper must NOT scatter again.
-                self.language_model.init_mtp_embedding_scatter(do_scatter=False)
+
+                if input_ids is not None and combined_embeddings is not None:
+                    # BSHD mode: input_ids may arrive already SP-scattered (shape [B, S/TP])
+                    # or still full-length (shape [B, S]).  combined_embeddings has already been
+                    # CP-split and TP-scattered by this point, so its dim-0 equals S/(TP*CP*2).
+                    # We need sp_input_ids to be [B, S/(TP*CP*2)] so that MTP embedding output
+                    # [S/(TP*CP*2), B, H] matches hidden_states [S/(TP*CP*2), B, H].
+                    # Step 1: TP scatter along seq dim: [B, S] -> [B, S/TP]
+                    # Step 2: CP split along seq dim:   [B, S/TP] -> [B, S/(TP*CP*2)]
+                    if input_ids.shape[1] != combined_embeddings.shape[0]:
+                        sp_input_ids = input_ids.permute(1, 0).contiguous()
+                        sp_input_ids = tensor_parallel.scatter_to_sequence_parallel_region(sp_input_ids)
+                        if cp_size > 1:
+                            # CP split: [S/TP, B] -> [S/(TP*CP*2), B]
+                            sp_input_ids = split_data_cp_rank(sp_input_ids, cp_size, seq_dim=0)
+                        sp_input_ids = sp_input_ids.permute(1, 0).contiguous()
+
+                    # sp_input_ids is now [B, S/(TP*CP*2)]: embedding wrapper must NOT scatter again.
+                    self.language_model.init_mtp_embedding_scatter(do_scatter=False)
+                    wrapper_after = object.__getattribute__(self.language_model, "embedding") if "embedding" in self.language_model.__dict__ else None
+
 
         return self.language_model(
             input_ids=sp_input_ids,
