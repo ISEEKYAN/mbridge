@@ -72,6 +72,7 @@ def get_image_sample_for_forward(hf_model_path):
 
     return inputs
 
+
 def get_sample_for_forward(hf_model_path, sample_type="image"):
     if sample_type == "image":
         return get_image_sample_for_forward(hf_model_path)
@@ -274,8 +275,12 @@ def main():
 
     sample = get_sample_for_forward(hf_model_path, args.sample_type)
     input_mask = sample["input_ids"] != bridge.hf_config.image_token_id
-    input_mask = input_mask & (sample["input_ids"] != bridge.hf_config.vision_end_token_id)
-    input_mask = input_mask & (sample["input_ids"] != bridge.hf_config.vision_start_token_id)
+    input_mask = input_mask & (
+        sample["input_ids"] != bridge.hf_config.vision_end_token_id
+    )
+    input_mask = input_mask & (
+        sample["input_ids"] != bridge.hf_config.vision_start_token_id
+    )
     input_mask = F.pad(input_mask[:, 1:], (0, 1, 0, 0), value=True)
 
     real_seq_length = sample["input_ids"].shape[-1]

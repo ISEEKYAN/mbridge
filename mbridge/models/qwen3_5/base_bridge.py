@@ -5,19 +5,20 @@ from copy import deepcopy
 from typing import Callable, Optional
 
 import torch
-
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec,
+    is_linear_attention_variant,
+)
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_with_transformer_engine_spec,
     get_gpt_mtp_block_spec,
 )
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-                get_transformer_block_with_experimental_attention_variant_spec,
-                is_linear_attention_variant,
-            )
+
 from mbridge.core import VLMBridge
 from mbridge.core.util import unwrap_model
 from mbridge.models.qwen3_5.qwen3_5_safetensor import Qwen3_5SafeTensorIO
 from mbridge.utils.hf_config import get_hf_rope_scaling
+
 
 class Qwen3_5VlBaseBridge(VLMBridge):
 
@@ -59,7 +60,7 @@ class Qwen3_5VlBaseBridge(VLMBridge):
                     **extra_args,
                 )
             )
-            
+
         else:
             raise ImportError(
                 "experimental_attention_variant is not supported, please megatron-lm dev branch"
@@ -77,37 +78,44 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         if self.has_vp_stage:
             extra_args["vp_stage"] = vp_stage
 
-        mtp_layer_spec = (
-            get_transformer_block_with_experimental_attention_variant_spec(
-                config,
-                **extra_args,
-            )
+        mtp_layer_spec = get_transformer_block_with_experimental_attention_variant_spec(
+            config,
+            **extra_args,
         )
 
         mtp_block_spec = get_gpt_mtp_block_spec(
-                            self.config,
-                            mtp_layer_spec,
-                            use_transformer_engine=True,
-                            vp_stage=vp_stage,
-                        )
+            self.config,
+            mtp_layer_spec,
+            use_transformer_engine=True,
+            vp_stage=vp_stage,
+        )
         return mtp_block_spec
 
     def _build_mtp_config(self):
         # Add MTP configuration if present
         mtp_args = {}
-        if hasattr(self.hf_config, "num_nextn_predict_layers") and \
-                self.hf_config.num_nextn_predict_layers is not None:
+        if (
+            hasattr(self.hf_config, "num_nextn_predict_layers")
+            and self.hf_config.num_nextn_predict_layers is not None
+        ):
             mtp_args["mtp_num_layers"] = self.hf_config.num_nextn_predict_layers
-            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get("mtp_loss_scaling_factor", 0.1)
-        elif hasattr(self.hf_config.text_config, "mtp_num_hidden_layers") and \
-                    self.hf_config.text_config.mtp_num_hidden_layers is not None and \
-                    self.hf_config.text_config.mtp_num_hidden_layers > 0:
-            mtp_args["mtp_num_layers"] = self.hf_config.text_config.mtp_num_hidden_layers
-            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get("mtp_loss_scaling_factor", 0.1)
+            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get(
+                "mtp_loss_scaling_factor", 0.1
+            )
+        elif (
+            hasattr(self.hf_config.text_config, "mtp_num_hidden_layers")
+            and self.hf_config.text_config.mtp_num_hidden_layers is not None
+            and self.hf_config.text_config.mtp_num_hidden_layers > 0
+        ):
+            mtp_args["mtp_num_layers"] = (
+                self.hf_config.text_config.mtp_num_hidden_layers
+            )
+            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get(
+                "mtp_loss_scaling_factor", 0.1
+            )
 
         print(f"qwen3.5 model --- mtp_args:{mtp_args}")
         return mtp_args
-
 
     def _adjust_mapping_for_shared_weights(self):
         if getattr(self.hf_config.text_config, "tie_word_embeddings", False):
@@ -295,7 +303,6 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         ],
     }
 
-
     def _convert_mtp_param(self, name: str) -> list[str]:
         assert self.config.mtp_num_layers == 1, "only support one mtp layer for now"
 
@@ -321,8 +328,6 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         if name not in self._MTP_MAPPING:
             raise NotImplementedError(f"Unsupported MTP parameter name: {name}")
         return self._MTP_MAPPING[name]
-
-
 
     def _weight_name_mapping_mcore_to_hf(self, mcore_weights_name: str) -> list[str]:
         """
@@ -390,7 +395,7 @@ class Qwen3_5VlBaseBridge(VLMBridge):
 
                 return [hf_names[0]], [mcore_weights[: self.vocab_size]]
 
-            if 'mtp' in mcore_weights_name:
+            if "mtp" in mcore_weights_name:
                 return [hf_names[0]], [mcore_weights]
 
             # moe
@@ -973,12 +978,12 @@ class Qwen3_5VlBaseBridge(VLMBridge):
                 language_max_sequence_length=self.hf_config.text_config.max_position_embeddings,
                 hf_config=self.hf_config,
                 hf_vision_cls=self.HfVisionClass,
-                language_rotary_percent=get_hf_rope_scaling(self.hf_config.text_config).get(
-                    "partial_rotary_factor", 0.25
-                ),
-                language_rotary_base=get_hf_rope_scaling(self.hf_config.text_config).get(
-                    "rope_theta", 10000000
-                ),
+                language_rotary_percent=get_hf_rope_scaling(
+                    self.hf_config.text_config
+                ).get("partial_rotary_factor", 0.25),
+                language_rotary_base=get_hf_rope_scaling(
+                    self.hf_config.text_config
+                ).get("rope_theta", 10000000),
                 position_embedding_type="mrope",
                 pre_process=pre_process,
                 post_process=post_process,

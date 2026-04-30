@@ -3,9 +3,10 @@
 # Copyright 2025 Bytedance Ltd. and/or its affiliates
 
 import inspect
-import re
 import math
-from typing import Callable,  Optional
+import re
+from typing import Callable, Optional
+
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -13,8 +14,8 @@ from megatron.core.transformer import TransformerConfig
 
 from ..core import register_model
 from ..models import Qwen2Bridge, Qwen2MoEBridge
-from ..utils.layer import translate_first_k_dense_replace_to_moe_layer_freq
 from ..utils.hf_config import get_hf_rope_theta
+from ..utils.layer import translate_first_k_dense_replace_to_moe_layer_freq
 
 
 @register_model("glm4_moe")
@@ -67,10 +68,10 @@ class GLM4MoEBridge(Qwen2MoEBridge):
                     name,
                 )
                 name_ = re.sub(
-                     r"^mtp\.layers.\d+.mtp_model_layer",
+                    r"^mtp\.layers.\d+.mtp_model_layer",
                     f"model.layers.{num_layers+mtp_layer_index}",
                     name_,
-                    )
+                )
                 convert_names = self._weight_name_mapping_mlp(name_)
                 break
             elif "self_attention" in name:
@@ -200,7 +201,7 @@ class GLM4MoEBridge(Qwen2MoEBridge):
             AssertionError: If normalization is not RMSNorm
         """
         assert (
-                self.config.normalization == "RMSNorm"
+            self.config.normalization == "RMSNorm"
         ), "only RMSNorm is supported for now"
         # check if get_gpt_decoder_block_spec has vp_stage parameter
         sig = inspect.signature(get_gpt_decoder_block_spec)
@@ -214,18 +215,24 @@ class GLM4MoEBridge(Qwen2MoEBridge):
         return transformer_layer_spec
 
     def _get_mtp_block_spec(self, vp_stage: Optional[int] = None):
-        mtp_num_layers =  self.config.mtp_num_layers if self.config.mtp_num_layers else 0
+        mtp_num_layers = self.config.mtp_num_layers if self.config.mtp_num_layers else 0
 
         try:
-            from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec, get_gpt_decoder_layer_specs
-            from megatron.core.transformer.multi_token_prediction import mtp_on_this_rank
+            from megatron.core.models.gpt.gpt_layer_specs import (
+                get_gpt_decoder_layer_specs,
+                get_gpt_mtp_block_spec,
+            )
+            from megatron.core.transformer.multi_token_prediction import (
+                mtp_on_this_rank,
+            )
         except:
             return None
 
-        if mtp_num_layers > 0 and mtp_on_this_rank(self.config, ignore_virtual=False, vp_stage=vp_stage):
+        if mtp_num_layers > 0 and mtp_on_this_rank(
+            self.config, ignore_virtual=False, vp_stage=vp_stage
+        ):
             decoder_layer_specs = get_gpt_decoder_layer_specs(
-                self.config,
-                use_transformer_engine=True
+                self.config, use_transformer_engine=True
             )
             mtp_transformer_layer_spec = decoder_layer_specs[-1]
             # Use spec of the last layer in decoder block as spec of the transformer layer in MTP
@@ -241,7 +248,7 @@ class GLM4MoEBridge(Qwen2MoEBridge):
         return mtp_block_spec
 
     def _model_provider(
-            self, post_model_creation_callbacks: list[Callable[[torch.nn.Module], None]]
+        self, post_model_creation_callbacks: list[Callable[[torch.nn.Module], None]]
     ):
         """
         Creates and returns a model provider function.

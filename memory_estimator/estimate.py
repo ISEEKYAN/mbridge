@@ -1,5 +1,6 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 """Pretrain GPT."""
+
 import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)

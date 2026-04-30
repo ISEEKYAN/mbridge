@@ -1,9 +1,9 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
+from mbridge.utils.hf_config import get_hf_rope_scaling, get_hf_rope_theta
+
 from ..core import LLMBridge, register_model
 from ..core.bridge import Bridge, register_model
-
-from mbridge.utils.hf_config import get_hf_rope_theta, get_hf_rope_scaling
 
 
 @register_model("llama")

@@ -13,7 +13,8 @@ from megatron.core.transformer import MLATransformerConfig
 from megatron.core.transformer.enums import AttnBackend
 
 from ..core import LLMBridge, register_model
-from ..utils.hf_config import get_hf_rope_theta, get_hf_rope_scaling
+from ..utils.hf_config import get_hf_rope_scaling, get_hf_rope_theta
+
 
 @register_model("deepseek_v3")
 class DeepseekV3Bridge(LLMBridge):
@@ -122,7 +123,9 @@ class DeepseekV3Bridge(LLMBridge):
         mtp_args = {}
         if "num_nextn_predict_layers" in hf_config:
             mtp_args["mtp_num_layers"] = hf_config.num_nextn_predict_layers
-            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get("mtp_loss_scaling_factor", 0.1)
+            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get(
+                "mtp_loss_scaling_factor", 0.1
+            )
 
         base_config = {
             "attention_backend": AttnBackend.fused,

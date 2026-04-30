@@ -1,9 +1,11 @@
 from .layer import LinearForLastLayer
 
+
 def unwrap_language_model(model):
     if hasattr(model, "language_model"):
         return model.language_model
     return model
+
 
 def make_value_model(model, pre_process, post_process, config, hf_config):
     model = unwrap_language_model(model)

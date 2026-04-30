@@ -24,16 +24,23 @@ from mbridge import AutoBridge
 
 def get_sample_for_forward(hf_model_path):
     processor = Qwen3OmniMoeProcessor.from_pretrained(hf_model_path)
-    image_file = "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/demo/cars.jpg"
-    audio_file = "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/demo/cough.wav"
-    
+    image_file = (
+        "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/demo/cars.jpg"
+    )
+    audio_file = (
+        "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/demo/cough.wav"
+    )
+
     conversation = [
         {
             "role": "user",
             "content": [
                 {"type": "image", "image": image_file},
                 {"type": "audio", "audio": audio_file},
-                {"type": "text", "text": "Describe those audios and images in shortly and respectively."},
+                {
+                    "type": "text",
+                    "text": "Describe those audios and images in shortly and respectively.",
+                },
             ],
         },
     ]
@@ -164,11 +171,13 @@ def mcore_fwd_fn(data_iterator, model):
 
     output_tensor = model(
         input_ids=sample["input_ids"].cuda(),
-        input_features= (
+        input_features=(
             sample["input_features"].cuda() if "input_features" in sample else None
         ),
-        feature_attention_mask = (
-            sample["feature_attention_mask"].cuda() if "feature_attention_mask" in sample else None
+        feature_attention_mask=(
+            sample["feature_attention_mask"].cuda()
+            if "feature_attention_mask" in sample
+            else None
         ),
         position_ids=None,
         attention_mask=None,
@@ -267,11 +276,19 @@ def main():
     sample = get_sample_for_forward(hf_model_path)
     input_mask = sample["input_ids"] != bridge.hf_config.image_token_id
     input_mask = input_mask & sample["input_ids"] != bridge.hf_config.video_token_id
-    input_mask = input_mask & (sample["input_ids"] != bridge.hf_config.vision_end_token_id)
-    input_mask = input_mask & (sample["input_ids"] != bridge.hf_config.vision_start_token_id)
+    input_mask = input_mask & (
+        sample["input_ids"] != bridge.hf_config.vision_end_token_id
+    )
+    input_mask = input_mask & (
+        sample["input_ids"] != bridge.hf_config.vision_start_token_id
+    )
     input_mask = input_mask & sample["input_ids"] != bridge.hf_config.audio_token_id
-    input_mask = input_mask & (sample["input_ids"] != bridge.hf_config.audio_end_token_id)
-    input_mask = input_mask & (sample["input_ids"] != bridge.hf_config.audio_start_token_id)
+    input_mask = input_mask & (
+        sample["input_ids"] != bridge.hf_config.audio_end_token_id
+    )
+    input_mask = input_mask & (
+        sample["input_ids"] != bridge.hf_config.audio_start_token_id
+    )
     input_mask = F.pad(input_mask[:, 1:], (0, 1, 0, 0), value=True)
 
     real_seq_length = sample["input_ids"].shape[-1]

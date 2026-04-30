@@ -36,9 +36,7 @@ try:
     from megatron.core.extensions.transformer_engine import fused_apply_rotary_pos_emb
 except ImportError:
     fused_apply_rotary_pos_emb = None
-from mbridge.models.qwen3_vl.rope_utils import (
-    Qwen3VLMultimodalRotaryEmbedding,
-)
+from mbridge.models.qwen3_vl.rope_utils import Qwen3VLMultimodalRotaryEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +61,12 @@ def get_rope_index(
         )
         video_grid_thw[:, 0] = 1
 
-    image_grid_thw_list = image_grid_thw.tolist() if image_grid_thw is not None else None
-    video_grid_thw_list = video_grid_thw.tolist() if video_grid_thw is not None else None
+    image_grid_thw_list = (
+        image_grid_thw.tolist() if image_grid_thw is not None else None
+    )
+    video_grid_thw_list = (
+        video_grid_thw.tolist() if video_grid_thw is not None else None
+    )
 
     mrope_position_deltas = []
     if input_ids is not None and (

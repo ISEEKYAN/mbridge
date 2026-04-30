@@ -23,7 +23,7 @@ from transformers.models.glm4v.modeling_glm4v import (
 
 from mbridge import AutoBridge
 from mbridge.models.glm4_vl.vl_mixin import VLMixin
-from mbridge.utils.hf_config import get_hf_rope_theta, get_hf_rope_scaling
+from mbridge.utils.hf_config import get_hf_rope_scaling, get_hf_rope_theta
 
 messages = [
     {

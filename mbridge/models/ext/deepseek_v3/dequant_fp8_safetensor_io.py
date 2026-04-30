@@ -33,7 +33,9 @@ class DequantFP8SafeTensorIO(SafeTensorIO):
             file_to_weight_map[filename].append(name)
         for filename, weight_names in file_to_weight_map.items():
             safetensor_file = os.path.join(hf_dir, filename)
-            with safe_open(safetensor_file, framework="pt", device=get_device_name()) as f:
+            with safe_open(
+                safetensor_file, framework="pt", device=get_device_name()
+            ) as f:
                 for name in weight_names:
                     weight = f.get_tensor(name)
                     scale_inv_name = f"{name}_scale_inv"
