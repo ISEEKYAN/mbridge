@@ -154,33 +154,6 @@ class LLMBridge(Bridge):
         )
         return transformer_layer_spec
 
-    def _get_mtp_block_spec(self, vp_stage: Optional[int] = None):
-        mtp_num_layers =  self.config.mtp_num_layers if self.config.mtp_num_layers else 0
-
-        try:
-            from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec, get_gpt_decoder_layer_specs
-            from megatron.core.transformer.multi_token_prediction import mtp_on_this_rank
-        except:
-            return None
-
-        if mtp_num_layers > 0 and mtp_on_this_rank(self.config, ignore_virtual=False, vp_stage=vp_stage):
-            decoder_layer_specs = get_gpt_decoder_layer_specs(
-                self.config,
-                use_transformer_engine=True
-            )
-            mtp_transformer_layer_spec = decoder_layer_specs[-1]
-            # Use spec of the last layer in decoder block as spec of the transformer layer in MTP
-            mtp_block_spec = get_gpt_mtp_block_spec(
-                self.config,
-                mtp_transformer_layer_spec,
-                use_transformer_engine=True,
-                vp_stage=vp_stage,
-            )
-        else:
-            mtp_block_spec = None
-
-        return mtp_block_spec
-
     def _model_provider(
         self, post_model_creation_callbacks: list[Callable[[torch.nn.Module], None]]
     ):
@@ -203,18 +176,9 @@ class LLMBridge(Bridge):
 
         def provider(pre_process, post_process, vp_stage: Optional[int] = None):
             transformer_layer_spec = self._get_transformer_layer_spec(vp_stage)
-            extra_args = {}
-            sig = inspect.signature(GPTModel)
-            # for mtp
-            if "mtp_block_spec" in sig.parameters:
-                mtp_block_spec = self._get_mtp_block_spec(vp_stage)
-                if mtp_block_spec is not None:
-                    extra_args["mtp_block_spec"] = mtp_block_spec
-
             gptmodel_args = self._get_gptmodel_args()
-            extra_args.update(gptmodel_args)
             if vp_stage is not None and self.has_vp_stage:
-                extra_args["vp_stage"] = vp_stage
+                gptmodel_args["vp_stage"] = vp_stage
             # add pad vocab_size
             self.vocab_size = gptmodel_args["vocab_size"]
             self.padded_vocab_size = self.vocab_size
@@ -223,7 +187,7 @@ class LLMBridge(Bridge):
                     math.ceil(self.vocab_size / self.make_vocab_size_divisible_by)
                     * self.make_vocab_size_divisible_by
                 )
-            extra_args["vocab_size"] = self.padded_vocab_size
+            gptmodel_args["vocab_size"] = self.padded_vocab_size
 
             model = GPTModel(
                 config=self.config,
@@ -231,7 +195,7 @@ class LLMBridge(Bridge):
                 pre_process=pre_process,
                 post_process=post_process,
                 share_embeddings_and_output_weights=share_embeddings_and_output_weights,
-                **extra_args,
+                **gptmodel_args,
             )
             for callback in post_model_creation_callbacks:
                 callback(
