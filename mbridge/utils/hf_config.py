@@ -2,6 +2,7 @@
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
 
 from transformers import PretrainedConfig
+import warnings
 
 def get_hf_rope_theta(hf_config: PretrainedConfig) -> float:
     """Return RoPE base frequency theta.
@@ -34,6 +35,15 @@ def get_hf_rope_theta(hf_config: PretrainedConfig) -> float:
         f"{type(hf_config).__name__} has no rope_theta and no rope_parameters['rope_theta'] — "
         "cannot determine RoPE base."
     )
+
+def get_hf_rope_scaling(hf_config: PretrainedConfig) -> dict:
+    # For transformers <= 4.57.6
+    if hasattr(hf_config, "rope_scaling"):
+        return hf_config.rope_scaling
+    if hasattr(hf_config, "text_config") and hasattr(hf_config.text_config, "rope_scaling"):
+        return hf_config.text_config.rope_scaling
+    warnings.warn(f"rope_scaling not found in {type(hf_config).__name__}, keys: {hf_config.keys()}")
+    return {}
 
 
 def get_hf_rope_theta_from_attribute(hf_config: PretrainedConfig) -> str:

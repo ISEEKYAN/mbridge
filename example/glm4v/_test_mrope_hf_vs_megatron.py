@@ -23,7 +23,7 @@ from transformers.models.glm4v.modeling_glm4v import (
 
 from mbridge import AutoBridge
 from mbridge.models.glm4_vl.vl_mixin import VLMixin
-from mbridge.utils.hf_config import get_hf_rope_theta
+from mbridge.utils.hf_config import get_hf_rope_theta, get_hf_rope_scaling
 
 messages = [
     {
@@ -60,7 +60,7 @@ def apply_rope_hf(q, k, bridge, position_ids):
     position_embeddings = rotary_emb(q, position_ids)
     cos, sin = position_embeddings
     query_states, key_states = apply_multimodal_rotary_pos_emb(  # diff with Llama
-        q, k, cos, sin, bridge.hf_config.rope_scaling["mrope_section"]
+        q, k, cos, sin, get_hf_rope_scaling(bridge.hf_config).get("mrope_section", None)
     )
     return query_states, key_states
 

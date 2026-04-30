@@ -1,3 +1,4 @@
+import imp
 import inspect
 import logging
 from copy import deepcopy
@@ -16,7 +17,7 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
 from mbridge.core import VLMBridge
 from mbridge.core.util import unwrap_model
 from mbridge.models.qwen3_5.qwen3_5_safetensor import Qwen3_5SafeTensorIO
-
+from mbridge.utils.hf_config import get_hf_rope_scaling
 
 class Qwen3_5VlBaseBridge(VLMBridge):
 
@@ -972,10 +973,10 @@ class Qwen3_5VlBaseBridge(VLMBridge):
                 language_max_sequence_length=self.hf_config.text_config.max_position_embeddings,
                 hf_config=self.hf_config,
                 hf_vision_cls=self.HfVisionClass,
-                language_rotary_percent=self.hf_config.text_config.rope_scaling.get(
+                language_rotary_percent=get_hf_rope_scaling(self.hf_config.text_config).get(
                     "partial_rotary_factor", 0.25
                 ),
-                language_rotary_base=self.hf_config.text_config.rope_scaling.get(
+                language_rotary_base=get_hf_rope_scaling(self.hf_config.text_config).get(
                     "rope_theta", 10000000
                 ),
                 position_embedding_type="mrope",

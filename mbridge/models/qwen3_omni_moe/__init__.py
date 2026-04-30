@@ -3,6 +3,8 @@ from copy import deepcopy
 from mbridge.core import register_model
 from mbridge.models.qwen3_omni_moe.base_bridge import Qwen3OmniBaseBridge
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from mbridge.utils.hf_config import get_hf_rope_scaling
+
 
 _QWEN3AUDIO_DIRECT_MAPPING = {
     "audio_model.ln_post.weight":"thinker.audio_tower.ln_post.weight",
@@ -271,7 +273,7 @@ class Qwen3OmniMoeBridge(Qwen3OmniBaseBridge):
             moe_router_pre_softmax=False,
             qk_layernorm=True,
             # qwen3vl specific
-            mrope_section=self.hf_config.text_config.rope_scaling.get(
+            mrope_section=get_hf_rope_scaling(self.hf_config.text_config).get(
                 "mrope_section",
                 [24, 20, 20],
             ),

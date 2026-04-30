@@ -13,7 +13,7 @@ from megatron.core.transformer import MLATransformerConfig
 from megatron.core.transformer.enums import AttnBackend
 
 from ..core import LLMBridge, register_model
-from ..utils.hf_config import get_hf_rope_theta
+from ..utils.hf_config import get_hf_rope_theta, get_hf_rope_scaling
 
 @register_model("deepseek_v3")
 class DeepseekV3Bridge(LLMBridge):
@@ -112,8 +112,7 @@ class DeepseekV3Bridge(LLMBridge):
             "original_max_position_embeddings": 4096,
             "type": "rope",
         }
-        if "rope_scaling" in hf_config and hf_config.rope_scaling is not None:
-            mla_rope_config.update(hf_config.rope_scaling)
+        mla_rope_config.update(get_hf_rope_scaling(hf_config))
         moe_layer_freq = [1] * hf_config.num_hidden_layers
         for i in range(
             min(hf_config.first_k_dense_replace, hf_config.num_hidden_layers)

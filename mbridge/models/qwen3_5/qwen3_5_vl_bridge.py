@@ -1,8 +1,11 @@
+import imp
 import torch
 
 from mbridge.core import register_model
 from mbridge.models.qwen3_5.base_bridge import Qwen3_5VlBaseBridge
 from mbridge.models.qwen3_5.transformer_config import Qwen3_5VLTransformerConfig
+from mbridge.utils.hf_config import get_hf_rope_scaling
+
 
 _QWEN3p5VIT_DIRECT_MAPPING = {
     "vision_model.patch_embed.proj.weight": "model.visual.patch_embed.proj.weight",
@@ -217,10 +220,10 @@ class Qwen3_5VlBridge(Qwen3_5VlBaseBridge):
             linear_value_head_dim=self.hf_config.text_config.linear_value_head_dim,
             linear_num_key_heads=self.hf_config.text_config.linear_num_key_heads,
             linear_num_value_heads=self.hf_config.text_config.linear_num_value_heads,
-            rotary_percent=self.hf_config.text_config.rope_scaling.get(
+            rotary_percent=get_hf_rope_scaling(self.hf_config.text_config).get(
                 "partial_rotary_factor", 0.25
             ),
-            mrope_section=self.hf_config.text_config.rope_scaling.get(
+            mrope_section=get_hf_rope_scaling(self.hf_config.text_config).get(
                 "mrope_section",
                 [11, 11, 10],
             ),
@@ -342,10 +345,10 @@ class Qwen3_5MoeVlBridge(Qwen3_5VlBaseBridge):
             linear_value_head_dim=self.hf_config.text_config.linear_value_head_dim,
             linear_num_key_heads=self.hf_config.text_config.linear_num_key_heads,
             linear_num_value_heads=self.hf_config.text_config.linear_num_value_heads,
-            rotary_percent=self.hf_config.text_config.rope_scaling.get(
+            rotary_percent=get_hf_rope_scaling(self.hf_config.text_config).get(
                 "partial_rotary_factor", 0.25
             ),
-            mrope_section=self.hf_config.text_config.rope_scaling.get(
+            mrope_section=get_hf_rope_scaling(self.hf_config.text_config).get(
                 "mrope_section",
                 [11, 11, 10],
             ),
