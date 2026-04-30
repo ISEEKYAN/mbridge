@@ -356,7 +356,10 @@ class Qwen3_5VlBaseBridge(VLMBridge):
             )
 
     def _weight_to_hf_format(
-        self, mcore_weights_name: str, mcore_weights: torch.Tensor
+        self,
+        mcore_weights_name: str,
+        mcore_weights: torch.Tensor,
+        keep_stacked_experts: bool = True,
     ) -> tuple[list[str], list[torch.Tensor]]:
         """
         Export MCore weights to Hugging Face format.
@@ -367,6 +370,11 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         Args:
             mcore_weights_name: MCore weight name
             mcore_weights: MCore weight tensor
+            keep_stacked_experts: If True (default), buffer per-expert MoE weights and emit a
+                single fused tensor (shape ``[num_experts, ...]``) keyed by the HF fused name,
+                matching the official HF checkpoint layout. If False, emit each expert as a
+                separate HF key
+                ``...mlp.experts.{expert_id}.{fused_proj_name}.weight``.
 
         Returns:
             tuple: (hf_names, hf_weights) - lists of Hugging Face weight names and tensors
@@ -394,10 +402,21 @@ class Qwen3_5VlBaseBridge(VLMBridge):
 
             # moe
             if ".mlp.experts.linear_fc" in mcore_weights_name:
-                # get export index
-                experts_key = hf_names[0]
                 experts_idx = int(mcore_weights_name.split(".weight")[-1])
+                if not keep_stacked_experts:
+                    # Emit per-expert HF key, e.g.
+                    #   model.language_model.layers.{N}.mlp.experts.gate_up_proj
+                    # becomes
+                    #   model.language_model.layers.{N}.mlp.experts.{expert_id}.gate_up_proj.weight
+                    fused_name = hf_names[0]
+                    prefix, _, proj_name = fused_name.rpartition(".")
+                    assert prefix.endswith(".experts"), (
+                        f"unexpected fused experts key: {fused_name}"
+                    )
+                    per_expert_name = f"{prefix}.{experts_idx}.{proj_name}.weight"
+                    return [per_expert_name], [mcore_weights]
 
+                experts_key = hf_names[0]
                 if experts_key not in self.export_weights_buff:
                     self.export_weights_buff[experts_key] = {}
                 assert experts_idx not in self.export_weights_buff[experts_key]

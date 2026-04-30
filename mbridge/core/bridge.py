@@ -433,7 +433,11 @@ class Bridge(ABC):
                         params.append(load_tensor_from_file(w_files[idx + etp_idx]))
                     tmp_w_name = w_name + str(expert_id)
                     infer_params = self._weight_merge_across_tp(tmp_w_name, params, params[0])
-                    for hf_name, hf_param in zip(*self._weight_to_hf_format(tmp_w_name, infer_params)):
+                    for hf_name, hf_param in zip(
+                        *self._weight_to_hf_format(
+                            tmp_w_name, infer_params, keep_stacked_experts=True
+                        )
+                    ):
                         hf_buffer[hf_name] = hf_param.detach().cpu()
                         if len(hf_buffer) >= tensors_per_file:
                             flush_hf_buffer()
@@ -445,7 +449,11 @@ class Bridge(ABC):
                     infer_params = self._weight_merge_across_tp(w_name, params, params[0])
                 else:
                     infer_params = load_tensor_from_file(w_files[0])
-                for hf_name, hf_param in zip(*self._weight_to_hf_format(w_name, infer_params)):
+                for hf_name, hf_param in zip(
+                    *self._weight_to_hf_format(
+                        w_name, infer_params, keep_stacked_experts=True
+                    )
+                ):
                     hf_buffer[hf_name] = hf_param.detach().cpu()
                     if len(hf_buffer) >= tensors_per_file:
                         flush_hf_buffer()
@@ -514,7 +522,7 @@ class Bridge(ABC):
             return self._save_weights_fast(models, weights_path, strict=strict)
 
         rank = torch.distributed.get_rank() if is_distributed else 0
-        per_tensor_generator = self.export_weights(models)
+        per_tensor_generator = self.export_weights(models, keep_stacked_experts=True)
 
         if rank != 0:
             for _, _ in per_tensor_generator:
@@ -671,6 +679,7 @@ class Bridge(ABC):
     def _iter_merged_bucket_outputs(
         self,
         gathered_bucket: list[tuple[str, torch.Tensor, list[torch.Tensor]]] | None,
+        keep_stacked_experts: bool = True,
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
         if gathered_bucket is None:
             return
@@ -679,7 +688,11 @@ class Bridge(ABC):
             gathered_bucket[i] = None  # type: ignore[call-overload]
             merged = self._weight_merge_across_tp(bname, shards, bparam)
             del shards, bparam
-            for out_name, out_param in zip(*self._weight_to_hf_format(bname, merged)):
+            for out_name, out_param in zip(
+                *self._weight_to_hf_format(
+                    bname, merged, keep_stacked_experts=keep_stacked_experts
+                )
+            ):
                 yield out_name, out_param.detach()
             del merged
 
@@ -690,6 +703,7 @@ class Bridge(ABC):
             [list[tuple[str, torch.Tensor]], str],
             list[tuple[str, torch.Tensor, list[torch.Tensor]]] | None,
         ],
+        keep_stacked_experts: bool = True,
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
         tp_bucket: list[tuple[str, torch.Tensor]] = []
         tp_bucket_bytes = 0
@@ -726,7 +740,10 @@ class Bridge(ABC):
                 gathered_etp_bucket = collect_bucket_fn(etp_subbucket, "etp")
                 etp_subbucket = []
                 etp_subbucket_bytes = 0
-                yield from self._iter_merged_bucket_outputs(gathered_etp_bucket)
+                yield from self._iter_merged_bucket_outputs(
+                    gathered_etp_bucket,
+                    keep_stacked_experts=keep_stacked_experts,
+                )
 
             for i in range(len(etp_bucket)):
                 name, param = etp_bucket[i]
@@ -754,7 +771,10 @@ class Bridge(ABC):
             gathered_bucket = collect_bucket_fn(tp_bucket, "tp")
             tp_bucket = []
             tp_bucket_bytes = 0
-            yield from self._iter_merged_bucket_outputs(gathered_bucket)
+            yield from self._iter_merged_bucket_outputs(
+                gathered_bucket,
+                keep_stacked_experts=keep_stacked_experts,
+            )
 
         def _flush_ep_bucket():
             nonlocal ep_bucket, ep_bucket_bytes
@@ -817,7 +837,11 @@ class Bridge(ABC):
                 continue
 
             yield from _flush_tp_bucket()
-            for out_name, out_param in zip(*self._weight_to_hf_format(name, param)):
+            for out_name, out_param in zip(
+                *self._weight_to_hf_format(
+                    name, param, keep_stacked_experts=keep_stacked_experts
+                )
+            ):
                 yield out_name, out_param.detach()
 
         # last clean up
@@ -826,8 +850,20 @@ class Bridge(ABC):
 
     @torch.no_grad()
     def export_weights(
-        self, models: list[torch.nn.Module],
+        self,
+        models: list[torch.nn.Module],
+        keep_stacked_experts: bool = True,
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
+        """
+        Export weights from models.
+
+        Args:
+            models: List of models to export weights from
+            keep_stacked_experts: If True (default), keep hf format of stacked experts; else emit each expert as its own hf key, yet keep gate_up_proj fused
+
+        Returns:
+            Generator[tuple[str, torch.Tensor]]: Generator of (name, tensor) tuples.
+        """
         assert (
             len(self.export_weights_buff) == 0
         ), f"should be empty {self.export_weights_buff=}"
@@ -857,7 +893,11 @@ class Bridge(ABC):
         # broadcast inside pp group
         named_params = self._iter_all_ranks_named_params(models, is_distributed)
         # allgather inside tp/ep/etp groups
-        yield from self._iter_bucketed_export_outputs(named_params, _collect_bucket)
+        yield from self._iter_bucketed_export_outputs(
+            named_params,
+            _collect_bucket,
+            keep_stacked_experts=keep_stacked_experts,
+        )
 
     def export_weights_without_gather(
         self, models: list[torch.nn.Module],
@@ -1216,7 +1256,10 @@ class Bridge(ABC):
             return self._weight_name_mapping_other(mcore_weights_name)
 
     def _weight_to_hf_format(
-        self, mcore_weights_name: str, mcore_weights: torch.Tensor
+        self,
+        mcore_weights_name: str,
+        mcore_weights: torch.Tensor,
+        keep_stacked_experts: bool = True,
     ) -> tuple[list[str], list[torch.Tensor]]:
         """
         Export MCore weights to Hugging Face format.
@@ -1227,6 +1270,12 @@ class Bridge(ABC):
         Args:
             mcore_weights_name: MCore weight name
             mcore_weights: MCore weight tensor
+            keep_stacked_experts: If True (default), MoE expert weights are buffered
+                and stacked into a single ``[num_experts, ...]`` tensor matching the
+                official HF fused layout. If False, each expert is yielded
+                individually with a per-expert HF key. Only relevant for MoE
+                bridges that override this method; non-MoE overrides simply
+                accept the kwarg for signature compatibility.
 
         Returns:
             tuple: (hf_names, hf_weights) - lists of Hugging Face weight names and tensors
