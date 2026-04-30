@@ -1,8 +1,11 @@
 from copy import deepcopy
+import imp
 
 from mbridge.core import register_model
 from mbridge.models.qwen3_vl.base_bridge import Qwen3VBaseBridge
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from mbridge.utils.hf_config import get_hf_rope_scaling
+
 
 _QWEN3VIT_DIRECT_MAPPING = {
     "vision_model.patch_embed.proj.weight": "model.visual.patch_embed.proj.weight",
@@ -165,7 +168,7 @@ class Qwen3VLBridge(Qwen3VBaseBridge):
             distribute_saved_activations=False,
             cp_comm_type="p2p",
             # qwen3vl specific
-            mrope_section=self.hf_config.text_config.rope_scaling.get(
+            mrope_section=get_hf_rope_scaling(self.hf_config.text_config).get(
                 "mrope_section",
                 [24, 20, 20],
             ),
@@ -290,7 +293,7 @@ class Qwen3VLMoEBridge(Qwen3VBaseBridge):
             moe_router_pre_softmax=False,
             qk_layernorm=True,
             # qwen3vl specific
-            mrope_section=self.hf_config.text_config.rope_scaling.get(
+            mrope_section=get_hf_rope_scaling(self.hf_config.text_config).get(
                 "mrope_section",
                 [24, 20, 20],
             ),

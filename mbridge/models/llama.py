@@ -3,7 +3,7 @@
 from ..core import LLMBridge, register_model
 from ..core.bridge import Bridge, register_model
 
-from mbridge.utils.hf_config import get_hf_rope_theta
+from mbridge.utils.hf_config import get_hf_rope_theta, get_hf_rope_scaling
 
 
 @register_model("llama")
@@ -79,14 +79,9 @@ class LLaMABridge(LLMBridge):
             dict: Dictionary of arguments for GPTModel initialization
         """
         rope_scaling_args = {}
-        if "rope_scaling" in self.hf_config:
-            if self.hf_config.rope_scaling is not None:
-                # assert (
-                #     self.hf_config.rope_scaling["type"] == "linear"
-                # ), "only linear scaling is supported for now"
-                rope_scaling_args["seq_len_interpolation_factor"] = (
-                    self.hf_config.rope_scaling["factor"]
-                )
+        rope_scaling = get_hf_rope_scaling(self.hf_config)
+        if rope_scaling:
+            rope_scaling_args["seq_len_interpolation_factor"] = rope_scaling["factor"]
         ret = dict(
             vocab_size=self.hf_config.vocab_size,
             max_sequence_length=self.hf_config.max_position_embeddings,

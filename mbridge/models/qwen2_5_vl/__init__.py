@@ -1,5 +1,6 @@
 import re
 from copy import deepcopy
+from tkinter import NO
 from typing import Callable, Generator, Optional
 
 import torch
@@ -11,7 +12,7 @@ from ...core import VLMBridge, register_model
 from ...core.util import unwrap_model
 from .model import Qwen2_5VLModel
 from .transformer_config import get_vision_model_config, get_vision_projection_config
-from mbridge.utils.hf_config import get_hf_rope_theta
+from mbridge.utils.hf_config import get_hf_rope_theta, get_hf_rope_scaling
 
 
 class Qwen2_5VLSafeTensorIO(SafeTensorIO):
@@ -564,5 +565,5 @@ class Qwen2_5VLBridge(VLMBridge):
         return self._build_base_config(
             # qwen specific
             add_qkv_bias=True,
-            mrope_section=self.hf_config.rope_scaling["mrope_section"],
+            mrope_section=get_hf_rope_scaling(self.hf_config).get("mrope_section", None),
         )
