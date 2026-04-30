@@ -9,6 +9,8 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.transformer import TransformerConfig
 from torch.nn import functional as F
 
+from mbridge.utils.hf_config import get_hf_rope_theta
+
 from .bridge import Bridge
 from .util import (
     broadcast_from_megatron_pp,
@@ -16,7 +18,6 @@ from .util import (
     unwrap_model,
 )
 
-from mbridge.utils.hf_config import get_hf_rope_theta
 
 class LLMBridge(Bridge):
     """

@@ -13,23 +13,27 @@ from megatron.core.models.vision.vit_layer_specs import (
 
 from mbridge.core import VLMBridge
 from mbridge.core.util import unwrap_model
-from mbridge.models.qwen3_vl.transformer_config import get_vision_model_config
-from mbridge.models.qwen3_vl.utils import PatchMergerSubmodules
 from mbridge.models.qwen3_omni_moe.model import Qwen3OmniMoeModel
 from mbridge.models.qwen3_omni_moe.transformer_config import get_audio_model_config
+from mbridge.models.qwen3_vl.transformer_config import get_vision_model_config
+from mbridge.models.qwen3_vl.utils import PatchMergerSubmodules
 from mbridge.utils.hf_config import get_hf_rope_theta
 
 
 class Qwen3OmniBaseBridge(VLMBridge):
 
     def _adjust_mapping_for_shared_weights(self):
-        if getattr(self.hf_config.thinker_config.text_config, "tie_word_embeddings", False):
+        if getattr(
+            self.hf_config.thinker_config.text_config, "tie_word_embeddings", False
+        ):
             self._DIRECT_MAPPING["language_model.output_layer.weight"] = (
                 "model.language_model.embed_tokens.weight"
             )
 
     def _get_hf_shared_weight_keys(self):
-        if getattr(self.hf_config.thinker_config.text_config, "tie_word_embeddings", False):
+        if getattr(
+            self.hf_config.thinker_config.text_config, "tie_word_embeddings", False
+        ):
             return ["model.language_model.embed_tokens.weight"]
         return []
 
@@ -192,9 +196,13 @@ class Qwen3OmniBaseBridge(VLMBridge):
             # split qkv
             assert len(hf_names) == 3
             # split qkv
-            num_key_value_heads = self.hf_config.thinker_config.text_config.num_key_value_heads
+            num_key_value_heads = (
+                self.hf_config.thinker_config.text_config.num_key_value_heads
+            )
             hidden_dim = self.hf_config.thinker_config.text_config.hidden_size
-            num_attention_heads = self.hf_config.thinker_config.text_config.num_attention_heads
+            num_attention_heads = (
+                self.hf_config.thinker_config.text_config.num_attention_heads
+            )
 
             head_dim = getattr(
                 self.hf_config.thinker_config.text_config,
@@ -307,12 +315,20 @@ class Qwen3OmniBaseBridge(VLMBridge):
         ):
             # merge qkv
             assert len(hf_weights) == 3
-            num_key_value_heads = self.hf_config.thinker_config.text_config.num_key_value_heads
+            num_key_value_heads = (
+                self.hf_config.thinker_config.text_config.num_key_value_heads
+            )
             hidden_dim = self.hf_config.thinker_config.text_config.hidden_size
-            num_attention_heads = self.hf_config.thinker_config.text_config.num_attention_heads
+            num_attention_heads = (
+                self.hf_config.thinker_config.text_config.num_attention_heads
+            )
             if "vision_model" in mcore_weights_name:
-                num_attention_heads = self.hf_config.thinker_config.text_config.vision_config.num_heads
-                num_key_value_heads = self.hf_config.thinker_config.text_config.vision_config.num_heads
+                num_attention_heads = (
+                    self.hf_config.thinker_config.text_config.vision_config.num_heads
+                )
+                num_key_value_heads = (
+                    self.hf_config.thinker_config.text_config.vision_config.num_heads
+                )
             head_dim = getattr(
                 self.hf_config.thinker_config.text_config,
                 "head_dim",

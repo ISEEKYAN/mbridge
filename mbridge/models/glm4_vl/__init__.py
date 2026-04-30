@@ -3,10 +3,11 @@ from typing import Callable, Generator, Optional
 import torch
 from megatron.core.transformer.enums import AttnBackend
 
+from mbridge.utils.hf_config import get_hf_rope_scaling
+
 from ...core import register_model
 from .base_bridge import Glm4VLBridgeBase
 from .transformer_layer import Glm4TransformerLayer
-from mbridge.utils.hf_config import get_hf_rope_scaling
 
 """
 actually this only apply to glm-4.1v
@@ -127,7 +128,9 @@ class Glm4VLBridgeDense(Glm4VLBridgeBase):
         kwargs["image_token_id"] = self.hf_config.image_token_id
         kwargs["video_token_id"] = self.hf_config.video_token_id
         kwargs["spatial_merge_size"] = self.hf_config.vision_config.spatial_merge_size
-        kwargs["mrope_section"] = get_hf_rope_scaling(self.hf_config).get("mrope_section", None)
+        kwargs["mrope_section"] = get_hf_rope_scaling(self.hf_config).get(
+            "mrope_section", None
+        )
         kwargs["attention_backend"] = AttnBackend.fused
         kwargs["moe_router_dtype"] = "fp32"
         kwargs["disable_bf16_reduced_precision_matmul"] = True
@@ -276,7 +279,9 @@ class Glm4VLBridgeMoe(Glm4VLBridgeBase):
         kwargs["image_token_id"] = self.hf_config.image_token_id
         kwargs["video_token_id"] = self.hf_config.video_token_id
         kwargs["spatial_merge_size"] = self.hf_config.vision_config.spatial_merge_size
-        kwargs["mrope_section"] = get_hf_rope_scaling(self.hf_config).get("mrope_section", None)
+        kwargs["mrope_section"] = get_hf_rope_scaling(self.hf_config).get(
+            "mrope_section", None
+        )
         kwargs["attention_backend"] = AttnBackend.fused
         kwargs["disable_bf16_reduced_precision_matmul"] = True
         kwargs["persist_layer_norm"] = True

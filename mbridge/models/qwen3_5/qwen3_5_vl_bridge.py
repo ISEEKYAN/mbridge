@@ -1,11 +1,11 @@
 import imp
+
 import torch
 
 from mbridge.core import register_model
 from mbridge.models.qwen3_5.base_bridge import Qwen3_5VlBaseBridge
 from mbridge.models.qwen3_5.transformer_config import Qwen3_5VLTransformerConfig
 from mbridge.utils.hf_config import get_hf_rope_scaling
-
 
 _QWEN3p5VIT_DIRECT_MAPPING = {
     "vision_model.patch_embed.proj.weight": "model.visual.patch_embed.proj.weight",

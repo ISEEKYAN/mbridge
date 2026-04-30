@@ -19,12 +19,12 @@ from mbridge.core.util import (
     split_data_cp_rank,
 )
 from mbridge.models.qwen3_5.attention import Qwen3_5VLSelfAttention, SelfAttention
-from mbridge.models.qwen3_5.transformer_config import Qwen3_5VLTransformerConfig
-from mbridge.models.qwen3_5.utils import reorganize_inputs
 from mbridge.models.qwen3_5.rope_utils import (
     Qwen3VLMultimodalRotaryEmbedding,
     get_rope_index,
 )
+from mbridge.models.qwen3_5.transformer_config import Qwen3_5VLTransformerConfig
+from mbridge.models.qwen3_5.utils import reorganize_inputs
 
 
 class _SPScatterEmbeddingWrapper:
@@ -99,7 +99,9 @@ class Qwen3_5GPTModel(GPTModel):
             object.__setattr__(
                 self,
                 "embedding",
-                _SPScatterEmbeddingWrapper(self._modules["embedding"], do_scatter=self.config.sequence_parallel),
+                _SPScatterEmbeddingWrapper(
+                    self._modules["embedding"], do_scatter=self.config.sequence_parallel
+                ),
             )
 
     def init_mtp_embedding_scatter(self, do_scatter: bool) -> None:
@@ -157,10 +159,13 @@ class Qwen3_5VLModel(MegatronModule):
         if language_mtp_block_spec is not None:
             for _, layer_spec in enumerate(language_mtp_block_spec.layer_specs):
                 # 'mtp_model_layer' is the new name in megatron (renamed from 'transformer_layer')
-                mtp_inner = getattr(layer_spec.submodules, 'mtp_model_layer', None) or getattr(layer_spec.submodules, 'transformer_layer', None)
-                if mtp_inner is not None and issubclass(mtp_inner.submodules.self_attention.module, SelfAttention):
+                mtp_inner = getattr(
+                    layer_spec.submodules, "mtp_model_layer", None
+                ) or getattr(layer_spec.submodules, "transformer_layer", None)
+                if mtp_inner is not None and issubclass(
+                    mtp_inner.submodules.self_attention.module, SelfAttention
+                ):
                     mtp_inner.submodules.self_attention.module = Qwen3_5VLSelfAttention
-
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -202,8 +207,7 @@ class Qwen3_5VLModel(MegatronModule):
 
     @staticmethod
     def _hook_fp32_rotary_emb(module: torch.nn.Module):
-        """Force all RotaryEmbedding inv_freq buffers to stay at original float32 precision.
-        """
+        """Force all RotaryEmbedding inv_freq buffers to stay at original float32 precision."""
         for submodule in module.modules():
             if hasattr(submodule, "inv_freq") and submodule.inv_freq is not None:
                 # Save the original float32 inv_freq (this runs BEFORE Float16Module)
@@ -496,7 +500,9 @@ class Qwen3_5VLModel(MegatronModule):
                 #   - equal     → input_ids is already [B, S/TP]; skip scatter
                 if input_ids.shape[1] != combined_embeddings.shape[0]:
                     sp_input_ids = input_ids.permute(1, 0).contiguous()
-                    sp_input_ids = tensor_parallel.scatter_to_sequence_parallel_region(sp_input_ids)
+                    sp_input_ids = tensor_parallel.scatter_to_sequence_parallel_region(
+                        sp_input_ids
+                    )
                     sp_input_ids = sp_input_ids.permute(1, 0).contiguous()
                 # sp_input_ids is now [B, S/TP]: embedding wrapper must NOT scatter again.
                 self.language_model.init_mtp_embedding_scatter(do_scatter=False)

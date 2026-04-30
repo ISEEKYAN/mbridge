@@ -5,21 +5,20 @@ from mbridge.models.qwen3_omni_moe.base_bridge import Qwen3OmniBaseBridge
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from mbridge.utils.hf_config import get_hf_rope_scaling
 
-
 _QWEN3AUDIO_DIRECT_MAPPING = {
-    "audio_model.ln_post.weight":"thinker.audio_tower.ln_post.weight",
-    "audio_model.ln_post.bias":"thinker.audio_tower.ln_post.bias",
-    "audio_model.conv2d1.weight":"thinker.audio_tower.conv2d1.weight",
-    "audio_model.conv2d1.bias":"thinker.audio_tower.conv2d1.bias",
-    "audio_model.conv2d2.weight":"thinker.audio_tower.conv2d2.weight",
-    "audio_model.conv2d2.bias":"thinker.audio_tower.conv2d2.bias",
-    "audio_model.conv2d3.weight":"thinker.audio_tower.conv2d3.weight",
-    "audio_model.conv2d3.bias":"thinker.audio_tower.conv2d3.bias",
-    "audio_model.conv_out.weight":"thinker.audio_tower.conv_out.weight",
-    "audio_model.proj1.weight":"thinker.audio_tower.proj1.weight",
-    "audio_model.proj1.bias":"thinker.audio_tower.proj1.bias",
-    "audio_model.proj2.weight":"thinker.audio_tower.proj2.weight",
-    "audio_model.proj2.bias":"thinker.audio_tower.proj2.bias",
+    "audio_model.ln_post.weight": "thinker.audio_tower.ln_post.weight",
+    "audio_model.ln_post.bias": "thinker.audio_tower.ln_post.bias",
+    "audio_model.conv2d1.weight": "thinker.audio_tower.conv2d1.weight",
+    "audio_model.conv2d1.bias": "thinker.audio_tower.conv2d1.bias",
+    "audio_model.conv2d2.weight": "thinker.audio_tower.conv2d2.weight",
+    "audio_model.conv2d2.bias": "thinker.audio_tower.conv2d2.bias",
+    "audio_model.conv2d3.weight": "thinker.audio_tower.conv2d3.weight",
+    "audio_model.conv2d3.bias": "thinker.audio_tower.conv2d3.bias",
+    "audio_model.conv_out.weight": "thinker.audio_tower.conv_out.weight",
+    "audio_model.proj1.weight": "thinker.audio_tower.proj1.weight",
+    "audio_model.proj1.bias": "thinker.audio_tower.proj1.bias",
+    "audio_model.proj2.weight": "thinker.audio_tower.proj2.weight",
+    "audio_model.proj2.bias": "thinker.audio_tower.proj2.bias",
 }
 
 _QWEN3AUDIO_ATTENTION_MAPPING = {
@@ -160,7 +159,7 @@ class Qwen3OmniMoeBridge(Qwen3OmniBaseBridge):
     """
 
     TransformerConfigClass = Qwen3VLTransformerConfig
-    
+
     _DIRECT_MAPPING = {
         **_QWEN3AUDIO_DIRECT_MAPPING,
         **_QWEN3VIT_DIRECT_MAPPING,
@@ -236,7 +235,10 @@ class Qwen3OmniMoeBridge(Qwen3OmniBaseBridge):
         convert_names = []
         mapping_names = self._MLP_MAPPING[key]
         convert_names.extend(
-            [x.format(layer_number=layer_number, expert_number=expert_number) for x in mapping_names]
+            [
+                x.format(layer_number=layer_number, expert_number=expert_number)
+                for x in mapping_names
+            ]
         )
         if len(convert_names) == 0:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
@@ -289,5 +291,5 @@ class Qwen3OmniMoeBridge(Qwen3OmniBaseBridge):
         )
 
         self.hf_config = hf_config_backup
-        
+
         return base_config

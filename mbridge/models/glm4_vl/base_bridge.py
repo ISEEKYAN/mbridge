@@ -3,12 +3,12 @@ from typing import Callable, Generator, Optional
 
 import torch
 
+from mbridge.utils.hf_config import get_hf_rope_theta
+
 from ...core import VLMBridge
 from ...core.util import unwrap_model
 from .model import Glm4VLModel
 from .transformer_config import GLM4VLTransformerConfig
-
-from mbridge.utils.hf_config import get_hf_rope_theta
 
 
 class Glm4VLBridgeBase(VLMBridge):

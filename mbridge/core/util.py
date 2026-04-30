@@ -773,9 +773,7 @@ def iter_model_named_params(
         extra_keys = [
             x
             for x in state_dict.keys()
-            if "_extra_state" not in x
-            and "expert_bias" in x
-            and x not in existing_keys
+            if "_extra_state" not in x and "expert_bias" in x and x not in existing_keys
         ]
         for name in extra_keys:
             yield vpp_rank, name, state_dict[name].to(torch.cuda.current_device())
@@ -798,9 +796,7 @@ def bucketed_all_gather_into_tensor(
     if any(param.dtype != dtype for _, param in bucket):
         raise ValueError("bucket tensors must share the same dtype")
 
-    max_chunk_numel = max(
-        1, per_rank_bucket_size_bytes // bucket[0][1].element_size()
-    )
+    max_chunk_numel = max(1, per_rank_bucket_size_bytes // bucket[0][1].element_size())
 
     flat_shards = [param.reshape(-1) for _, param in bucket]
     numel_per_tensor = [flat.numel() for flat in flat_shards]
@@ -816,9 +812,7 @@ def bucketed_all_gather_into_tensor(
     # avoids ProcessGroupNCCL::allgather's unconditional `newLikeFlat`
     # temporary allocation that the list-form `all_gather` would trigger.
     send_buffer = torch.empty(max_chunk_numel, dtype=dtype, device=device)
-    recv_buffer = torch.empty(
-        group_size * max_chunk_numel, dtype=dtype, device=device
-    )
+    recv_buffer = torch.empty(group_size * max_chunk_numel, dtype=dtype, device=device)
 
     tensor_idx = 0
     tensor_offset = 0
@@ -831,9 +825,7 @@ def bucketed_all_gather_into_tensor(
             send_buffer[chunk_numel : chunk_numel + take_numel].copy_(
                 flat_shards[tensor_idx][tensor_offset : tensor_offset + take_numel]
             )
-            chunk_segments.append(
-                (tensor_idx, tensor_offset, chunk_numel, take_numel)
-            )
+            chunk_segments.append((tensor_idx, tensor_offset, chunk_numel, take_numel))
             chunk_numel += take_numel
             tensor_offset += take_numel
             if tensor_offset == numel_per_tensor[tensor_idx]:
@@ -848,9 +840,7 @@ def bucketed_all_gather_into_tensor(
         )
 
         for rank in range(group_size):
-            rank_recv_view = recv_view[
-                rank * chunk_numel : (rank + 1) * chunk_numel
-            ]
+            rank_recv_view = recv_view[rank * chunk_numel : (rank + 1) * chunk_numel]
             for (
                 seg_tensor_idx,
                 seg_tensor_offset,
@@ -859,9 +849,7 @@ def bucketed_all_gather_into_tensor(
             ) in chunk_segments:
                 gathered_flat_views[rank][seg_tensor_idx][
                     seg_tensor_offset : seg_tensor_offset + seg_numel
-                ].copy_(
-                    rank_recv_view[seg_chunk_offset : seg_chunk_offset + seg_numel]
-                )
+                ].copy_(rank_recv_view[seg_chunk_offset : seg_chunk_offset + seg_numel])
 
     del send_buffer, recv_buffer
 
@@ -875,13 +863,13 @@ def bucketed_all_gather_into_tensor(
 def bucketed_pp_broadcast(
     bucket: list[
         tuple[
-            str,             # name 
-            tuple[int, ...], # shape
-            str,             # dtype_name
-            bool | None,     # tensor_parallel
-            int | None,      # partition_dim
-            int,             # numel
-            torch.Tensor | None, # tensor
+            str,  # name
+            tuple[int, ...],  # shape
+            str,  # dtype_name
+            bool | None,  # tensor_parallel
+            int | None,  # partition_dim
+            int,  # numel
+            torch.Tensor | None,  # tensor
         ]
     ],
     src_pp_rank: int,
@@ -935,9 +923,7 @@ def bucketed_pp_broadcast(
                 buffer[chunk_numel : chunk_numel + take_numel].copy_(
                     flat_views[tensor_idx][tensor_offset : tensor_offset + take_numel]
                 )
-            chunk_segments.append(
-                (tensor_idx, tensor_offset, chunk_numel, take_numel)
-            )
+            chunk_segments.append((tensor_idx, tensor_offset, chunk_numel, take_numel))
             chunk_numel += take_numel
             tensor_offset += take_numel
             if tensor_offset == bucket[tensor_idx][5]:
@@ -954,7 +940,12 @@ def bucketed_pp_broadcast(
         if pp_rank == src_pp_rank:
             continue
 
-        for seg_tensor_idx, seg_tensor_offset, seg_chunk_offset, seg_numel in chunk_segments:
+        for (
+            seg_tensor_idx,
+            seg_tensor_offset,
+            seg_chunk_offset,
+            seg_numel,
+        ) in chunk_segments:
             flat_views[seg_tensor_idx][
                 seg_tensor_offset : seg_tensor_offset + seg_numel
             ].copy_(chunk_view[seg_chunk_offset : seg_chunk_offset + seg_numel])

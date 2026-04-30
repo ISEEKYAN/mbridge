@@ -1,4 +1,6 @@
-from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import Qwen3OmniMoeAudioEncoderConfig
+from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
+    Qwen3OmniMoeAudioEncoderConfig,
+)
 
 
 def get_audio_model_config(hf_config):

@@ -1,12 +1,12 @@
 from typing import Optional, Tuple, Union
 
 import torch
-from megatron.core.transformer.attention import *
-from torch import Tensor
-
 from megatron.core.models.common.embeddings.yarn_rotary_pos_embedding import (
     _yarn_get_concentration_factor_from_config,
 )
+from megatron.core.transformer.attention import *
+from torch import Tensor
+
 from mbridge.models.qwen3_5.rope_utils import apply_rotary_pos_emb_absolute
 
 

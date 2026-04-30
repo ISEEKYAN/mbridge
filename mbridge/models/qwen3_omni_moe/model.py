@@ -1,12 +1,16 @@
 import logging
 
 import torch
-from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import Qwen3OmniMoeAudioEncoderConfig
-from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import Qwen3OmniMoeAudioEncoder
 from megatron.core import InferenceParams, mpu, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
+from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
+    Qwen3OmniMoeAudioEncoderConfig,
+)
+from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import (
+    Qwen3OmniMoeAudioEncoder,
+)
 
 from mbridge.core.util import (
     AllGatherVisionEmbeddings,
@@ -16,12 +20,12 @@ from mbridge.core.util import (
     qwen3vl_cp_split,
     split_data_cp_rank,
 )
+from mbridge.models.qwen3_omni_moe.rope_utils import get_rope_index
 from mbridge.models.qwen3_vl.attention import Qwen3VLSelfAttention
 from mbridge.models.qwen3_vl.gpt_model import Qwen3VLGPTModel
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from mbridge.models.qwen3_vl.utils import reorganize_inputs, split_deepstack_embs
 from mbridge.models.qwen3_vl.vision_model import Qwen3VLVisionModel
-from mbridge.models.qwen3_omni_moe.rope_utils import get_rope_index
 
 
 # Note: This is under development and may be missing features.
@@ -85,7 +89,7 @@ class Qwen3OmniMoeModel(MegatronModule):
         audio_token_id: int = 151675,
         vision_start_token_id: int = 151652,
         audio_start_token_id: int = 151669,
-        position_id_per_seconds: int  = 13,
+        position_id_per_seconds: int = 13,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -222,7 +226,9 @@ class Qwen3OmniMoeModel(MegatronModule):
         audio_feature_lengths: torch.LongTensor = None,
     ):
         if feature_attention_mask is not None:
-            input_features = input_features.permute(0, 2, 1)[feature_attention_mask.bool()].permute(1, 0)
+            input_features = input_features.permute(0, 2, 1)[
+                feature_attention_mask.bool()
+            ].permute(1, 0)
 
         feature_lens = audio_feature_lengths
         audio_outputs = self.audio_model(
@@ -392,8 +398,9 @@ class Qwen3OmniMoeModel(MegatronModule):
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True
                 )
-                vision_mask_thd = (input_ids_thd == self.image_token_id) \
-                                | (input_ids_thd == self.video_token_id)
+                vision_mask_thd = (input_ids_thd == self.image_token_id) | (
+                    input_ids_thd == self.video_token_id
+                )
                 if deepstack_feature_lists is not None:
                     tmp_embeddings = torch.zeros_like(
                         combined_embeddings.transpose(0, 1)

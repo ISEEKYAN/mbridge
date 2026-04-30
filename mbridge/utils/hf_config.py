@@ -1,8 +1,10 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
 
-from transformers import PretrainedConfig
 import warnings
+
+from transformers import PretrainedConfig
+
 
 def get_hf_rope_theta(hf_config: PretrainedConfig) -> float:
     """Return RoPE base frequency theta.
@@ -16,14 +18,18 @@ def get_hf_rope_theta(hf_config: PretrainedConfig) -> float:
     # For transformers <= 4.57.6
     if hasattr(hf_config, "rope_theta"):
         return hf_config.rope_theta
-    if hasattr(hf_config, "text_config") and hasattr(hf_config.text_config, "rope_theta"):
+    if hasattr(hf_config, "text_config") and hasattr(
+        hf_config.text_config, "rope_theta"
+    ):
         return hf_config.text_config.rope_theta
 
     # For transformers >= 5.0.0, check rope_parameters dict (optionally nested) for rope_theta
     rp = None
     if hasattr(hf_config, "rope_parameters"):
         rp = hf_config.rope_parameters
-    elif hasattr(hf_config, "text_config") and hasattr(hf_config.text_config, "rope_parameters"):
+    elif hasattr(hf_config, "text_config") and hasattr(
+        hf_config.text_config, "rope_parameters"
+    ):
         rp = hf_config.text_config.rope_parameters
     if isinstance(rp, dict):
         if "rope_theta" in rp:
@@ -36,13 +42,18 @@ def get_hf_rope_theta(hf_config: PretrainedConfig) -> float:
         "cannot determine RoPE base."
     )
 
+
 def get_hf_rope_scaling(hf_config: PretrainedConfig) -> dict:
     # For transformers <= 4.57.6
     if hasattr(hf_config, "rope_scaling"):
         return hf_config.rope_scaling
-    if hasattr(hf_config, "text_config") and hasattr(hf_config.text_config, "rope_scaling"):
+    if hasattr(hf_config, "text_config") and hasattr(
+        hf_config.text_config, "rope_scaling"
+    ):
         return hf_config.text_config.rope_scaling
-    warnings.warn(f"rope_scaling not found in {type(hf_config).__name__}, keys: {hf_config.keys()}")
+    warnings.warn(
+        f"rope_scaling not found in {type(hf_config).__name__}, keys: {hf_config.keys()}"
+    )
     return {}
 
 

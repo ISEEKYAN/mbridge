@@ -1,11 +1,10 @@
-from copy import deepcopy
 import imp
+from copy import deepcopy
 
 from mbridge.core import register_model
 from mbridge.models.qwen3_vl.base_bridge import Qwen3VBaseBridge
 from mbridge.models.qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from mbridge.utils.hf_config import get_hf_rope_scaling
-
 
 _QWEN3VIT_DIRECT_MAPPING = {
     "vision_model.patch_embed.proj.weight": "model.visual.patch_embed.proj.weight",

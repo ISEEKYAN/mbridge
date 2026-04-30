@@ -6,9 +6,9 @@ from glob import glob
 from typing import Generator
 
 import torch
-from transformers import AutoConfig
 from safetensors import safe_open
 from safetensors.torch import save_file
+from transformers import AutoConfig
 
 
 class SafeTensorIO:
@@ -276,7 +276,9 @@ class SafeTensorIO:
         if not tensors:
             return
         assert self.index, "index file is required for memory efficient saving"
-        save_file({k: v.cpu() if v.is_cuda else v for k, v in tensors.items()}, filepath)
+        save_file(
+            {k: v.cpu() if v.is_cuda else v for k, v in tensors.items()}, filepath
+        )
 
     def save_hf_weight_merge_from_batches(
         self,

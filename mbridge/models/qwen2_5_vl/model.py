@@ -1,24 +1,24 @@
 # Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
 import logging
-from packaging.version import Version
 from collections import namedtuple
 from typing import List
 
 import megatron.core as mcore
 import torch
-from megatron.core import InferenceParams, tensor_parallel, mpu
+from megatron.core import InferenceParams, mpu, tensor_parallel
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
+from packaging.version import Version
 
 from mbridge.core.util import preprocess_packed_seqs, split_data_cp_rank
 
 from .attention import Qwen2_5VLSelfAttention
+from .rope_utils import mrope_forward_thd_cp
 from .transformer_config import Qwen2VLTransformerConfig
 from .vision_model import Qwen2_5VisionModel
-from .rope_utils import mrope_forward_thd_cp
 
 
 # Note: This is under development and may be missing features.
@@ -353,10 +353,7 @@ class Qwen2_5VLModel(MegatronModule):
                 )
             else:
                 cp_size = mpu.get_context_parallel_world_size()
-                if (
-                    combined_embeddings is not None
-                    and cp_size > 1
-                ):
+                if combined_embeddings is not None and cp_size > 1:
                     combined_embeddings = split_data_cp_rank(
                         combined_embeddings, cp_size, 0
                     )

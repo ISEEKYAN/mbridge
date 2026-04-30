@@ -4,7 +4,7 @@ import os
 import torch
 from megatron.core import parallel_state as mpu
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from transformers import AutoTokenizer, AutoConfig
+from transformers import AutoConfig, AutoTokenizer
 
 from mbridge import AutoBridge
 

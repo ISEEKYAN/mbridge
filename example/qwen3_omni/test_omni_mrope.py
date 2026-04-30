@@ -12,8 +12,8 @@ except:
 from megatron.core.models.common.embeddings.rope_utils import _apply_rotary_pos_emb_bshd
 
 from example.qwen3_omni.load_model_and_forward import get_sample_for_forward
-from mbridge.models.qwen3_vl.rope_utils import Qwen3VLMultimodalRotaryEmbedding
 from mbridge.models.qwen3_omni_moe.rope_utils import get_rope_index
+from mbridge.models.qwen3_vl.rope_utils import Qwen3VLMultimodalRotaryEmbedding
 from mbridge.utils.hf_config import get_hf_rope_theta
 
 

@@ -79,10 +79,10 @@ from transformers import AutoTokenizer
 from mbridge import AutoBridge
 from mbridge.core.util import unwrap_model
 
-
 # ---------------------------------------------------------------------------
 # Distributed helpers
 # ---------------------------------------------------------------------------
+
 
 def gather_output_from_cp(input_: torch.Tensor, seq_dim: int, cp_size: int, cp_group):
     """Gather context-parallel sequence chunks back into the full sequence."""
@@ -91,7 +91,7 @@ def gather_output_from_cp(input_: torch.Tensor, seq_dim: int, cp_size: int, cp_g
         *input_.shape[:seq_dim],
         2,
         input_.shape[seq_dim] // 2,
-        *input_.shape[seq_dim + 1:],
+        *input_.shape[seq_dim + 1 :],
     )
     gathered = [torch.zeros_like(input_) for _ in range(cp_size)]
     torch.distributed.all_gather(gathered, input_, group=cp_group)
@@ -127,6 +127,7 @@ def init_distributed(tp=2, pp=1, cp=1, vpp=None, ep=1, etp=None):
 # Argument parsing
 # ---------------------------------------------------------------------------
 
+
 def get_args():
     parser = argparse.ArgumentParser(
         description=(
@@ -135,12 +136,16 @@ def get_args():
         )
     )
     parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument("--tp",  type=int, default=2, help="Tensor parallel size")
-    parser.add_argument("--pp",  type=int, default=1, help="Pipeline parallel size")
-    parser.add_argument("--cp",  type=int, default=1, help="Context parallel size")
-    parser.add_argument("--vpp", type=int, default=None, help="Virtual pipeline parallel size")
-    parser.add_argument("--ep",  type=int, default=1, help="Expert parallel size")
-    parser.add_argument("--etp", type=int, default=None, help="Expert tensor parallel size")
+    parser.add_argument("--tp", type=int, default=2, help="Tensor parallel size")
+    parser.add_argument("--pp", type=int, default=1, help="Pipeline parallel size")
+    parser.add_argument("--cp", type=int, default=1, help="Context parallel size")
+    parser.add_argument(
+        "--vpp", type=int, default=None, help="Virtual pipeline parallel size"
+    )
+    parser.add_argument("--ep", type=int, default=1, help="Expert parallel size")
+    parser.add_argument(
+        "--etp", type=int, default=None, help="Expert tensor parallel size"
+    )
     parser.add_argument(
         "--text",
         type=str,
@@ -165,6 +170,7 @@ def get_args():
 # Top-k token accuracy helper
 # ---------------------------------------------------------------------------
 
+
 def compute_top_k_accuracy(logits: torch.Tensor, target_ids: torch.Tensor, k: int = 1):
     """Compute top-k token prediction accuracy.
 
@@ -177,13 +183,13 @@ def compute_top_k_accuracy(logits: torch.Tensor, target_ids: torch.Tensor, k: in
     """
     valid_mask = target_ids != 0  # [B, S]
     if k == 1:
-        pred    = logits.argmax(dim=-1)                          # [B, S]
+        pred = logits.argmax(dim=-1)  # [B, S]
         correct = (pred == target_ids) & valid_mask
     else:
-        topk    = logits.topk(k, dim=-1).indices                 # [B, S, k]
+        topk = logits.topk(k, dim=-1).indices  # [B, S, k]
         correct = (topk == target_ids.unsqueeze(-1)).any(dim=-1) & valid_mask
 
-    num_total   = valid_mask.sum().item()
+    num_total = valid_mask.sum().item()
     num_correct = correct.sum().item()
     acc = num_correct / num_total if num_total > 0 else 0.0
     return acc, num_correct, num_total
@@ -192,6 +198,7 @@ def compute_top_k_accuracy(logits: torch.Tensor, target_ids: torch.Tensor, k: in
 # ---------------------------------------------------------------------------
 # Forward step function
 # ---------------------------------------------------------------------------
+
 
 def make_fwd_fn_with_labels(input_ids_gpu: torch.Tensor):
     """Return a forward step function that passes shifted labels to the model.
@@ -230,6 +237,7 @@ def make_fwd_fn_with_labels(input_ids_gpu: torch.Tensor):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     args = get_args()
 
@@ -237,7 +245,7 @@ def main():
         tp=args.tp, pp=args.pp, cp=args.cp, vpp=args.vpp, ep=args.ep, etp=args.etp
     )
 
-    rank       = torch.distributed.get_rank()
+    rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
 
     # ------------------------------------------------------------------
@@ -251,8 +259,10 @@ def main():
     bridge.config.mtp_loss_scaling_factor = 0.1
 
     if args.pp > 1:
-        num_layer        = bridge.hf_config.text_config.num_hidden_layers
-        first_last_layer = num_layer - (num_layer + args.pp - 1) // args.pp * (args.pp - 2)
+        num_layer = bridge.hf_config.text_config.num_hidden_layers
+        first_last_layer = num_layer - (num_layer + args.pp - 1) // args.pp * (
+            args.pp - 2
+        )
         assert first_last_layer > 1, f"first_last_layer={first_last_layer} must be > 1"
         bridge.set_extra_args(
             num_layers_in_first_pipeline_stage=first_last_layer // 2,
@@ -280,8 +290,8 @@ def main():
     # ------------------------------------------------------------------
     # Tokenise
     # ------------------------------------------------------------------
-    tokenizer      = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
-    token_ids      = tokenizer(args.text, return_tensors="pt")["input_ids"]  # [1, S]
+    tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
+    token_ids = tokenizer(args.text, return_tensors="pt")["input_ids"]  # [1, S]
     real_seq_length = token_ids.shape[-1]
 
     if rank == 0:
@@ -295,7 +305,8 @@ def main():
     if real_seq_length % seq_length_factor != 0:
         seq_length = (
             (real_seq_length + seq_length_factor - 1)
-            // seq_length_factor * seq_length_factor
+            // seq_length_factor
+            * seq_length_factor
         )
         token_ids = F.pad(token_ids, (0, seq_length - real_seq_length), value=0)
 
@@ -315,13 +326,14 @@ def main():
 
     # Navigate to the underlying language model on the last PP stage.
     # On other PP stages output_layer does not exist; we only hook if present.
-    gpt_wrapper = unwrap_model(model[0])       # Qwen3_5VLModel
-    lang_model  = gpt_wrapper.language_model   # Qwen3_5GPTModel (subclass of GPTModel)
+    gpt_wrapper = unwrap_model(model[0])  # Qwen3_5VLModel
+    lang_model = gpt_wrapper.language_model  # Qwen3_5GPTModel (subclass of GPTModel)
 
     logit_captures = []
 
     hook_handle = None
     if hasattr(lang_model, "output_layer"):
+
         def output_layer_hook(_module, _input_tensors, output):
             """Capture logits: output[0] is [S, B, V_tp]."""
             logit_captures.append(output[0].detach())
@@ -338,7 +350,7 @@ def main():
         fwd_bwd_func = get_forward_backward_func()
         fwd_bwd_func(
             forward_step_func=make_fwd_fn_with_labels(input_ids_gpu),
-            data_iterator=iter([{}]),   # dummy; real data captured via closure
+            data_iterator=iter([{}]),  # dummy; real data captured via closure
             model=model,
             num_microbatches=1,
             forward_only=True,
@@ -355,7 +367,7 @@ def main():
     # ------------------------------------------------------------------
     if mpu.is_pipeline_last_stage():
 
-        n_captured     = len(logit_captures)
+        n_captured = len(logit_captures)
         expected_calls = 1 + mtp_num_layers
 
         if rank == 0:
@@ -387,13 +399,13 @@ def main():
                 )
             if mpu.get_tensor_model_parallel_world_size() > 1:
                 logit = gather_from_tensor_model_parallel_region(logit)
-            logit = logit[:real_seq_length, :, :]        # [S_real, B, V]
-            return logit.permute(1, 0, 2).contiguous()   # [B, S_real, V]
+            logit = logit[:real_seq_length, :, :]  # [S_real, B, V]
+            return logit.permute(1, 0, 2).contiguous()  # [B, S_real, V]
 
         # After gather_from_tensor_model_parallel_region the full vocab is only
         # present on the last TP rank (all ranks receive a copy, but let's use
         # the reporting rank for printing).
-        is_reporting_rank = (rank == world_size - 1)
+        is_reporting_rank = rank == world_size - 1
 
         input_ids_cpu = token_ids[:, :real_seq_length]  # [1, S_real]
 
@@ -420,7 +432,9 @@ def main():
             acc, n_correct, n_total = compute_top_k_accuracy(
                 mtp_logits, mtp_target, k=args.top_k
             )
-            all_results.append((f"MTP head {k} (predicts token[i+{shift}])", acc, n_correct, n_total))
+            all_results.append(
+                (f"MTP head {k} (predicts token[i+{shift}])", acc, n_correct, n_total)
+            )
 
             if is_reporting_rank:
                 print(
@@ -436,10 +450,10 @@ def main():
                 pred_ids = mtp_logits[0].argmax(dim=-1)  # [S]
                 for pos in range(min(12, real_seq_length - shift)):
                     pred_tok = pred_ids[pos].item()
-                    gt_tok   = mtp_target[0, pos].item()
-                    match    = "✓" if pred_tok == gt_tok else "✗"
+                    gt_tok = mtp_target[0, pos].item()
+                    match = "✓" if pred_tok == gt_tok else "✗"
                     pred_str = tokenizer.decode([pred_tok])
-                    gt_str   = tokenizer.decode([gt_tok])
+                    gt_str = tokenizer.decode([gt_tok])
                     print(
                         f"  pos={pos:3d} | "
                         f"pred={pred_tok:7d} {pred_str!r:14s} | "
@@ -450,12 +464,14 @@ def main():
         # Main head:  captures[-1]
         #   logits[i] predicts token[i+1]
         # ----------------------------------------------------------------
-        main_logits = gather_and_trim(logit_captures[-1]).cpu()    # [B, S, V]
+        main_logits = gather_and_trim(logit_captures[-1]).cpu()  # [B, S, V]
         main_target = F.pad(input_ids_cpu[:, 1:], (0, 1), value=0)  # [B, S]
         main_acc, main_correct, main_total = compute_top_k_accuracy(
             main_logits, main_target, k=args.top_k
         )
-        all_results.append((f"Main head (predicts token[i+1])", main_acc, main_correct, main_total))
+        all_results.append(
+            (f"Main head (predicts token[i+1])", main_acc, main_correct, main_total)
+        )
 
         if is_reporting_rank:
             print(
@@ -475,7 +491,9 @@ def main():
             print(f"{'='*64}")
             for head_name, acc, nc, nt in all_results:
                 status = "PASS" if acc > 0.0 else "FAIL"
-                print(f"  [{status}] {head_name}: top-{args.top_k} acc = {acc*100:.2f}% ({nc}/{nt})")
+                print(
+                    f"  [{status}] {head_name}: top-{args.top_k} acc = {acc*100:.2f}% ({nc}/{nt})"
+                )
             print(f"{'='*64}\n")
 
             # Hard assertion: every head must have non-zero accuracy

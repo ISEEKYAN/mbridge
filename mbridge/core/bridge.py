@@ -1,16 +1,16 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 import os
 from abc import ABC
-from typing import Callable, Generator
-from glob import glob
 from collections import defaultdict
+from glob import glob
+from typing import Callable, Generator
 
 import torch
 from megatron.core import parallel_state as mpu
 from megatron.core.models.gpt.gpt_model import ModelType
+from safetensors import safe_open
 from transformers import AutoConfig
 from transformers.utils.hub import cached_file
-from safetensors import safe_open
 
 from .parallel_states import ParallelStates
 from .safetensor_io import SafeTensorIO
@@ -216,12 +216,18 @@ class Bridge(ABC):
                     mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
                 else:
                     mcore_weight = None
-                if hf_names[0] in {"lm_head.weight", "model.embed_tokens.weight", "model.language_model.embed_tokens.weight"}:
+                if hf_names[0] in {
+                    "lm_head.weight",
+                    "model.embed_tokens.weight",
+                    "model.language_model.embed_tokens.weight",
+                }:
                     if param.shape[0] == 1 and (
                         mcore_weight is None or mcore_weight.shape[0] != 1
                     ):
                         # skip lm_head.weight when the model is a value model
-                        print(f"[WARNING] value model skip loading {local_name} from hf_names: {hf_names}")
+                        print(
+                            f"[WARNING] value model skip loading {local_name} from hf_names: {hf_names}"
+                        )
                         continue
 
                 param_to_load = torch.empty_like(param)
@@ -274,18 +280,23 @@ class Bridge(ABC):
         strict: bool = True,
     ) -> None:
         if len(glob(os.path.join(weights_path, "*.safetensors"))) > 0:
-            raise ValueError(f"The path:{weights_path} should not has safetensors files")
+            raise ValueError(
+                f"The path:{weights_path} should not has safetensors files"
+            )
         torch.distributed.barrier()
 
         def encode_filename(mcore_weight_name, *values):
-            return mcore_weight_name + '--' + '--'.join(
-                str(int(v)) if v is not None else '' for v in values)
+            return (
+                mcore_weight_name
+                + "--"
+                + "--".join(str(int(v)) if v is not None else "" for v in values)
+            )
 
         def decode_filename(filename):
-            parts = filename.split('--')
+            parts = filename.split("--")
             mcore_weight_name = parts[0]
             parts = parts[1:]
-            return [mcore_weight_name] + [None if p == '' else int(p) for p in parts]
+            return [mcore_weight_name] + [None if p == "" else int(p) for p in parts]
 
         per_tensor_generator = self.export_weights_without_gather(models)
         # step 1: save the split_tp_ep file (batched)
@@ -294,8 +305,9 @@ class Bridge(ABC):
         ep_dp_group = mpu.get_expert_data_parallel_group()
         ep_save_size = torch.distributed.get_world_size(ep_dp_group)
         if self.config.num_moe_experts:
-            assert ep_save_size == world_size // (self.mpu.ep_size * self.mpu.etp_size *
-                                                  self.mpu.pp_size)
+            assert ep_save_size == world_size // (
+                self.mpu.ep_size * self.mpu.etp_size * self.mpu.pp_size
+            )
         ep_save_rank = torch.distributed.get_rank(ep_dp_group)
         ep_save_cnt = 0
 
@@ -307,7 +319,11 @@ class Bridge(ABC):
 
         pp_save_size = world_size // self.mpu.pp_size
         dp_rank = mpu.get_data_parallel_rank()
-        pp_save_rank = dp_rank * self.mpu.cp_size * self.mpu.tp_size + self.mpu.cp_rank * self.mpu.tp_size + self.mpu.tp_rank
+        pp_save_rank = (
+            dp_rank * self.mpu.cp_size * self.mpu.tp_size
+            + self.mpu.cp_rank * self.mpu.tp_size
+            + self.mpu.tp_rank
+        )
         pp_save_cnt = 0
 
         # Batch buffer for step 1: accumulate tensors before writing
@@ -326,11 +342,26 @@ class Bridge(ABC):
             step1_buffer = {}
             step1_file_idx += 1
 
-        for (mcore_weight_name, tp_rank, tp_size, ep_rank, ep_size, tensor_model_parallel,
-             partition_dim, mcore_weight) in per_tensor_generator:
+        for (
+            mcore_weight_name,
+            tp_rank,
+            tp_size,
+            ep_rank,
+            ep_size,
+            tensor_model_parallel,
+            partition_dim,
+            mcore_weight,
+        ) in per_tensor_generator:
             assert "-" not in mcore_weight_name
-            filename = encode_filename(mcore_weight_name, tp_rank, tp_size, ep_rank, ep_size,
-                                       tensor_model_parallel, partition_dim)
+            filename = encode_filename(
+                mcore_weight_name,
+                tp_rank,
+                tp_size,
+                ep_rank,
+                ep_size,
+                tensor_model_parallel,
+                partition_dim,
+            )
             should_save = False
             # save EP/ETP
             if ep_size > 0:
@@ -371,20 +402,31 @@ class Bridge(ABC):
             with safe_open(file, framework="pt", device="cpu") as f:
                 for key in f.keys():
                     batch_key_index[key] = file
-                    (mcore_weight_name, tp_rank, tp_size, ep_rank, ep_size,
-                     tensor_model_parallel, partition_dim) = decode_filename(key)
+                    (
+                        mcore_weight_name,
+                        tp_rank,
+                        tp_size,
+                        ep_rank,
+                        ep_size,
+                        tensor_model_parallel,
+                        partition_dim,
+                    ) = decode_filename(key)
                     expert_id = -1
                     if ep_size > 0:
-                        mcore_weight_name, expert_id = mcore_weight_name.split(".weight")
+                        mcore_weight_name, expert_id = mcore_weight_name.split(
+                            ".weight"
+                        )
                         mcore_weight_name += ".weight"
-                    name2files[mcore_weight_name].append((
-                        key,   # 0: key in batch file
-                        tp_rank,  # 1
-                        int(expert_id),  # 2
-                        tp_size,  # 3
-                        tensor_model_parallel,  # 4
-                        partition_dim,  # 5
-                    ))
+                    name2files[mcore_weight_name].append(
+                        (
+                            key,  # 0: key in batch file
+                            tp_rank,  # 1
+                            int(expert_id),  # 2
+                            tp_size,  # 3
+                            tensor_model_parallel,  # 4
+                            partition_dim,  # 5
+                        )
+                    )
 
         def load_tensor_from_batches(key, batch_key_index):
             """Load a single tensor by key from batch files using pre-built index."""
@@ -395,8 +437,8 @@ class Bridge(ABC):
         def load_tensor_from_file(file_tuple):
             key, _, _, _, tensor_model_parallel, partition_dim = file_tuple
             tensor = load_tensor_from_batches(key, batch_key_index)
-            setattr(tensor, 'tensor_model_parallel', tensor_model_parallel)
-            setattr(tensor, 'partition_dim', partition_dim)
+            setattr(tensor, "tensor_model_parallel", tensor_model_parallel)
+            setattr(tensor, "partition_dim", partition_dim)
             return tensor
 
         # step 2.2: sorted and split for all rank, output batched
@@ -432,20 +474,30 @@ class Bridge(ABC):
                         assert w_files[idx + etp_idx][2] == expert_id
                         params.append(load_tensor_from_file(w_files[idx + etp_idx]))
                     tmp_w_name = w_name + str(expert_id)
-                    infer_params = self._weight_merge_across_tp(tmp_w_name, params, params[0])
-                    for hf_name, hf_param in zip(*self._weight_to_hf_format(tmp_w_name, infer_params)):
+                    infer_params = self._weight_merge_across_tp(
+                        tmp_w_name, params, params[0]
+                    )
+                    for hf_name, hf_param in zip(
+                        *self._weight_to_hf_format(tmp_w_name, infer_params)
+                    ):
                         hf_buffer[hf_name] = hf_param.detach().cpu()
                         if len(hf_buffer) >= tensors_per_file:
                             flush_hf_buffer()
             else:
                 # gather tp
                 if w_files[0][4] is not None and w_files[0][4] > 0:
-                    assert len(w_files) == w_files[0][3], f"len(w_files):{len(w_files)}, w_files[0][3]:{w_files[0][3]}"
+                    assert (
+                        len(w_files) == w_files[0][3]
+                    ), f"len(w_files):{len(w_files)}, w_files[0][3]:{w_files[0][3]}"
                     params = [load_tensor_from_file(w_file) for w_file in w_files]
-                    infer_params = self._weight_merge_across_tp(w_name, params, params[0])
+                    infer_params = self._weight_merge_across_tp(
+                        w_name, params, params[0]
+                    )
                 else:
                     infer_params = load_tensor_from_file(w_files[0])
-                for hf_name, hf_param in zip(*self._weight_to_hf_format(w_name, infer_params)):
+                for hf_name, hf_param in zip(
+                    *self._weight_to_hf_format(w_name, infer_params)
+                ):
                     hf_buffer[hf_name] = hf_param.detach().cpu()
                     if len(hf_buffer) >= tensors_per_file:
                         flush_hf_buffer()
@@ -711,7 +763,8 @@ class Bridge(ABC):
                 return False
             return (
                 tensor.dtype != bucket[0][1].dtype
-                or bucket_bytes + tensor.nelement() * tensor.element_size() > bucket_limit_bytes
+                or bucket_bytes + tensor.nelement() * tensor.element_size()
+                > bucket_limit_bytes
             )
 
         def _iter_etp_bucket_outputs(etp_bucket: list[tuple[str, torch.Tensor]]):
@@ -826,7 +879,8 @@ class Bridge(ABC):
 
     @torch.no_grad()
     def export_weights(
-        self, models: list[torch.nn.Module],
+        self,
+        models: list[torch.nn.Module],
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
         assert (
             len(self.export_weights_buff) == 0
@@ -854,13 +908,15 @@ class Bridge(ABC):
                     group_size
                 ),
             )
+
         # broadcast inside pp group
         named_params = self._iter_all_ranks_named_params(models, is_distributed)
         # allgather inside tp/ep/etp groups
         yield from self._iter_bucketed_export_outputs(named_params, _collect_bucket)
 
     def export_weights_without_gather(
-        self, models: list[torch.nn.Module],
+        self,
+        models: list[torch.nn.Module],
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
         """
         Export Weight Without Gather, Optim for distributed filesystem
@@ -869,7 +925,7 @@ class Bridge(ABC):
             name: MCore weight name
 
         Returns:
-            Generator[tuple]: [mcore_weight_name, tp_rank, tp_size, ep_rank, ep_size, 
+            Generator[tuple]: [mcore_weight_name, tp_rank, tp_size, ep_rank, ep_size,
                                tensor_model_parallel, partition_dim, mcore_weight]
               tp_size is 0: is not tp tensor
               ep_size is 0: is not ep tensor
@@ -937,7 +993,9 @@ class Bridge(ABC):
 
                 name_prefix, local_expert_id = name.split(".weight")
                 local_expert_id = int(local_expert_id)
-                global_expert_id = num_experts_per_rank * (self.mpu.ep_rank) + local_expert_id
+                global_expert_id = (
+                    num_experts_per_rank * (self.mpu.ep_rank) + local_expert_id
+                )
                 global_expert_name = f"{name_prefix}.weight{global_expert_id}"
 
                 yield (
@@ -953,7 +1011,7 @@ class Bridge(ABC):
                 continue
 
             # TP
-            if (hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel):
+            if hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel:
                 # allocate a new tensor with proper size
                 yield (
                     name,
