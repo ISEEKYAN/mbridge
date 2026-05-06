@@ -201,9 +201,9 @@ class Qwen3VBaseBridge(VLMBridge):
                     # reproduce the fused tensor.
                     fused_name = experts_key
                     prefix, _, proj_name = fused_name.rpartition(".")
-                    assert prefix.endswith(".experts"), (
-                        f"unexpected fused experts key: {fused_name}"
-                    )
+                    assert prefix.endswith(
+                        ".experts"
+                    ), f"unexpected fused experts key: {fused_name}"
                     per_expert_name = f"{prefix}.{experts_idx}.{proj_name}.weight"
                     return [per_expert_name], [mcore_weights.T]
 

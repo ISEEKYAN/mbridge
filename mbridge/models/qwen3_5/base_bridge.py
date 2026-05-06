@@ -416,9 +416,9 @@ class Qwen3_5VlBaseBridge(VLMBridge):
                     #   model.language_model.layers.{N}.mlp.experts.{expert_id}.gate_up_proj.weight
                     fused_name = hf_names[0]
                     prefix, _, proj_name = fused_name.rpartition(".")
-                    assert prefix.endswith(".experts"), (
-                        f"unexpected fused experts key: {fused_name}"
-                    )
+                    assert prefix.endswith(
+                        ".experts"
+                    ), f"unexpected fused experts key: {fused_name}"
                     per_expert_name = f"{prefix}.{experts_idx}.{proj_name}.weight"
                     return [per_expert_name], [mcore_weights]
 
