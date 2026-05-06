@@ -1,4 +1,3 @@
-import imp
 from copy import deepcopy
 
 from mbridge.core import register_model
