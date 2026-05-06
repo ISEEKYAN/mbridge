@@ -1,4 +1,3 @@
-import imp
 import inspect
 import logging
 from copy import deepcopy

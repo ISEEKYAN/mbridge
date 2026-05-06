@@ -1,7 +1,3 @@
-import imp
-
-import torch
-
 from mbridge.core import register_model
 from mbridge.models.qwen3_5.base_bridge import Qwen3_5VlBaseBridge
 from mbridge.models.qwen3_5.transformer_config import Qwen3_5VLTransformerConfig
