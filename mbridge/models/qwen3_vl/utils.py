@@ -185,7 +185,7 @@ def split_deepstack_embs(
     split_size = tp_size
     if cp_size > 1:
         split_size *= cp_size * 2
-    if split_size == 1 or visual_pos_masks is None:
+    if split_size == 1 or visual_pos_masks is None or deepstack_visual_embeds is None:
         return visual_pos_masks, deepstack_visual_embeds
 
     assert visual_pos_masks.dim() == 2
