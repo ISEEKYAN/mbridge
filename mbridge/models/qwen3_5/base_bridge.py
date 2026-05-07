@@ -111,14 +111,17 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         print(f"qwen3.5 model --- mtp_args:{mtp_args}")
         return mtp_args
 
+    def _language_tie_word_embeddings(self):
+        return getattr(self.hf_config, "tie_word_embeddings", False)
+
     def _adjust_mapping_for_shared_weights(self):
-        if getattr(self.hf_text_config, "tie_word_embeddings", False):
+        if self._language_tie_word_embeddings():
             self._DIRECT_MAPPING["language_model.output_layer.weight"] = (
                 "model.language_model.embed_tokens.weight"
             )
 
     def _get_hf_shared_weight_keys(self):
-        if getattr(self.hf_text_config, "tie_word_embeddings", False):
+        if self._language_tie_word_embeddings():
             return ["model.language_model.embed_tokens.weight"]
         return []
 
@@ -979,9 +982,7 @@ class Qwen3_5VlBaseBridge(VLMBridge):
             ):
                 mtp_block_spec = self._get_mtp_layer_spec(vp_stage)
 
-            share_embeddings_and_output_weights = getattr(
-                self.hf_text_config, "tie_word_embeddings", False
-            )
+            share_embeddings_and_output_weights = self._language_tie_word_embeddings()
 
             model = Qwen3_5VLModel(
                 language_transformer_config=self.config,

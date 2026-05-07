@@ -162,14 +162,17 @@ class Qwen2_5VLBridge(VLMBridge):
     def _get_safetensor_io(self, weights_path: str):
         return Qwen2_5VLSafeTensorIO(self._get_actual_hf_path(weights_path))
 
+    def _language_tie_word_embeddings(self):
+        return getattr(self.hf_config, "tie_word_embeddings", False)
+
     def _adjust_mapping_for_shared_weights(self):
-        if getattr(self.hf_text_config, "tie_word_embeddings", False):
+        if self._language_tie_word_embeddings():
             self._DIRECT_MAPPING["language_model.output_layer.weight"] = (
                 "model.embed_tokens.weight"
             )
 
     def _get_hf_shared_weight_keys(self):
-        if getattr(self.hf_text_config, "tie_word_embeddings", False):
+        if self._language_tie_word_embeddings():
             return ["model.embed_tokens.weight"]
         return []
 
@@ -526,9 +529,7 @@ class Qwen2_5VLBridge(VLMBridge):
             setattr(self, "vision_config", vision_transformer_config)
             setattr(self, "project_config", vision_projection_config)
 
-            share_embeddings_and_output_weights = getattr(
-                self.hf_text_config, "tie_word_embeddings", False
-            )
+            share_embeddings_and_output_weights = self._language_tie_word_embeddings()
 
             model = Qwen2_5VLModel(
                 language_transformer_config=self.config,

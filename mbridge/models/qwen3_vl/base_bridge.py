@@ -21,14 +21,17 @@ from mbridge.utils.hf_config import get_hf_rope_theta
 
 class Qwen3VBaseBridge(VLMBridge):
 
+    def _language_tie_word_embeddings(self):
+        return getattr(self.hf_config, "tie_word_embeddings", False)
+
     def _adjust_mapping_for_shared_weights(self):
-        if getattr(self.hf_config.text_config, "tie_word_embeddings", False):
+        if self._language_tie_word_embeddings():
             self._DIRECT_MAPPING["language_model.output_layer.weight"] = (
                 "model.language_model.embed_tokens.weight"
             )
 
     def _get_hf_shared_weight_keys(self):
-        if getattr(self.hf_config.text_config, "tie_word_embeddings", False):
+        if self._language_tie_word_embeddings():
             return ["model.language_model.embed_tokens.weight"]
         return []
 
@@ -416,9 +419,7 @@ class Qwen3VBaseBridge(VLMBridge):
             function: A provider function that creates and returns a GPTModel instance
         """
 
-        share_embeddings_and_output_weights = getattr(
-            self.hf_config, "tie_word_embeddings", False
-        )
+        share_embeddings_and_output_weights = self._language_tie_word_embeddings()
 
         def provider(
             pre_process,
