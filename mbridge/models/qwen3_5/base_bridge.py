@@ -21,6 +21,11 @@ from mbridge.utils.hf_config import get_hf_rope_scaling
 
 class Qwen3_5VlBaseBridge(VLMBridge):
 
+    def _handle_hf_config(self):
+        self.hf_text_config = getattr(self.hf_config, "text_config", self.hf_config)
+        self.hf_vision_config = getattr(self.hf_config, "vision_config", self.hf_config)
+        return self.hf_config
+
     def _get_transformer_layer_spec(self, vp_stage: Optional[int] = None):
         """
         Gets the transformer layer specification.
@@ -94,21 +99,11 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         # Add MTP configuration if present
         mtp_args = {}
         if (
-            hasattr(self.hf_config, "num_nextn_predict_layers")
-            and self.hf_config.num_nextn_predict_layers is not None
+            hasattr(self.hf_text_config, "num_nextn_predict_layers")
+            and self.hf_text_config.num_nextn_predict_layers is not None
+            and self.hf_text_config.num_nextn_predict_layers > 0
         ):
-            mtp_args["mtp_num_layers"] = self.hf_config.num_nextn_predict_layers
-            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get(
-                "mtp_loss_scaling_factor", 0.1
-            )
-        elif (
-            hasattr(self.hf_config.text_config, "mtp_num_hidden_layers")
-            and self.hf_config.text_config.mtp_num_hidden_layers is not None
-            and self.hf_config.text_config.mtp_num_hidden_layers > 0
-        ):
-            mtp_args["mtp_num_layers"] = (
-                self.hf_config.text_config.mtp_num_hidden_layers
-            )
+            mtp_args["mtp_num_layers"] = self.hf_text_config.num_nextn_predict_layers
             mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get(
                 "mtp_loss_scaling_factor", 0.1
             )
@@ -117,13 +112,13 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         return mtp_args
 
     def _adjust_mapping_for_shared_weights(self):
-        if getattr(self.hf_config.text_config, "tie_word_embeddings", False):
+        if getattr(self.hf_text_config, "tie_word_embeddings", False):
             self._DIRECT_MAPPING["language_model.output_layer.weight"] = (
                 "model.language_model.embed_tokens.weight"
             )
 
     def _get_hf_shared_weight_keys(self):
-        if getattr(self.hf_config.text_config, "tie_word_embeddings", False):
+        if getattr(self.hf_text_config, "tie_word_embeddings", False):
             return ["model.language_model.embed_tokens.weight"]
         return []
 
@@ -453,12 +448,12 @@ class Qwen3_5VlBaseBridge(VLMBridge):
             # split qkv
             assert len(hf_names) == 3
             # split qkv
-            num_key_value_heads = self.hf_config.text_config.num_key_value_heads
-            hidden_dim = self.hf_config.text_config.hidden_size
-            num_attention_heads = self.hf_config.text_config.num_attention_heads
+            num_key_value_heads = self.hf_text_config.num_key_value_heads
+            hidden_dim = self.hf_text_config.hidden_size
+            num_attention_heads = self.hf_text_config.num_attention_heads
 
             head_dim = getattr(
-                self.hf_config.text_config,
+                self.hf_text_config,
                 "head_dim",
                 hidden_dim // num_attention_heads,
             )
@@ -507,11 +502,11 @@ class Qwen3_5VlBaseBridge(VLMBridge):
 
         elif "self_attention.in_proj.weight" in mcore_weights_name:
             assert len(hf_names) == 4
-            hidden_size = self.hf_config.text_config.hidden_size
-            linear_num_key_heads = self.hf_config.text_config.linear_num_key_heads
-            linear_key_head_dim = self.hf_config.text_config.linear_key_head_dim
-            linear_num_value_heads = self.hf_config.text_config.linear_num_value_heads
-            linear_value_head_dim = self.hf_config.text_config.linear_value_head_dim
+            hidden_size = self.hf_text_config.hidden_size
+            linear_num_key_heads = self.hf_text_config.linear_num_key_heads
+            linear_key_head_dim = self.hf_text_config.linear_key_head_dim
+            linear_num_value_heads = self.hf_text_config.linear_num_value_heads
+            linear_value_head_dim = self.hf_text_config.linear_value_head_dim
 
             k_dim = linear_num_key_heads * linear_key_head_dim
             v_dim = linear_num_value_heads * linear_value_head_dim
@@ -610,14 +605,14 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         ):
             # merge qkv
             assert len(hf_weights) == 3
-            num_key_value_heads = self.hf_config.text_config.num_key_value_heads
-            hidden_dim = self.hf_config.text_config.hidden_size
-            num_attention_heads = self.hf_config.text_config.num_attention_heads
+            num_key_value_heads = self.hf_text_config.num_key_value_heads
+            hidden_dim = self.hf_text_config.hidden_size
+            num_attention_heads = self.hf_text_config.num_attention_heads
             if "vision_model" in mcore_weights_name:
-                num_attention_heads = self.hf_config.text_config.vision_config.num_heads
-                num_key_value_heads = self.hf_config.text_config.vision_config.num_heads
+                num_attention_heads = self.hf_text_config.vision_config.num_heads
+                num_key_value_heads = self.hf_text_config.vision_config.num_heads
             head_dim = getattr(
-                self.hf_config.text_config,
+                self.hf_text_config,
                 "head_dim",
                 hidden_dim // num_attention_heads,
             )
@@ -678,12 +673,12 @@ class Qwen3_5VlBaseBridge(VLMBridge):
             return torch.cat([gate, up], dim=0)
         elif "self_attention.in_proj.weight" in mcore_weights_name:
             assert len(hf_weights) == 4
-            hidden_size = self.hf_config.text_config.hidden_size
+            hidden_size = self.hf_text_config.hidden_size
             in_proj_qkv, in_proj_z, in_proj_b, in_proj_a = hf_weights
-            linear_num_key_heads = self.hf_config.text_config.linear_num_key_heads
-            linear_key_head_dim = self.hf_config.text_config.linear_key_head_dim
-            linear_num_value_heads = self.hf_config.text_config.linear_num_value_heads
-            linear_value_head_dim = self.hf_config.text_config.linear_value_head_dim
+            linear_num_key_heads = self.hf_text_config.linear_num_key_heads
+            linear_key_head_dim = self.hf_text_config.linear_key_head_dim
+            linear_num_value_heads = self.hf_text_config.linear_num_value_heads
+            linear_value_head_dim = self.hf_text_config.linear_value_head_dim
             key_dim = linear_key_head_dim * linear_num_key_heads
             value_dim = linear_value_head_dim * linear_num_value_heads
 
@@ -968,10 +963,6 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         """
         from mbridge.models.qwen3_5.model import Qwen3_5VLModel
 
-        share_embeddings_and_output_weights = getattr(
-            self.hf_config, "tie_word_embeddings", False
-        )
-
         def provider(
             pre_process,
             post_process,
@@ -988,20 +979,24 @@ class Qwen3_5VlBaseBridge(VLMBridge):
             ):
                 mtp_block_spec = self._get_mtp_layer_spec(vp_stage)
 
+            share_embeddings_and_output_weights = getattr(
+                self.hf_text_config, "tie_word_embeddings", False
+            )
+
             model = Qwen3_5VLModel(
                 language_transformer_config=self.config,
                 language_transformer_layer_spec=transformer_layer_spec,
                 language_mtp_block_spec=mtp_block_spec,
-                language_vocab_size=self.hf_config.text_config.vocab_size,
-                language_max_sequence_length=self.hf_config.text_config.max_position_embeddings,
+                language_vocab_size=self.hf_text_config.vocab_size,
+                language_max_sequence_length=self.hf_text_config.max_position_embeddings,
                 hf_config=self.hf_config,
                 hf_vision_cls=self.HfVisionClass,
-                language_rotary_percent=get_hf_rope_scaling(
-                    self.hf_config.text_config
-                ).get("partial_rotary_factor", 0.25),
-                language_rotary_base=get_hf_rope_scaling(
-                    self.hf_config.text_config
-                ).get("rope_theta", 10000000),
+                language_rotary_percent=get_hf_rope_scaling(self.hf_text_config).get(
+                    "partial_rotary_factor", 0.25
+                ),
+                language_rotary_base=get_hf_rope_scaling(self.hf_text_config).get(
+                    "rope_theta", 10000000
+                ),
                 position_embedding_type="mrope",
                 pre_process=pre_process,
                 post_process=post_process,
