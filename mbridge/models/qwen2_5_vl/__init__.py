@@ -569,6 +569,7 @@ class Qwen2_5VLBridge(VLMBridge):
         """
         return self._build_base_config(
             # qwen specific
+            text_config_key="text_config",
             add_qkv_bias=True,
             mrope_section=get_hf_rope_scaling(self.hf_config).get(
                 "mrope_section", None
