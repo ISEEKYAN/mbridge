@@ -154,10 +154,10 @@ class Qwen2_5VLBridge(VLMBridge):
         ],
     }
 
-    def __post_init__(self):
-        super().__post_init__()
+    def _handle_hf_config(self):
         self.hf_text_config = getattr(self.hf_config, "text_config", self.hf_config)
         self.hf_vision_config = getattr(self.hf_config, "vision_config", self.hf_config)
+        return self.hf_config
 
     def _get_safetensor_io(self, weights_path: str):
         return Qwen2_5VLSafeTensorIO(self._get_actual_hf_path(weights_path))
@@ -526,17 +526,15 @@ class Qwen2_5VLBridge(VLMBridge):
             setattr(self, "vision_config", vision_transformer_config)
             setattr(self, "project_config", vision_projection_config)
 
-            hf_text_config = getattr(self.hf_config, "text_config", self.hf_config)
-
             share_embeddings_and_output_weights = getattr(
-                hf_text_config, "tie_word_embeddings", False
+                self.hf_text_config, "tie_word_embeddings", False
             )
 
             model = Qwen2_5VLModel(
                 language_transformer_config=self.config,
                 language_transformer_layer_spec=transformer_layer_spec,
-                language_vocab_size=hf_text_config.vocab_size,
-                language_max_sequence_length=hf_text_config.max_position_embeddings,
+                language_vocab_size=self.hf_text_config.vocab_size,
+                language_max_sequence_length=self.hf_text_config.max_position_embeddings,
                 vision_transformer_config=vision_transformer_config,
                 vision_transformer_layer_spec=vision_transformer_layer_spec,
                 vision_projection_config=vision_projection_config,

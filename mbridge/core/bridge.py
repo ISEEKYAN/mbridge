@@ -49,6 +49,7 @@ class Bridge(ABC):
             export_weights_buffer_max_size_bytes: Max size of buffer for gather/broadcast in export weights
         """
         self.hf_config = hf_config
+        self.hf_config = self._handle_hf_config()
         self.extra_args = {}
         self.dtype = dtype
         self.mpu = parallel_states
@@ -156,6 +157,9 @@ class Bridge(ABC):
 
     def _get_mcore_config_by_name(self, mcore_weights_name: str):
         return self.config
+    
+    def _handle_hf_config(self):
+        return self.hf_config
 
     def load_weights(
         self,
