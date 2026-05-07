@@ -154,17 +154,22 @@ class Qwen2_5VLBridge(VLMBridge):
         ],
     }
 
+    def __post_init__(self):
+        super().__post_init__()
+        self.hf_text_config = getattr(self.hf_config, "text_config", self.hf_config)
+        self.hf_vision_config = getattr(self.hf_config, "vision_config", self.hf_config)
+
     def _get_safetensor_io(self, weights_path: str):
         return Qwen2_5VLSafeTensorIO(self._get_actual_hf_path(weights_path))
 
     def _adjust_mapping_for_shared_weights(self):
-        if getattr(self.hf_config, "tie_word_embeddings", False):
+        if getattr(self.hf_text_config, "tie_word_embeddings", False):
             self._DIRECT_MAPPING["language_model.output_layer.weight"] = (
                 "model.embed_tokens.weight"
             )
 
     def _get_hf_shared_weight_keys(self):
-        if getattr(self.hf_config, "tie_word_embeddings", False):
+        if getattr(self.hf_text_config, "tie_word_embeddings", False):
             return ["model.embed_tokens.weight"]
         return []
 
@@ -287,15 +292,15 @@ class Qwen2_5VLBridge(VLMBridge):
             # split qkv
             assert len(hf_names) == 3
             # split qkv
-            num_key_value_heads = self.hf_config.num_key_value_heads
-            hidden_dim = self.hf_config.hidden_size
-            num_attention_heads = self.hf_config.num_attention_heads
+            num_key_value_heads = self.hf_text_config.num_key_value_heads
+            hidden_dim = self.hf_text_config.hidden_size
+            num_attention_heads = self.hf_text_config.num_attention_heads
 
             if "vision_model" in mcore_weights_name:
                 num_attention_heads = self.hf_config.vision_config.num_heads
                 num_key_value_heads = self.hf_config.vision_config.num_heads
             head_dim = getattr(
-                self.hf_config, "head_dim", hidden_dim // num_attention_heads
+                self.hf_text_config, "head_dim", hidden_dim // num_attention_heads
             )
             out_shape = (
                 [num_key_value_heads, -1, hidden_dim]
@@ -383,14 +388,14 @@ class Qwen2_5VLBridge(VLMBridge):
         ):
             # merge qkv
             assert len(hf_weights) == 3
-            num_key_value_heads = self.hf_config.num_key_value_heads
-            hidden_dim = self.hf_config.hidden_size
-            num_attention_heads = self.hf_config.num_attention_heads
+            num_key_value_heads = self.hf_text_config.num_key_value_heads
+            hidden_dim = self.hf_text_config.hidden_size
+            num_attention_heads = self.hf_text_config.num_attention_heads
             if "vision_model" in mcore_weights_name:
                 num_attention_heads = self.hf_config.vision_config.num_heads
                 num_key_value_heads = self.hf_config.vision_config.num_heads
             head_dim = getattr(
-                self.hf_config, "head_dim", hidden_dim // num_attention_heads
+                self.hf_text_config, "head_dim", hidden_dim // num_attention_heads
             )
             group_dim = head_dim * num_attention_heads // num_key_value_heads
             q, k, v = hf_weights
@@ -485,10 +490,6 @@ class Qwen2_5VLBridge(VLMBridge):
             function: A provider function that creates and returns a GPTModel instance
         """
 
-        share_embeddings_and_output_weights = getattr(
-            self.hf_config, "tie_word_embeddings", False
-        )
-
         def provider(
             pre_process,
             post_process,
@@ -525,11 +526,17 @@ class Qwen2_5VLBridge(VLMBridge):
             setattr(self, "vision_config", vision_transformer_config)
             setattr(self, "project_config", vision_projection_config)
 
+            hf_text_config = getattr(self.hf_config, "text_config", self.hf_config)
+
+            share_embeddings_and_output_weights = getattr(
+                hf_text_config, "tie_word_embeddings", False
+            )
+
             model = Qwen2_5VLModel(
                 language_transformer_config=self.config,
                 language_transformer_layer_spec=transformer_layer_spec,
-                language_vocab_size=self.hf_config.vocab_size,
-                language_max_sequence_length=self.hf_config.max_position_embeddings,
+                language_vocab_size=hf_text_config.vocab_size,
+                language_max_sequence_length=hf_text_config.max_position_embeddings,
                 vision_transformer_config=vision_transformer_config,
                 vision_transformer_layer_spec=vision_transformer_layer_spec,
                 vision_projection_config=vision_projection_config,
