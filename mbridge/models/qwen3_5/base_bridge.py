@@ -98,7 +98,8 @@ class Qwen3_5VlBaseBridge(VLMBridge):
     def _build_mtp_config(self):
         # Add MTP configuration if present
         mtp_args = {}
-        if (hasattr(self.hf_text_config, "num_nextn_predict_layers")
+        if (
+            hasattr(self.hf_text_config, "num_nextn_predict_layers")
             and self.hf_text_config.num_nextn_predict_layers is not None
             and self.hf_text_config.num_nextn_predict_layers > 0
         ):
@@ -990,12 +991,12 @@ class Qwen3_5VlBaseBridge(VLMBridge):
                 language_max_sequence_length=self.hf_text_config.max_position_embeddings,
                 hf_config=self.hf_config,
                 hf_vision_cls=self.HfVisionClass,
-                language_rotary_percent=get_hf_rope_scaling(
-                    self.hf_text_config
-                ).get("partial_rotary_factor", 0.25),
-                language_rotary_base=get_hf_rope_scaling(
-                    self.hf_text_config
-                ).get("rope_theta", 10000000),
+                language_rotary_percent=get_hf_rope_scaling(self.hf_text_config).get(
+                    "partial_rotary_factor", 0.25
+                ),
+                language_rotary_base=get_hf_rope_scaling(self.hf_text_config).get(
+                    "rope_theta", 10000000
+                ),
                 position_embedding_type="mrope",
                 pre_process=pre_process,
                 post_process=post_process,

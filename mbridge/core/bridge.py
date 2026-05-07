@@ -157,7 +157,7 @@ class Bridge(ABC):
 
     def _get_mcore_config_by_name(self, mcore_weights_name: str):
         return self.config
-    
+
     def _handle_hf_config(self):
         return self.hf_config
 
