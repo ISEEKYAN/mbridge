@@ -519,6 +519,7 @@ def get_vision_cp_data(
     square_merge_size: int,
     cp_img_num: list[int],
     images_padded: list[bool],
+    group: torch.distributed.ProcessGroup = None,
 ):
     """Get vision data and grid_thw for context parallelism.
     Returns:
@@ -529,8 +530,10 @@ def get_vision_cp_data(
     """
     # we use the context parallelism size and context parallel group of LLM for vision model.
     # we only divide the number of images in each context parallel rank.
-    cp_size = mpu.get_context_parallel_world_size()
-    cp_rank = mpu.get_context_parallel_rank()
+    if group is None:
+        group = mpu.get_context_parallel_group()
+    cp_size = group.size()
+    cp_rank = group.rank()
     assert cp_size == len(cp_img_num)
 
     seqlens = torch.repeat_interleave(
@@ -561,7 +564,9 @@ def get_vision_cp_data(
 
 class AllGatherVisionEmbeddings(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input, seqlens_on_cp_ranks):
+    def forward(ctx, input, seqlens_on_cp_ranks, group=None):
+        if group is None:
+            group = mpu.get_context_parallel_group()
         outputs = []
         for i in range(len(seqlens_on_cp_ranks)):
             o = torch.zeros(
@@ -571,10 +576,8 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
                 layout=input.layout,
             )
             outputs.append(o)
-        torch.distributed.all_gather(
-            outputs, input, group=mpu.get_context_parallel_group()
-        )
-        cp_rank = mpu.get_context_parallel_rank()
+        torch.distributed.all_gather(outputs, input, group=group)
+        cp_rank = group.rank()
         ctx.cp_rank = cp_rank
         ctx.save_for_backward(*seqlens_on_cp_ranks)
 
@@ -590,7 +593,7 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
         )
         end_idx = start_idx + seqlens_on_cp_ranks[cp_rank].sum()
         grad_output = grad_output[start_idx:end_idx]
-        return grad_output, None
+        return grad_output, None, None
 
 
 def preprocess_packed_seqs(

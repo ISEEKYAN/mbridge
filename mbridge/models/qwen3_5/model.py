@@ -318,6 +318,8 @@ class Qwen3_5VLModel(MegatronModule):
         vision_mask = None
         # TODO: this approach may need rethinking
         cp_size = mpu.get_context_parallel_world_size()
+        parallel_size = mpu.get_context_parallel_world_size()
+        group = mpu.get_context_parallel_group()
 
         # Track packed input_ids (THD format) for MTP use when remove_padding is enabled
         input_ids_packed = None
@@ -339,12 +341,12 @@ class Qwen3_5VLModel(MegatronModule):
 
             vision_embeds = None
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
-                if cp_size > 1:
+                if parallel_size > 1:
                     if cp_img_num is None:
                         assert images_padded is None
                         vision_data, vision_grid_thw, cp_img_num, images_padded = (
                             qwen3vl_cp_split(
-                                cp_size,
+                                parallel_size,
                                 vision_data,
                                 vision_grid_thw,
                             )
@@ -356,6 +358,7 @@ class Qwen3_5VLModel(MegatronModule):
                             self.square_merge_size,
                             cp_img_num,
                             images_padded,
+                            group,
                         )
                     )
                     vision_grid_thw = collapse_thw(vision_grid_thw)
@@ -376,10 +379,11 @@ class Qwen3_5VLModel(MegatronModule):
                         device=vision_data.device,
                         dtype=torch.bfloat16,
                     )
-                if cp_size > 1:
+                if parallel_size > 1:
                     vision_embeds = AllGatherVisionEmbeddings.apply(
                         vision_embeds,
                         seqlen_on_cp_ranks,
+                        group,
                     )
 
             combined_embeddings = self.language_model._modules["embedding"](
