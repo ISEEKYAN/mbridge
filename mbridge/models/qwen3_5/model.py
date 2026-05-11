@@ -318,8 +318,8 @@ class Qwen3_5VLModel(MegatronModule):
         vision_mask = None
         # TODO: this approach may need rethinking
         cp_size = mpu.get_context_parallel_world_size()
-        parallel_size = mpu.get_context_parallel_world_size()
-        group = mpu.get_context_parallel_group()
+        parallel_size = mpu.get_tensor_and_context_parallel_world_size()
+        group = mpu.get_tensor_and_context_parallel_group()
 
         # Track packed input_ids (THD format) for MTP use when remove_padding is enabled
         input_ids_packed = None
