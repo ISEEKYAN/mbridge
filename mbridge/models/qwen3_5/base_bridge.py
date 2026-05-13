@@ -96,17 +96,21 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         return mtp_block_spec
 
     def _build_mtp_config(self):
-        # Add MTP configuration if present
-        mtp_args = {}
-        if (
-            hasattr(self.hf_text_config, "num_nextn_predict_layers")
-            and self.hf_text_config.num_nextn_predict_layers is not None
-            and self.hf_text_config.num_nextn_predict_layers > 0
-        ):
-            mtp_args["mtp_num_layers"] = self.hf_text_config.num_nextn_predict_layers
-            mtp_args["mtp_loss_scaling_factor"] = self.extra_args.get(
-                "mtp_loss_scaling_factor", 0.1
+        # Qwen3.5/Qwen3.6 use mtp_num_hidden_layers as the MTP key, falling back to num_nextn_predict_layers.
+        mtp_num_layers = getattr(self.hf_text_config, "mtp_num_hidden_layers", None)
+        if mtp_num_layers is None:
+            mtp_num_layers = getattr(
+                self.hf_text_config, "num_nextn_predict_layers", None
             )
+
+        mtp_args = {}
+        if mtp_num_layers is not None and mtp_num_layers > 0:
+            mtp_args = {
+                "mtp_num_layers": mtp_num_layers,
+                "mtp_loss_scaling_factor": self.extra_args.get(
+                    "mtp_loss_scaling_factor", 0.1
+                ),
+            }
 
         print(f"qwen3.5 model --- mtp_args:{mtp_args}")
         return mtp_args
