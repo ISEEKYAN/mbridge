@@ -4,7 +4,7 @@ Usage:
   torchrun --nproc_per_node=8 example/qwen3_5/test_save_mtp.py \
       --model_path hf-hub/Qwen/Qwen3.5-4B \
       --save_path qwen3_5_4b_saved \
-      --tp 2 --pp 1 --cp 1 --ep 1
+      --tp 2 --pp 2 --cp 1 --ep 1
 """
 
 import argparse
@@ -152,6 +152,22 @@ def main() -> None:
         print("Save finished.")
         print("Comparing saved HF weights with the source HF weights.")
         compare_saved_weights(args.model_path, args.save_path)
+
+    distributed_save_path = f"{args.save_path}_distributed_filesystem"
+    if rank == 0:
+        print(f"Saving Qwen3.5 model to {distributed_save_path} with DFS fast path")
+    bridge.save_weights(
+        model,
+        distributed_save_path,
+        memory_efficient=True,
+        distributed_filesystem=True,
+    )
+
+    torch.distributed.barrier()
+    if rank == 0:
+        print("Distributed filesystem save finished.")
+        print("Comparing DFS-saved HF weights with the source HF weights.")
+        compare_saved_weights(args.model_path, distributed_save_path)
 
     torch.distributed.destroy_process_group()
 

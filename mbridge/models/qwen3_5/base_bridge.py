@@ -76,6 +76,7 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         config = deepcopy(self.config)
         config.num_layers = 1
         config.linear_attention_freq = [0]
+        config.num_layers_in_first_pipeline_stage = None
         config.num_layers_in_last_pipeline_stage = 1
 
         extra_args = {}
