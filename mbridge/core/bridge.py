@@ -1025,6 +1025,14 @@ class Bridge(ABC):
 
             assert iter_pp_rank == self.mpu.pp_rank
 
+            if (
+                self.mpu.pp_size > 1
+                and "embedding.word_embeddings.weight" in name
+                and getattr(param, "shared", False)
+                and getattr(param, "shared_embedding", False)
+            ):
+                continue
+
             # EP
             if ".mlp.experts.linear_fc" in name and self.mpu.ep_size >= 1:
                 num_experts = self.config.num_moe_experts
