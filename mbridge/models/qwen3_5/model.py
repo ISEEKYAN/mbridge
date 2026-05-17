@@ -502,25 +502,17 @@ class Qwen3_5VLModel(MegatronModule):
                 # THD mode: embedding wrapper must scatter (do_scatter=True).
                 self.language_model.init_mtp_embedding_scatter(do_scatter=True)
             else:
+                # BSHD mode: only CP-split input_ids, let the embedding wrapper
+                # handle TP scatter after embedding.  This is critical because
+                # MTP's roll_tensor only exchanges boundary tokens across CP ranks
+                # (via isend/irecv), NOT across TP ranks.  Pre-scattering by TP
+                # would cause incorrect "next token" lookups at TP boundaries.
                 sp_input_ids = input_ids
-
-                if input_ids is not None and combined_embeddings is not None:
-                    # BSHD mode: input_ids may arrive already SP-scattered (shape [B, S/TP])
-                    # or still full-length (shape [B, S]).  combined_embeddings has already been
-                    # CP-split and TP-scattered by this point, so its dim-0 equals S/(TP*CP*2).
-                    # We need sp_input_ids to be [B, S/(TP*CP*2)] so that MTP embedding output
-                    # [S/(TP*CP*2), B, H] matches hidden_states [S/(TP*CP*2), B, H].
-                    # Step 1: TP scatter along seq dim: [B, S] -> [B, S/TP]
-                    # Step 2: CP split along seq dim:   [B, S/TP] -> [B, S/(TP*CP*2)]
-                    if input_ids.shape[1] != combined_embeddings.shape[0]:
-                        sp_input_ids = input_ids.permute(1, 0).contiguous()
-                        sp_input_ids = tensor_parallel.scatter_to_sequence_parallel_region(sp_input_ids)
-                        if cp_size > 1:
-                            # CP split: [S/TP, B] -> [S/(TP*CP*2), B]
-                            sp_input_ids = split_data_cp_rank(sp_input_ids, cp_size, seq_dim=0)
-                        sp_input_ids = sp_input_ids.permute(1, 0).contiguous()
-                    # sp_input_ids is now [B, S/(TP*CP*2)]: embedding wrapper must NOT scatter again.
-                    self.language_model.init_mtp_embedding_scatter(do_scatter=False)
+                if input_ids is not None and cp_size > 1:
+                    sp_input_ids = split_data_cp_rank(
+                        input_ids, cp_size, seq_dim=1
+                    )
+                self.language_model.init_mtp_embedding_scatter(do_scatter=True)
 
         return self.language_model(
             input_ids=sp_input_ids,
