@@ -509,11 +509,9 @@ class Qwen3_5VLModel(MegatronModule):
                 # would cause incorrect "next token" lookups at TP boundaries.
                 sp_input_ids = input_ids
                 if input_ids is not None and cp_size > 1:
-                    sp_input_ids = input_ids.permute(1, 0).contiguous()
                     sp_input_ids = split_data_cp_rank(
-                        sp_input_ids, cp_size, seq_dim=0
+                        input_ids, cp_size, seq_dim=1
                     )
-                    sp_input_ids = sp_input_ids.permute(1, 0).contiguous()
                 self.language_model.init_mtp_embedding_scatter(do_scatter=True)
 
         return self.language_model(
