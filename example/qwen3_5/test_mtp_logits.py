@@ -77,7 +77,7 @@ from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from transformers import AutoTokenizer
 
 from mbridge import AutoBridge
-from mbridge.core.util import unwrap_model
+from mbridge.core.util import split_data_cp_rank, unwrap_model
 
 # ---------------------------------------------------------------------------
 # Distributed helpers
@@ -214,6 +214,12 @@ def make_fwd_fn_with_labels(input_ids_gpu: torch.Tensor):
         _ = next(data_iterator)  # consume iterator (input captured via closure)
         # Shift-right labels: target[i] = input[i+1]; pad last position with 0
         labels = F.pad(input_ids_gpu[:, 1:], (0, 1), value=0)  # [B, S]
+
+        cp_size = mpu.get_context_parallel_world_size()
+        if cp_size > 1:
+            labels = split_data_cp_rank(
+                labels.permute(1, 0).contiguous(), cp_size, seq_dim=0
+            ).permute(1, 0).contiguous()
 
         output_tensor = model(
             input_ids=input_ids_gpu,
