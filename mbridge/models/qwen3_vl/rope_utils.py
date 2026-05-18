@@ -119,6 +119,8 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         """
         seq = position_ids.to(device=self.inv_freq.device, dtype=self.inv_freq.dtype)
         cp_group = kwargs.get("cp_group", parallel_state.get_context_parallel_group())
+        if cp_group is None:
+            cp_group = parallel_state.get_context_parallel_group()
 
         if self.seq_len_interpolation_factor is not None:
             seq *= 1 / self.seq_len_interpolation_factor

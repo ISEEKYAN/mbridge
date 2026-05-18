@@ -8,6 +8,7 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.extensions.transformer_engine import get_thd_partitioned_indices
 from transformers import AutoConfig
 
 from mbridge.core.util import (
@@ -288,6 +289,47 @@ class Qwen3_5VLModel(MegatronModule):
             if self.vision_model is not None:
                 for param in self.vision_model.merger.parameters():
                     param.requires_grad = True
+    
+    def _split_data(self, vision_data, vision_grid_thw, cp_img_num, images_padded, groups):
+        if len(groups) > 1:
+            assert cp_img_num is None
+            assert images_padded is None
+        
+        seqlen_on_ranks = []
+        for group in groups:
+            parallel_size = group.size()
+            if cp_img_num is None:
+                assert images_padded is None
+                vision_data, vision_grid_thw, cp_img_num, images_padded = (
+                    qwen3vl_cp_split(
+                        parallel_size,
+                        vision_data,
+                        vision_grid_thw,
+                    )
+                )
+            vision_data, vision_grid_thw, seqlen_on_rank = (
+                get_vision_cp_data(
+                    vision_data,
+                    vision_grid_thw,
+                    self.square_merge_size,
+                    cp_img_num,
+                    images_padded,
+                    group,
+                )
+            )
+            cp_img_num, images_padded = None, None
+            seqlen_on_ranks.append(seqlen_on_rank)
+        vision_grid_thw = collapse_thw(vision_grid_thw)
+        return vision_data, vision_grid_thw, seqlen_on_ranks
+
+    def _gather_data(self, vision_embeds, seqlen_on_ranks, groups):
+        for seqlen_on_cp_rank, group in zip(reversed(seqlen_on_ranks), reversed(groups)):
+            vision_embeds = AllGatherVisionEmbeddings.apply(
+                vision_embeds,
+                seqlen_on_cp_rank,
+                group,
+            )
+        return vision_embeds
 
     def forward(
         self,
@@ -295,20 +337,20 @@ class Qwen3_5VLModel(MegatronModule):
         position_ids: torch.Tensor = None,
         attention_mask: torch.Tensor = None,
         labels: torch.Tensor = None,
-        inference_context: BaseInferenceContext = None,
-        packed_seq_params: PackedSeqParams = None,
-        extra_block_kwargs: dict = None,
+        inference_context: Optional[BaseInferenceContext] = None,
+        packed_seq_params: Optional[PackedSeqParams] = None,
+        extra_block_kwargs: Optional[dict] = None,
         runtime_gather_output: Optional[bool] = None,
         inference_params: Optional[BaseInferenceContext] = None,
-        pixel_values: torch.Tensor = None,
-        pixel_values_videos: torch.Tensor = None,
-        image_grid_thw: torch.Tensor = None,
-        video_grid_thw: torch.Tensor = None,
+        pixel_values: Optional[torch.Tensor] = None,
+        pixel_values_videos: Optional[torch.Tensor] = None,
+        image_grid_thw: Optional[torch.Tensor] = None,
+        video_grid_thw: Optional[torch.Tensor] = None,
         # can set at dataset
-        image_input_mask: torch.Tensor = None,
-        video_input_mask: torch.Tensor = None,
-        cp_img_num: list[int] = None,
-        images_padded: list[bool] = None,
+        image_input_mask: Optional[torch.Tensor] = None,
+        video_input_mask: Optional[torch.Tensor] = None,
+        cp_img_num: Optional[list[int]] = None,
+        images_padded: Optional[list[bool]] = None,
         **kwargs,
     ) -> torch.Tensor:
         assert inference_context is None, "not support inference yet"
@@ -316,10 +358,25 @@ class Qwen3_5VLModel(MegatronModule):
         vision_grid_thw = None
         vision_data = None
         vision_mask = None
-        # TODO: this approach may need rethinking
-        cp_size = mpu.get_context_parallel_world_size()
-        parallel_size = mpu.get_tensor_and_context_parallel_world_size()
-        group = mpu.get_tensor_and_context_parallel_group()
+        
+        if packed_seq_params is not None and packed_seq_params.cp_group is not None:
+            cp_group = packed_seq_params.cp_group
+        else:
+            cp_group = mpu.get_context_parallel_group()
+        cp_size = cp_group.size()
+        groups = []
+        if cp_size > 1:
+            if cp_size == mpu.get_context_parallel_world_size():
+                groups.append(mpu.get_tensor_and_context_parallel_group())
+            else:
+                groups.append(cp_group)
+                if mpu.get_tensor_model_parallel_world_size() > 1:
+                    groups.append(mpu.get_tensor_model_parallel_group())
+        else:
+            if mpu.get_tensor_model_parallel_world_size() > 1:
+                groups.append(mpu.get_tensor_model_parallel_group())
+
+        self.language_model.rotary_pos_emb.is_thd_format = packed_seq_params is not None
 
         # Track packed input_ids (THD format) for MTP use when remove_padding is enabled
         input_ids_packed = None
@@ -341,27 +398,13 @@ class Qwen3_5VLModel(MegatronModule):
 
             vision_embeds = None
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
-                if parallel_size > 1:
-                    if cp_img_num is None:
-                        assert images_padded is None
-                        vision_data, vision_grid_thw, cp_img_num, images_padded = (
-                            qwen3vl_cp_split(
-                                parallel_size,
-                                vision_data,
-                                vision_grid_thw,
-                            )
-                        )
-                    vision_data, vision_grid_thw, seqlen_on_cp_ranks = (
-                        get_vision_cp_data(
-                            vision_data,
-                            vision_grid_thw,
-                            self.square_merge_size,
-                            cp_img_num,
-                            images_padded,
-                            group,
-                        )
-                    )
-                    vision_grid_thw = collapse_thw(vision_grid_thw)
+                vision_data, vision_grid_thw, seqlen_on_ranks = self._split_data(
+                    vision_data,
+                    vision_grid_thw,
+                    cp_img_num,
+                    images_padded,
+                    groups
+                )
                 if vision_data.shape[0] > 0:
                     vision_embeds = self.vision_model(
                         hidden_states=vision_data,
@@ -379,12 +422,7 @@ class Qwen3_5VLModel(MegatronModule):
                         device=vision_data.device,
                         dtype=torch.bfloat16,
                     )
-                if parallel_size > 1:
-                    vision_embeds = AllGatherVisionEmbeddings.apply(
-                        vision_embeds,
-                        seqlen_on_cp_ranks,
-                        group,
-                    )
+                vision_embeds = self._gather_data(vision_embeds, seqlen_on_ranks, groups)
 
             combined_embeddings = self.language_model._modules["embedding"](
                 input_ids=input_ids,
@@ -404,7 +442,30 @@ class Qwen3_5VLModel(MegatronModule):
                 combined_embeddings = split_data_cp_rank(
                     combined_embeddings, cp_size, 0
                 )
-            if packed_seq_params is not None:
+
+            # packed_seq_params is not None and attention_mask is None: 
+            # means we already packed input_ids
+            if (
+                combined_embeddings is not None
+                and packed_seq_params is not None
+                and attention_mask is None
+                and cp_size > 1
+                and packed_seq_params.cu_seqlens_q_padded is not None
+            ):
+                full_total_tokens = combined_embeddings.size(0)
+                assert full_total_tokens == input_ids.size(-1), f"{combined_embeddings.shape=} != {input_ids.shape=}"
+                index = get_thd_partitioned_indices(
+                    packed_seq_params.cu_seqlens_q_padded,
+                    full_total_tokens,
+                    cp_size,
+                    cp_group.rank(),
+                )
+                vision_mask = vision_mask.index_select(1, index)
+                combined_embeddings = combined_embeddings.index_select(0, index).contiguous()
+
+            # packed_seq_params is not None and attention_mask is  not None: 
+            # means we need packed input_ids in here
+            if packed_seq_params is not None and attention_mask is not None:
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True
                 )
@@ -521,7 +582,7 @@ class Qwen3_5VLModel(MegatronModule):
             decoder_input=combined_embeddings,  # only not None in the first decoder PP stage
             labels=labels,  # only not None in the last decoder PP stage
             inference_context=inference_context,
-            packed_seq_params=packed_seq_params,  # currently always None
+            packed_seq_params=packed_seq_params,
             runtime_gather_output=runtime_gather_output,
             inference_params=inference_params,  # currently always None
             **(extra_block_kwargs or {}),
