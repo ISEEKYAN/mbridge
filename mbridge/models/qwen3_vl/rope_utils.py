@@ -118,6 +118,9 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             Tensor: Embeddings after applying RoPE.
         """
         seq = position_ids.to(device=self.inv_freq.device, dtype=self.inv_freq.dtype)
+        cp_group = kwargs.get("cp_group", parallel_state.get_context_parallel_group())
+        if cp_group is None:
+            cp_group = parallel_state.get_context_parallel_group()
 
         if self.seq_len_interpolation_factor is not None:
             seq *= 1 / self.seq_len_interpolation_factor
@@ -136,14 +139,12 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         # shape (seq_length, bs, 1, 2 * dim)
         emb = emb[..., None, :].transpose(0, 1).contiguous()
         if (
-            parallel_state.get_context_parallel_world_size() > 1
+            cp_group.size() > 1
             and not self.is_thd_format
         ):
             # slice rotary_pos_emb along sequence dimension and select the parition of the current
             # CP rank
-            emb = get_pos_emb_on_this_cp_rank(
-                emb, 0, parallel_state.get_context_parallel_group()
-            )
+            emb = get_pos_emb_on_this_cp_rank(emb, 0, cp_group)
         return emb
 
 
