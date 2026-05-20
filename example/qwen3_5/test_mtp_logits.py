@@ -33,18 +33,18 @@
 # Test result on Qwen3.5-35B-A3B model
 # ================================================================
 #   MTP HEAD 0  —  logits[i] predicts token[i+2]
-#   Top-1 accuracy : 43.08%  (28/65 valid positions)
+#   Top-1 accuracy : 66.15%  (43/65 valid positions)
 # ================================================================
 
-#   --- Spot-check: first 12 positions ---
-#   pos=  0 | pred=    314 ' of'          | gt=    314 ' of'          | ✓
+#  --- Spot-check: first 12 positions ---
+#   pos=  0 | pred=     11 ','            | gt=    314 ' of'          | ✗
 #   pos=  1 | pred=    279 ' the'         | gt=   9338 ' France'      | ✗
 #   pos=  2 | pred=    369 ' is'          | gt=    369 ' is'          | ✓
 #   pos=  3 | pred=  11751 ' Paris'       | gt=  11751 ' Paris'       | ✓
 #   pos=  4 | pred=     13 '.'            | gt=     13 '.'            | ✓
 #   pos=  5 | pred=    198 '\n'           | gt=    561 ' The'         | ✗
 #   pos=  6 | pred=   6511 ' capital'     | gt= 242476 ' Eiff'        | ✗
-#   pos=  7 | pred=    684 'so'           | gt=    300 'el'           | ✗
+#   pos=  7 | pred=    300 'el'           | gt=    300 'el'           | ✓
 #   pos=  8 | pred=  21262 ' Tower'       | gt=  21262 ' Tower'       | ✓
 #   pos=  9 | pred=    369 ' is'          | gt=    557 ' was'         | ✗
 #   pos= 10 | pred=   5617 ' built'       | gt=   5617 ' built'       | ✓
@@ -52,14 +52,14 @@
 
 # ================================================================
 #   MAIN HEAD  —  logits[i] predicts token[i+1]
-#   Top-1 accuracy : 68.18%  (45/66 valid positions)
+#   Top-1 accuracy : 69.70%  (46/66 valid positions)
 # ================================================================
 
 # ================================================================
 #   SUMMARY
 # ================================================================
-#   [PASS] MTP head 0 (predicts token[i+2]): top-1 acc = 43.08% (28/65)
-#   [PASS] Main head (predicts token[i+1]): top-1 acc = 68.18% (45/66)
+#   [PASS] MTP head 0 (predicts token[i+2]): top-1 acc = 66.15% (43/65)
+#   [PASS] Main head (predicts token[i+1]): top-1 acc = 69.70% (46/66)
 # ================================================================
 
 

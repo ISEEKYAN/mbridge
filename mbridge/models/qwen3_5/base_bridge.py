@@ -21,6 +21,8 @@ from mbridge.utils.hf_config import get_hf_rope_scaling
 
 class Qwen3_5VlBaseBridge(VLMBridge):
 
+    mtp_fused_experts: bool = False
+
     def _handle_hf_config(self):
         self.hf_text_config = getattr(self.hf_config, "text_config", self.hf_config)
         self.hf_vision_config = getattr(self.hf_config, "vision_config", self.hf_config)
@@ -134,10 +136,13 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         return self.config
 
     def _get_safetensor_io(self, weights_path: str):
-        # TODO: MTP layers are not handled yet
-        return Qwen3_5SafeTensorIO(
-            self._get_actual_hf_path(weights_path), ignore_mtp=False
+        mtp_num_layers = getattr(self.config, "mtp_num_layers", None)
+
+        sio = Qwen3_5SafeTensorIO(
+            self._get_actual_hf_path(weights_path), ignore_mtp=(mtp_num_layers is None)
         )
+        self.mtp_fused_experts = sio.mtp_fused_experts
+        return sio
 
     def _weight_name_mapping_mcore_local_to_global(
         self, model: torch.nn.Module, consider_ep: bool = True
@@ -305,6 +310,15 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         ],
     }
 
+    MTP_FUSED_EXPERTS_MAPPING = {
+        "language_model.mtp.layers.0.transformer_layer.mlp.experts.linear_fc1.weight{expert_index}": [
+            "mtp.layers.0.mlp.experts.gate_up_proj",
+        ],
+        "language_model.mtp.layers.0.transformer_layer.mlp.experts.linear_fc2.weight{expert_index}": [
+            "mtp.layers.0.mlp.experts.down_proj",
+        ],
+    }
+
     def _convert_mtp_param(self, name: str) -> list[str]:
         assert self.config.mtp_num_layers == 1, "only support one mtp layer for now"
 
@@ -319,10 +333,13 @@ class Qwen3_5VlBaseBridge(VLMBridge):
         # e.g. language_model.mtp.layers.0.transformer_layer.mlp.experts.linear_fc1.weight3
         #   -> key = "...linear_fc1.weight{expert_index}", expert_index = 3
         if ".mlp.experts.linear_fc" in name:
-            # split off the numeric expert_index suffix after ".weight"
             prefix, expert_index_str = name.split(".weight", 1)
             expert_index = int(expert_index_str)
             key = prefix + ".weight{expert_index}"
+
+            if self.mtp_fused_experts:
+                return self.MTP_FUSED_EXPERTS_MAPPING[key]
+
             mapping_names = self._MTP_MAPPING[key]
             return [x.format(expert_index=expert_index) for x in mapping_names]
 
@@ -405,7 +422,12 @@ class Qwen3_5VlBaseBridge(VLMBridge):
 
                 return [hf_names[0]], [mcore_weights[: self.vocab_size]]
 
-            if "mtp" in mcore_weights_name:
+            is_mtp_fused_expert = (
+                "mtp" in mcore_weights_name
+                and ".mlp.experts.linear_fc" in mcore_weights_name
+                and self.mtp_fused_experts
+            )
+            if "mtp" in mcore_weights_name and not is_mtp_fused_expert:
                 return [hf_names[0]], [mcore_weights]
 
             # moe
@@ -591,7 +613,7 @@ class Qwen3_5VlBaseBridge(VLMBridge):
 
             # moe
             if ".mlp.experts.linear_fc" in mcore_weights_name:
-                if "mtp" in mcore_weights_name:
+                if "mtp" in mcore_weights_name and not self.mtp_fused_experts:
                     return hf_weights[0]
                 # get export index
                 local_experts_idx = int(mcore_weights_name.split(".weight")[-1])
