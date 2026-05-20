@@ -50,3 +50,8 @@ class Qwen3_5SafeTensorIO(SafeTensorIO):
                             self.index[key] = filename
 
         self.hf_dir = hf_dir
+
+        has_mtp = any(k.startswith("mtp.") for k in self.index)
+        self.mtp_fused_experts = (
+            has_mtp and "mtp.layers.0.mlp.experts.gate_up_proj" in self.index
+        )
