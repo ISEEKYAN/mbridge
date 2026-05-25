@@ -7,8 +7,12 @@ from typing import Callable, Generator
 
 import torch
 from megatron.core import parallel_state as mpu
+from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
+    uneven_dtensor_to_full_tensor,
+)
 from megatron.core.models.gpt.gpt_model import ModelType
 from safetensors import safe_open
+from torch.distributed._tensor import DTensor
 from transformers import AutoConfig
 from transformers.utils.hub import cached_file
 
@@ -80,7 +84,7 @@ class Bridge(ABC):
         bf16: bool = True,
         encoder_pipeline_model_parallel_size: int = 0,
         use_torch_fsdp2: bool = False,
-        use_custom_fsdp: bool = False,
+        use_megatron_fsdp: bool = False,
         use_precision_aware_optimizer: bool = False,
         use_cpu_initialization: bool = False,
         init_model_with_meta_device: bool = False,
@@ -103,7 +107,7 @@ class Bridge(ABC):
             bf16: Whether to use BF16 precision
             encoder_pipeline_model_parallel_size: Size of encoder pipeline parallelism
             use_torch_fsdp2: Whether to use PyTorch FSDP 2.0
-            use_custom_fsdp: Whether to use custom FSDP
+            use_megatron_fsdp: Whether to use Megatron-FSDP
             use_precision_aware_optimizer: Whether to use precision-aware optimizer
             use_cpu_initialization: Whether to initialize on CPU
             init_model_with_meta_device: Whether to initialize with meta device
@@ -126,6 +130,7 @@ class Bridge(ABC):
         #     and self.mpu.vpp_size > 1
         # ):
         #     raise ValueError("tie_word_embeddings is not supported for VPP > 1")
+        self.use_megatron_fsdp = use_megatron_fsdp
         model = get_model(
             self._model_provider(
                 post_model_creation_callbacks,
@@ -138,7 +143,7 @@ class Bridge(ABC):
             virtual_pipeline_model_parallel_size=self.mpu.vpp_size,
             encoder_pipeline_model_parallel_size=encoder_pipeline_model_parallel_size,
             use_torch_fsdp2=use_torch_fsdp2,
-            use_custom_fsdp=use_custom_fsdp,
+            use_megatron_fsdp=use_megatron_fsdp,
             use_precision_aware_optimizer=use_precision_aware_optimizer,
             use_cpu_initialization=use_cpu_initialization,
             init_model_with_meta_device=init_model_with_meta_device,
@@ -176,6 +181,11 @@ class Bridge(ABC):
         """
         self.safetensor_io = self._get_safetensor_io(weights_path)
 
+        original_models = list(models)
+        models = (
+            unwrap_model(original_models) if self.use_megatron_fsdp else original_models
+        )
+
         for i, model in enumerate(models):
             # map local weight names to global weight names
             local_to_global_map = self._weight_name_mapping_mcore_local_to_global(model)
@@ -208,7 +218,7 @@ class Bridge(ABC):
 
             # import mcore weights
             for local_name, hf_names in local_to_hf_map.items():
-                param = model.state_dict()[local_name]
+                param = model.state_dict(keep_vars=True)[local_name]
                 # hf format to mcore format
                 if set(to_load_from_disk) & set(hf_names):
                     if not memory_efficient:
@@ -220,12 +230,14 @@ class Bridge(ABC):
                     mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
                 else:
                     mcore_weight = None
+                is_dtensor = isinstance(param, DTensor)
+                param_shape = param.orig_param.shape if is_dtensor else param.shape
                 if hf_names[0] in {
                     "lm_head.weight",
                     "model.embed_tokens.weight",
                     "model.language_model.embed_tokens.weight",
                 }:
-                    if param.shape[0] == 1 and (
+                    if param_shape[0] == 1 and (
                         mcore_weight is None or mcore_weight.shape[0] != 1
                     ):
                         # skip lm_head.weight when the model is a value model
@@ -234,47 +246,49 @@ class Bridge(ABC):
                         )
                         continue
 
-                param_to_load = torch.empty_like(param)
-                if ".mlp.experts.linear_fc" in local_name:
-                    # split mcore weights across etp
-                    if self.mpu.etp_rank == 0:
-                        mcore_weights_tp_split = self._weight_split_across_tp(
-                            local_name, mcore_weight, param, self.mpu.etp_size
-                        )
-                        mcore_weights_tp_split = list(mcore_weights_tp_split)
-                        mcore_weights_tp_split = [
-                            t.to(param.device, dtype=param.dtype).contiguous()
-                            for t in mcore_weights_tp_split
-                        ]
-                    else:
-                        mcore_weights_tp_split = None
-                    torch.distributed.scatter(
-                        param_to_load,
-                        mcore_weights_tp_split,
-                        src=torch.distributed.get_global_rank(self.mpu.etp_group, 0),
-                        group=self.mpu.etp_group,
-                    )
+                is_expert = ".mlp.experts.linear_fc" in local_name
+                if is_expert:
+                    group = self.mpu.etp_group
+                    group_size = self.mpu.etp_size
+                    group_rank = self.mpu.etp_rank
                 else:
-                    # split mcore weights across tp
-                    if self.mpu.tp_rank == 0:
-                        mcore_weights_tp_split = self._weight_split_across_tp(
-                            local_name, mcore_weight, param, self.mpu.tp_size
-                        )
-                        mcore_weights_tp_split = list(mcore_weights_tp_split)
-                        mcore_weights_tp_split = [
-                            t.to(param.device, dtype=param.dtype).contiguous()
-                            for t in mcore_weights_tp_split
-                        ]
-                    else:
-                        mcore_weights_tp_split = None
-                    torch.distributed.scatter(
-                        param_to_load,
-                        mcore_weights_tp_split,
-                        src=torch.distributed.get_global_rank(self.mpu.tp_group, 0),
-                        group=self.mpu.tp_group,
+                    group = self.mpu.tp_group
+                    group_size = self.mpu.tp_size
+                    group_rank = self.mpu.tp_rank
+
+                param_ref = param.orig_param if is_dtensor else param
+                param_to_load = torch.empty_like(param_ref)
+                if group_rank == 0:
+                    mcore_weights_tp_split = self._weight_split_across_tp(
+                        local_name, mcore_weight, param_ref, group_size
                     )
+                    mcore_weights_tp_split = list(mcore_weights_tp_split)
+                    mcore_weights_tp_split = [
+                        t.to(
+                            param_to_load.device, dtype=param_to_load.dtype
+                        ).contiguous()
+                        for t in mcore_weights_tp_split
+                    ]
+                else:
+                    mcore_weights_tp_split = None
+                torch.distributed.scatter(
+                    param_to_load,
+                    mcore_weights_tp_split,
+                    src=torch.distributed.get_global_rank(group, 0),
+                    group=group,
+                )
                 # load
-                param.copy_(param_to_load)
+                if is_dtensor:
+                    sliced_param_to_load = param_to_load.reshape(-1)[
+                        param.megatron_fsdp_slice
+                    ]
+                    param._local_tensor.reshape(-1).copy_(sliced_param_to_load)
+                else:
+                    param.copy_(param_to_load)
+
+        if self.use_megatron_fsdp:
+            for m in original_models:
+                m.module.install_optimized_model_weights()
 
     def _save_weights_fast(
         self,
@@ -610,6 +624,20 @@ class Bridge(ABC):
             return self.export_weights_buffer_max_size_bytes
         return max(self.export_weights_buffer_max_size_bytes // group_size, 1)
 
+    def _convert_dtensor_to_local_tensor(
+        self, name: str, tensor: DTensor
+    ) -> torch.Tensor:
+        orig = tensor.orig_param
+        tensor = uneven_dtensor_to_full_tensor(tensor)
+        if orig.tensor_model_parallel:
+            is_expert = ".mlp.experts.linear_fc" in name
+            tp_size = self.mpu.etp_size if is_expert else self.mpu.tp_size
+            tp_rank = self.mpu.etp_rank if is_expert else self.mpu.tp_rank
+            tensor = tensor.chunk(tp_size, dim=orig.partition_dim)[tp_rank].contiguous()
+        tensor.tensor_model_parallel = orig.tensor_model_parallel
+        tensor.partition_dim = orig.partition_dim
+        return tensor
+
     def _iter_local_stage_named_params(
         self, models: list[torch.nn.Module]
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
@@ -618,7 +646,10 @@ class Bridge(ABC):
             for model in models
         ]
         for vpp_rank, name, param in iter_model_named_params(models):
-            yield local_to_global_maps[vpp_rank][name], param
+            global_name = local_to_global_maps[vpp_rank][name]
+            if isinstance(param, DTensor):
+                param = self._convert_dtensor_to_local_tensor(global_name, param)
+            yield global_name, param
 
     def _iter_all_ranks_named_params(
         self, models: list[torch.nn.Module], is_distributed: bool
@@ -976,6 +1007,8 @@ class Bridge(ABC):
                 existing_keys = set()
                 for name, param in model.named_parameters():
                     existing_keys.add(name)
+                    if isinstance(param, DTensor):
+                        param = self._convert_dtensor_to_local_tensor(name, param)
                     yield name, param
 
                 # note
@@ -990,7 +1023,10 @@ class Bridge(ABC):
                     and x not in existing_keys
                 ]
                 for name in extra_keys:
-                    yield name, model.state_dict()[name].to(torch.cuda.current_device())
+                    extra = model.state_dict()[name]
+                    if isinstance(extra, DTensor):
+                        extra = self._convert_dtensor_to_local_tensor(name, extra)
+                    yield name, extra.to(torch.cuda.current_device())
 
         weights_names = []
         for vpp_rank, model in enumerate(models):
