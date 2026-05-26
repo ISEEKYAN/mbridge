@@ -278,13 +278,14 @@ class Bridge(ABC):
                     group=group,
                 )
                 # load
-                if is_dtensor:
-                    sliced_param_to_load = param_to_load.reshape(-1)[
-                        param.megatron_fsdp_slice
-                    ]
-                    param._local_tensor.reshape(-1).copy_(sliced_param_to_load)
-                else:
-                    param.copy_(param_to_load)
+                with torch.no_grad():
+                    if is_dtensor:
+                        sliced_param_to_load = param_to_load.reshape(-1)[
+                            param.megatron_fsdp_slice
+                        ]
+                        param._local_tensor.reshape(-1).copy_(sliced_param_to_load)
+                    else:
+                        param.copy_(param_to_load)
 
         if self.use_megatron_fsdp:
             for m in original_models:
@@ -633,7 +634,17 @@ class Bridge(ABC):
             is_expert = ".mlp.experts.linear_fc" in name
             tp_size = self.mpu.etp_size if is_expert else self.mpu.tp_size
             tp_rank = self.mpu.etp_rank if is_expert else self.mpu.tp_rank
-            tensor = tensor.chunk(tp_size, dim=orig.partition_dim)[tp_rank].contiguous()
+            partition_dim = orig.partition_dim
+            orig_partition_size = orig.shape[partition_dim]
+            tensor_partition_size = tensor.shape[partition_dim]
+            if tensor_partition_size == orig_partition_size * tp_size:
+                tensor = tensor.chunk(tp_size, dim=partition_dim)[tp_rank].contiguous()
+            elif tensor_partition_size != orig_partition_size:
+                raise RuntimeError(
+                    f"Unexpected tensor-parallel DTensor shape for {name}: "
+                    f"gathered={tuple(tensor.shape)} orig={tuple(orig.shape)} "
+                    f"partition_dim={partition_dim} tp_size={tp_size}"
+                )
         tensor.tensor_model_parallel = orig.tensor_model_parallel
         tensor.partition_dim = orig.partition_dim
         return tensor

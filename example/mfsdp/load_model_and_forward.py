@@ -96,9 +96,12 @@ def next_multiple(value: int, factor: int) -> int:
 
 def forward_step(data_iterator, model):
     sample = next(data_iterator)
+    position_ids = sample.get("position_ids")
+    if position_ids is not None:
+        position_ids = position_ids.cuda()
     output = model(
         input_ids=sample["input_ids"].cuda(),
-        position_ids=sample["position_ids"].cuda(),
+        position_ids=position_ids,
         attention_mask=None,
         runtime_gather_output=False,
     )
@@ -156,6 +159,10 @@ def main() -> int:
     tokenizer = AutoTokenizer.from_pretrained(
         args.hf_model, trust_remote_code=args.trust_remote_code
     )
+    uses_multimodal_rope = (
+        getattr(bridge.hf_config, "vision_config", None) is not None
+        and getattr(bridge.hf_config, "image_token_id", None) is not None
+    )
 
     generated: list[int] = []
     input_ids = tokenizer.encode(args.prompt, return_tensors="pt").tolist()
@@ -179,7 +186,9 @@ def main() -> int:
             cur_position_ids = torch.arange(
                 seq_length, device=cur_input_ids.device, dtype=torch.long
             ).unsqueeze(0)
-            sample = {"input_ids": cur_input_ids, "position_ids": cur_position_ids}
+            sample = {"input_ids": cur_input_ids}
+            if not uses_multimodal_rope:
+                sample["position_ids"] = cur_position_ids
 
             output = fwd_bwd_function(
                 forward_step_func=forward_step,
