@@ -37,3 +37,10 @@ with suppress(ImportError):
     from .qwen3_5 import Qwen3_5VlBridge, Qwen3_5MoeVlBridge
 with suppress(ImportError):
     from .qwen3_omni_moe import Qwen3OmniMoeBridge
+with suppress(ImportError):
+    # DeepSeek-V4 requires MCore commits with the dsv4_hybrid attention
+    # variant, CSA/HCA, DSA indexer, mHC fused kernels, hash routing, and
+    # ClampedSwiGLU. These live on the Megatron-LM `dev` branch as of this
+    # writing; suppressing ImportError keeps mbridge usable on installs
+    # pinned to main-only MCore.
+    from .deepseek_v4 import DeepseekV4Bridge
