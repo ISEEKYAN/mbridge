@@ -37,6 +37,7 @@ def get_vision_model_config(config: Qwen3VLTransformerConfig, hf_config):
     config.attention_dropout = 0.0
     config.layernorm_epsilon = 1e-6
     config.apply_rotary_pos_emb_in_fp32 = True
+    config.qk_layernorm = False  # HF Qwen3-VL vision attention has no q_norm/k_norm
 
     config.patch_size = hf_config.patch_size
     config.temporal_patch_size = hf_config.temporal_patch_size
