@@ -217,9 +217,13 @@ def make_fwd_fn_with_labels(input_ids_gpu: torch.Tensor):
 
         cp_size = mpu.get_context_parallel_world_size()
         if cp_size > 1:
-            labels = split_data_cp_rank(
-                labels.permute(1, 0).contiguous(), cp_size, seq_dim=0
-            ).permute(1, 0).contiguous()
+            labels = (
+                split_data_cp_rank(
+                    labels.permute(1, 0).contiguous(), cp_size, seq_dim=0
+                )
+                .permute(1, 0)
+                .contiguous()
+            )
 
         output_tensor = model(
             input_ids=input_ids_gpu,

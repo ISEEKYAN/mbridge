@@ -223,9 +223,7 @@ class Bridge(ABC):
                     stacklevel=2,
                 )
             if skipped_local_names and is_rank0:
-                preview = ", ".join(
-                    f"{ln}->{hn}" for ln, hn in skipped_local_names[:5]
-                )
+                preview = ", ".join(f"{ln}->{hn}" for ln, hn in skipped_local_names[:5])
                 more = (
                     f" (+{len(skipped_local_names) - 5} more)"
                     if len(skipped_local_names) > 5
