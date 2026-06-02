@@ -288,12 +288,14 @@ class Qwen3_5VLModel(MegatronModule):
             if self.vision_model is not None:
                 for param in self.vision_model.merger.parameters():
                     param.requires_grad = True
-    
-    def _split_data(self, vision_data, vision_grid_thw, cp_img_num, images_padded, groups):
+
+    def _split_data(
+        self, vision_data, vision_grid_thw, cp_img_num, images_padded, groups
+    ):
         if len(groups) > 1:
             assert cp_img_num is None
             assert images_padded is None
-        
+
         seqlen_on_ranks = []
         for group in groups:
             parallel_size = group.size()
@@ -306,15 +308,13 @@ class Qwen3_5VLModel(MegatronModule):
                         vision_grid_thw,
                     )
                 )
-            vision_data, vision_grid_thw, seqlen_on_rank = (
-                get_vision_cp_data(
-                    vision_data,
-                    vision_grid_thw,
-                    self.square_merge_size,
-                    cp_img_num,
-                    images_padded,
-                    group,
-                )
+            vision_data, vision_grid_thw, seqlen_on_rank = get_vision_cp_data(
+                vision_data,
+                vision_grid_thw,
+                self.square_merge_size,
+                cp_img_num,
+                images_padded,
+                group,
             )
             cp_img_num, images_padded = None, None
             seqlen_on_ranks.append(seqlen_on_rank)
@@ -322,7 +322,9 @@ class Qwen3_5VLModel(MegatronModule):
         return vision_data, vision_grid_thw, seqlen_on_ranks
 
     def _gather_data(self, vision_embeds, seqlen_on_ranks, groups):
-        for seqlen_on_cp_rank, group in zip(reversed(seqlen_on_ranks), reversed(groups)):
+        for seqlen_on_cp_rank, group in zip(
+            reversed(seqlen_on_ranks), reversed(groups)
+        ):
             vision_embeds = AllGatherVisionEmbeddings.apply(
                 vision_embeds,
                 seqlen_on_cp_rank,
@@ -357,7 +359,7 @@ class Qwen3_5VLModel(MegatronModule):
         vision_grid_thw = None
         vision_data = None
         vision_mask = None
-        
+
         if packed_seq_params is not None and packed_seq_params.cp_group is not None:
             cp_group = packed_seq_params.cp_group
         else:
@@ -398,11 +400,7 @@ class Qwen3_5VLModel(MegatronModule):
             vision_embeds = None
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
                 vision_data, vision_grid_thw, seqlen_on_ranks = self._split_data(
-                    vision_data,
-                    vision_grid_thw,
-                    cp_img_num,
-                    images_padded,
-                    groups
+                    vision_data, vision_grid_thw, cp_img_num, images_padded, groups
                 )
                 if vision_data.shape[0] > 0:
                     vision_embeds = self.vision_model(
@@ -421,7 +419,9 @@ class Qwen3_5VLModel(MegatronModule):
                         device=vision_data.device,
                         dtype=torch.bfloat16,
                     )
-                vision_embeds = self._gather_data(vision_embeds, seqlen_on_ranks, groups)
+                vision_embeds = self._gather_data(
+                    vision_embeds, seqlen_on_ranks, groups
+                )
 
             combined_embeddings = self.language_model._modules["embedding"](
                 input_ids=input_ids,
@@ -442,7 +442,7 @@ class Qwen3_5VLModel(MegatronModule):
                     combined_embeddings, cp_size, 0
                 )
 
-            # packed_seq_params is not None and attention_mask is None: 
+            # packed_seq_params is not None and attention_mask is None:
             # means we already packed input_ids
             if (
                 combined_embeddings is not None
@@ -452,9 +452,14 @@ class Qwen3_5VLModel(MegatronModule):
                 and packed_seq_params.cu_seqlens_q_padded is not None
             ):
                 full_total_tokens = combined_embeddings.size(0)
-                assert full_total_tokens == input_ids.size(-1), f"{combined_embeddings.shape=} != {input_ids.shape=}"
+                assert full_total_tokens == input_ids.size(
+                    -1
+                ), f"{combined_embeddings.shape=} != {input_ids.shape=}"
                 # get_thd_partitioned_indices in mcore dev branch
-                from megatron.core.extensions.transformer_engine import get_thd_partitioned_indices
+                from megatron.core.extensions.transformer_engine import (
+                    get_thd_partitioned_indices,
+                )
+
                 index = get_thd_partitioned_indices(
                     packed_seq_params.cu_seqlens_q_padded,
                     full_total_tokens,
@@ -462,9 +467,11 @@ class Qwen3_5VLModel(MegatronModule):
                     cp_group.rank(),
                 )
                 vision_mask = vision_mask.index_select(1, index)
-                combined_embeddings = combined_embeddings.index_select(0, index).contiguous()
+                combined_embeddings = combined_embeddings.index_select(
+                    0, index
+                ).contiguous()
 
-            # packed_seq_params is not None and attention_mask is  not None: 
+            # packed_seq_params is not None and attention_mask is  not None:
             # means we need packed input_ids in here
             if packed_seq_params is not None and attention_mask is not None:
                 input_ids_thd, _ = preprocess_packed_seqs(
@@ -541,7 +548,7 @@ class Qwen3_5VLModel(MegatronModule):
         # padded seq_len is not guaranteed to be divisible by tp_size.
         # When packed_seq_params is None, scatter the padded input_ids along the sequence dim
         # so each TP rank holds seq_len // tp_size tokens, consistent with SP hidden_states.
-        
+
         if not self.language_model.config.mtp_num_layers:
             # MTP is not enabled; skip all input_ids preparation for MTP.
             sp_input_ids = None
@@ -571,9 +578,7 @@ class Qwen3_5VLModel(MegatronModule):
                 # would cause incorrect "next token" lookups at TP boundaries.
                 sp_input_ids = input_ids
                 if input_ids is not None and cp_size > 1:
-                    sp_input_ids = split_data_cp_rank(
-                        input_ids, cp_size, seq_dim=1
-                    )
+                    sp_input_ids = split_data_cp_rank(input_ids, cp_size, seq_dim=1)
                 self.language_model.init_mtp_embedding_scatter(do_scatter=True)
 
         return self.language_model(

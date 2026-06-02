@@ -348,7 +348,7 @@ class Qwen3VLModel(MegatronModule):
                     combined_embeddings, cp_size, 0
                 )
 
-            # packed_seq_params is not None and attention_mask is None: 
+            # packed_seq_params is not None and attention_mask is None:
             # means we already packed input_ids
             if (
                 combined_embeddings is not None
@@ -358,9 +358,14 @@ class Qwen3VLModel(MegatronModule):
                 and packed_seq_params.cu_seqlens_q_padded is not None
             ):
                 full_total_tokens = combined_embeddings.size(0)
-                assert full_total_tokens == input_ids.size(-1), f"{combined_embeddings.shape=} != {input_ids.shape=}"
+                assert full_total_tokens == input_ids.size(
+                    -1
+                ), f"{combined_embeddings.shape=} != {input_ids.shape=}"
                 # get_thd_partitioned_indices in mcore dev branch
-                from megatron.core.extensions.transformer_engine import get_thd_partitioned_indices
+                from megatron.core.extensions.transformer_engine import (
+                    get_thd_partitioned_indices,
+                )
+
                 index = get_thd_partitioned_indices(
                     packed_seq_params.cu_seqlens_q_padded,
                     full_total_tokens,
@@ -373,17 +378,27 @@ class Qwen3VLModel(MegatronModule):
                 if deepstack_feature_lists is not None:
                     new_deepstack_feature_lists = []
                     for deepstack_visual_embed in deepstack_feature_lists:
-                        tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
+                        tmp_embeddings = torch.zeros_like(
+                            combined_embeddings.transpose(0, 1)
+                        )
                         tmp_embeddings[vision_mask] = deepstack_visual_embed
-                        tmp_embeddings_thd = tmp_embeddings.index_select(1, index).squeeze(0).contiguous()
-                        tmp_embeddings_thd = tmp_embeddings_thd[vision_mask_local.squeeze(0)].contiguous()
+                        tmp_embeddings_thd = (
+                            tmp_embeddings.index_select(1, index)
+                            .squeeze(0)
+                            .contiguous()
+                        )
+                        tmp_embeddings_thd = tmp_embeddings_thd[
+                            vision_mask_local.squeeze(0)
+                        ].contiguous()
                         new_deepstack_feature_lists.append(tmp_embeddings_thd)
                     deepstack_feature_lists = new_deepstack_feature_lists
                 vision_mask = vision_mask_local
                 # combined_embeddings
-                combined_embeddings = combined_embeddings.index_select(0, index).contiguous()
+                combined_embeddings = combined_embeddings.index_select(
+                    0, index
+                ).contiguous()
 
-            # packed_seq_params is not None and attention_mask is  not None: 
+            # packed_seq_params is not None and attention_mask is  not None:
             # means we need packed input_ids in here
             if packed_seq_params is not None and attention_mask is not None:
                 input_ids_thd, _ = preprocess_packed_seqs(

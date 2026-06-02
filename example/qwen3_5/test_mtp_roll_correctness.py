@@ -33,10 +33,10 @@ from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
-from mbridge.core.util import split_data_cp_rank
-
 # roll_tensor lives in MTP module
 from megatron.core.transformer.multi_token_prediction import roll_tensor
+
+from mbridge.core.util import split_data_cp_rank
 
 
 def get_args():
@@ -153,9 +153,9 @@ def main():
     tp_group = mpu.get_tensor_model_parallel_group()
 
     S = args.seq_len
-    assert S % (tp_size * cp_size * 2) == 0, (
-        f"seq_len={S} must be divisible by tp*cp*2={tp_size * cp_size * 2}"
-    )
+    assert (
+        S % (tp_size * cp_size * 2) == 0
+    ), f"seq_len={S} must be divisible by tp*cp*2={tp_size * cp_size * 2}"
 
     input_ids = torch.arange(S, device="cuda").unsqueeze(0)  # [1, S]
 
@@ -197,7 +197,9 @@ def main():
             "[UNEXPECTED] Method B passed — expected TP-boundary errors. "
             "This test assumes TP > 1."
         )
-        print("[PASS] Method A is correct, Method B has TP-boundary errors as expected.")
+        print(
+            "[PASS] Method A is correct, Method B has TP-boundary errors as expected."
+        )
         print(f"{'=' * 64}\n")
 
     torch.distributed.barrier()

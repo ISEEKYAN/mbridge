@@ -1,5 +1,6 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 import os
+import warnings
 from abc import ABC
 from collections import defaultdict
 from glob import glob
@@ -175,16 +176,66 @@ class Bridge(ABC):
             weights_path: Path to the weights file or Hugging Face model identifier
         """
         self.safetensor_io = self._get_safetensor_io(weights_path)
+        available_hf_keys = set(self.safetensor_io.load_hf_weight_names())
 
         for i, model in enumerate(models):
             # map local weight names to global weight names
             local_to_global_map = self._weight_name_mapping_mcore_local_to_global(model)
-            # map local weight names to huggingface weight names
-            local_to_hf_map = {
-                k: self._weight_name_mapping_mcore_to_hf(v)
-                for k, v in local_to_global_map.items()
-                if "_extra_state" not in k
-            }
+            # map local weight names to huggingface weight names. Skip mcore
+            # params for which no HF mapping exists (e.g. when the framework
+            # builds extra Megatron modules that have no HF counterpart, such
+            # as forcing qk_layernorm=True for a base model that has no
+            # q_norm/k_norm). Skipped params keep their initialization,
+            # matching strict=False load_state_dict semantics.
+            local_to_hf_map = {}
+            unmapped_local_names = []
+            for k, v in local_to_global_map.items():
+                if "_extra_state" in k:
+                    continue
+                try:
+                    local_to_hf_map[k] = self._weight_name_mapping_mcore_to_hf(v)
+                except (KeyError, NotImplementedError):
+                    unmapped_local_names.append(k)
+            # Drop mcore params whose HF targets are entirely absent from the
+            # safetensors index. Partial-miss is left to fail below so genuine
+            # inconsistencies still surface.
+            skipped_local_names = []
+            filtered_local_to_hf_map = {}
+            for local_name, hf_names in local_to_hf_map.items():
+                if hf_names and all(n not in available_hf_keys for n in hf_names):
+                    skipped_local_names.append((local_name, hf_names))
+                else:
+                    filtered_local_to_hf_map[local_name] = hf_names
+            is_rank0 = (
+                not torch.distributed.is_initialized()
+                or torch.distributed.get_rank() == 0
+            )
+            if unmapped_local_names and is_rank0:
+                preview = ", ".join(unmapped_local_names[:5])
+                more = (
+                    f" (+{len(unmapped_local_names) - 5} more)"
+                    if len(unmapped_local_names) > 5
+                    else ""
+                )
+                warnings.warn(
+                    f"[mbridge] Skipping {len(unmapped_local_names)} mcore "
+                    f"param(s) with no HF mapping: {preview}{more}",
+                    stacklevel=2,
+                )
+            if skipped_local_names and is_rank0:
+                preview = ", ".join(f"{ln}->{hn}" for ln, hn in skipped_local_names[:5])
+                more = (
+                    f" (+{len(skipped_local_names) - 5} more)"
+                    if len(skipped_local_names) > 5
+                    else ""
+                )
+                warnings.warn(
+                    f"[mbridge] Skipping {len(skipped_local_names)} mcore "
+                    f"param(s) with no matching HF weights in safetensors at "
+                    f"{weights_path}: {preview}{more}",
+                    stacklevel=2,
+                )
+            local_to_hf_map = filtered_local_to_hf_map
             # only tp_rank0/etp_rank0 load from disk, others load from tp_rank0/etp_rank0
             to_load_from_disk = []
             for local_name, hf_names in local_to_hf_map.items():
