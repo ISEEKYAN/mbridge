@@ -7,12 +7,8 @@ from typing import Callable, Generator
 
 import torch
 from megatron.core import parallel_state as mpu
-from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
-    uneven_dtensor_to_full_tensor,
-)
 from megatron.core.models.gpt.gpt_model import ModelType
 from safetensors import safe_open
-from torch.distributed._tensor import DTensor
 from transformers import AutoConfig
 from transformers.utils.hub import cached_file
 
@@ -230,7 +226,7 @@ class Bridge(ABC):
                     mcore_weight = self._weight_to_mcore_format(local_name, hf_weights)
                 else:
                     mcore_weight = None
-                is_dtensor = isinstance(param, DTensor)
+                is_dtensor = self.use_megatron_fsdp
                 param_shape = param.orig_param.shape if is_dtensor else param.shape
                 if hf_names[0] in {
                     "lm_head.weight",
@@ -626,8 +622,12 @@ class Bridge(ABC):
         return max(self.export_weights_buffer_max_size_bytes // group_size, 1)
 
     def _convert_dtensor_to_local_tensor(
-        self, name: str, tensor: DTensor
+        self, name: str, tensor: torch.Tensor
     ) -> torch.Tensor:
+        from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
+            uneven_dtensor_to_full_tensor,
+        )
+
         orig = tensor.orig_param
         tensor = uneven_dtensor_to_full_tensor(tensor)
         if orig.tensor_model_parallel:
@@ -658,7 +658,7 @@ class Bridge(ABC):
         ]
         for vpp_rank, name, param in iter_model_named_params(models):
             global_name = local_to_global_maps[vpp_rank][name]
-            if isinstance(param, DTensor):
+            if self.use_megatron_fsdp:
                 param = self._convert_dtensor_to_local_tensor(global_name, param)
             yield global_name, param
 
@@ -1018,7 +1018,7 @@ class Bridge(ABC):
                 existing_keys = set()
                 for name, param in model.named_parameters():
                     existing_keys.add(name)
-                    if isinstance(param, DTensor):
+                    if self.use_megatron_fsdp:
                         param = self._convert_dtensor_to_local_tensor(name, param)
                     yield name, param
 
@@ -1035,7 +1035,7 @@ class Bridge(ABC):
                 ]
                 for name in extra_keys:
                     extra = model.state_dict()[name]
-                    if isinstance(extra, DTensor):
+                    if self.use_megatron_fsdp:
                         extra = self._convert_dtensor_to_local_tensor(name, extra)
                     yield name, extra.to(torch.cuda.current_device())
 
