@@ -466,7 +466,8 @@ class Qwen3_5VLModel(MegatronModule):
                     cp_size,
                     cp_group.rank(),
                 )
-                vision_mask = vision_mask.index_select(1, index)
+                if vision_mask is not None:
+                    vision_mask = vision_mask.index_select(1, index)
                 combined_embeddings = combined_embeddings.index_select(
                     0, index
                 ).contiguous()
