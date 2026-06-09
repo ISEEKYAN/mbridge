@@ -9,27 +9,23 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import transformer_engine.pytorch as te
-from megatron.core import parallel_state
-from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
-from megatron.core.transformer.moe.router import TopKRouter
-from megatron.core.utils import unwrap_model
-
 from mbridge.peft.base import PEFT
-from mbridge.peft.lora_layers import (
-    LinearAdapter,
-    LoRALinear,
-    LoRATopKRouter,
-    TEFusedLoRALinear,
-    TELinearAdapter,
-    patch_linear_module,
-)
-from mbridge.peft.module_matcher import ModuleMatcher
-from mbridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
-
 # Import canonical split-adapter wrappers for gather/merge support.
 # These are only imported here (not in canonical_lora → avoids circular deps).
-from mbridge.peft.canonical_lora import LoRALinearSplitQKV, LoRALinearSplitFC1UpGate
-
+from mbridge.peft.canonical_lora import (LoRALinearSplitFC1UpGate,
+                                         LoRALinearSplitQKV)
+from mbridge.peft.lora_layers import (LinearAdapter, LoRALinear,
+                                      LoRATopKRouter, TEFusedLoRALinear,
+                                      TELinearAdapter, patch_linear_module)
+from mbridge.peft.module_matcher import ModuleMatcher
+from mbridge.peft.utils import (ParallelLinearAdapter,
+                                get_adapter_attributes_from_linear,
+                                is_expert_linear)
+from megatron.core import parallel_state
+from megatron.core.tensor_parallel import (ColumnParallelLinear,
+                                           RowParallelLinear)
+from megatron.core.transformer.moe.router import TopKRouter
+from megatron.core.utils import unwrap_model
 
 logger = logging.getLogger(__name__)
 

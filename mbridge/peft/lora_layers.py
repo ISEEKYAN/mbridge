@@ -6,10 +6,8 @@ from typing import Any, Literal, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import transformer_engine.pytorch as te
-from megatron.core.transformer.moe.moe_utils import apply_random_logits
-
 from mbridge.peft.adapter_wrapper import AdapterWrapper
-
+from megatron.core.transformer.moe.moe_utils import apply_random_logits
 
 try:
     import bitsandbytes

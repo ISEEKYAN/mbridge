@@ -4,15 +4,13 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
-from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
-from torch import nn
-
 from mbridge.peft.utils import wildcard_match
 from megatron.core.extensions.transformer_engine import (
-    TEColumnParallelLinear,
-    TELayerNormColumnParallelLinear,
-    TERowParallelLinear,
-)
+    TEColumnParallelLinear, TELayerNormColumnParallelLinear,
+    TERowParallelLinear)
+from megatron.core.tensor_parallel import (ColumnParallelLinear,
+                                           RowParallelLinear)
+from torch import nn
 
 
 @dataclass

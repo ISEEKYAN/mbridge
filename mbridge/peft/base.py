@@ -8,11 +8,9 @@ from typing import Optional, TypeVar, Union
 
 import torch
 import torch.nn as nn
-from megatron.core.transformer.module import MegatronModule
-
 from mbridge.peft.recompute import maybe_enable_recompute_inputs_grad
 from mbridge.peft.walk_utils import walk
-
+from megatron.core.transformer.module import MegatronModule
 
 logger: logging.Logger = logging.getLogger(__name__)
 

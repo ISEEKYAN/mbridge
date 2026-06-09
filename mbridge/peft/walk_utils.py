@@ -26,7 +26,8 @@ Examples:
 """
 
 import inspect
-from typing import Callable, Iterable, Protocol, TypeVar, Union, runtime_checkable
+from typing import (Callable, Iterable, Protocol, TypeVar, Union,
+                    runtime_checkable)
 
 import torch.nn as nn
 
