@@ -577,13 +577,16 @@ class LoRAMerge(PEFT):
         """Interleave Q, K, V full deltas into Megatron QKV packed weight order.
 
         The fused QKV layout (from Megatron) is:
-          for each head group i:
+          for each head group i (without output gate):
             [Q_heads_per_group, K_1_head, V_1_head]
+          for each head group i (with output gate):
+            [Q_heads_per_group, G_heads_per_group(zeros), K_1_head, V_1_head]
         """
         head_num = config.num_attention_heads
         num_query_groups = config.num_query_groups
         head_size = config.kv_channels
         heads_per_group = head_num // num_query_groups
+        output_gate = getattr(config, "attention_output_gate", False)
 
         q_reshaped = q_delta.reshape(head_num, head_size, -1)
         k_reshaped = k_delta.reshape(num_query_groups, head_size, -1)
@@ -595,6 +598,8 @@ class LoRAMerge(PEFT):
             k_group = k_reshaped[g: g + 1]
             v_group = v_reshaped[g: g + 1]
             interleaved_parts.append(q_group.reshape(-1, q_delta.shape[1]))
+            if output_gate:
+                interleaved_parts.append(torch.zeros_like(q_group.reshape(-1, q_delta.shape[1])))
             interleaved_parts.append(k_group.reshape(-1, q_delta.shape[1]))
             interleaved_parts.append(v_group.reshape(-1, q_delta.shape[1]))
 

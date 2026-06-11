@@ -111,12 +111,18 @@ class LoRALinearSplitQKV(AdapterWrapper):
         key = key.reshape(-1, num_query_groups, head_size)
         value = value.reshape(-1, num_query_groups, head_size)
 
+        output_gate = getattr(config, "attention_output_gate", False)
+
         qkv_chunks = []
         for i in range(num_query_groups):
             q_group = query[:, i * heads_per_group : (i + 1) * heads_per_group, :]
             k_group = key[:, i : i + 1, :]
             v_group = value[:, i : i + 1, :]
-            qkv_chunks.extend([q_group, k_group, v_group])
+            qkv_chunks.append(q_group)
+            if output_gate:
+                qkv_chunks.append(torch.zeros_like(q_group))
+            qkv_chunks.append(k_group)
+            qkv_chunks.append(v_group)
 
         qkv = torch.cat(qkv_chunks, dim=1)
         return qkv.reshape(*leading_shape, -1)
@@ -297,6 +303,21 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 return LinearAdapter(
                     m, dim=self.dim, alpha=self.alpha, dropout=self.dropout, lora_A_init_method=self.lora_A_init_method
                 )
+
+            from megatron.core.tensor_parallel import (
+                ColumnParallelLinear, RowParallelLinear,
+            )
+            from mbridge.peft.utils import TECL, TERL
+            _supported_types = (
+                ColumnParallelLinear, RowParallelLinear, TopKRouter,
+            ) + TECL + TERL
+            if not isinstance(m, _supported_types):
+                logger.warning(
+                    f"CanonicalLoRA target pattern matched module '{full_name}' "
+                    f"of type {type(m).__name__}, but this type is not supported "
+                    f"for LoRA adaptation. Skipping."
+                )
+                return m
 
             is_expert = is_expert_linear(full_name)
             attrs = get_adapter_attributes_from_linear(m, is_expert=is_expert)
