@@ -127,6 +127,18 @@ class LoRA(PEFT, ModuleMatcher):
                     lora_dtype=self.lora_dtype,
                 )
 
+            from mbridge.peft.utils import TECL, TERL
+            _supported_parallel_types = (
+                ColumnParallelLinear, RowParallelLinear, TopKRouter,
+            ) + TECL + TERL + (te.Linear,)
+            if not isinstance(module, _supported_parallel_types):
+                logging.warning(
+                    f"LoRA target pattern matched module '{full_name}' of type "
+                    f"{type(module).__name__}, but this type is not supported for "
+                    f"LoRA adaptation. Skipping."
+                )
+                return module
+
             is_expert = is_expert_linear(full_name)
             attrs = get_adapter_attributes_from_linear(module, is_expert=is_expert)
 
@@ -242,6 +254,14 @@ _CANONICAL_ADAPTER_TO_HF_INDEX = {
     "adapter_up": 1,
 }
 
+_CANONICAL_ADAPTER_TO_HF_SUFFIX = {
+    "adapter_q": "q_proj",
+    "adapter_k": "k_proj",
+    "adapter_v": "v_proj",
+    "adapter_gate": "gate_proj",
+    "adapter_up": "up_proj",
+}
+
 
 def _combine_hf_module_names(hf_weight_names: List[str]) -> str:
     """Derive a single fused adapter module path from multiple HF weight names.
@@ -330,14 +350,19 @@ def mcore_adapter_name_to_hf(mcore_name: str, bridge=None) -> str:
         if bridge is not None:
             mcore_weight_name = f"{base_module_path}.weight"
             hf_names = bridge._weight_name_mapping_mcore_to_hf(mcore_weight_name)
-            # Select the correct HF name for this sub-adapter
             idx = _CANONICAL_ADAPTER_TO_HF_INDEX.get(sub_adapter, 0)
-            if idx < len(hf_names):
+            if len(hf_names) > 1 and idx < len(hf_names):
+                # Each sub-adapter maps to a distinct HF weight (e.g. LLM q/k/v)
                 hf_base = hf_names[idx].rsplit(".", 1)[0]
             elif len(hf_names) == 1:
-                hf_base = hf_names[0].rsplit(".", 1)[0]
+                # Fused target (e.g. ViT qkv): append sub-adapter suffix
+                # to produce unique keys per sub-adapter component.
+                fused_base = hf_names[0].rsplit(".", 1)[0]
+                sub_suffix = _CANONICAL_ADAPTER_TO_HF_SUFFIX.get(
+                    sub_adapter, sub_adapter
+                )
+                hf_base = f"{fused_base}.{sub_suffix}"
             else:
-                # Fallback: use the fused name with sub-adapter suffix
                 fused_base = _combine_hf_module_names(hf_names)
                 hf_base = f"{fused_base}_{sub_adapter}"
             return f"base_model.model.{hf_base}.{lora_suffix}.weight"
@@ -350,6 +375,13 @@ def mcore_adapter_name_to_hf(mcore_name: str, bridge=None) -> str:
         r"(.+)\.(adapter\.linear_(in|out)\.weight)$",
         mcore_name,
     )
+    # --- LinearAdapter path (no .adapter. prefix) ---
+    # e.g. …vision_model.blocks.0.attn.proj.linear_in.weight
+    if m is None:
+        m = re.match(
+            r"(.+)\.(linear_(in|out)\.weight)$",
+            mcore_name,
+        )
     if m is None:
         return f"base_model.model.{mcore_name}"
 
@@ -440,6 +472,40 @@ def gather_lora_state_dict(models, bridge=None) -> Dict[str, torch.Tensor]:
                     )
                     adapter_state[hf_key] = lin_out_w.cpu()
 
+                continue
+
+            # --- LoRATopKRouter ---
+            if isinstance(module, LoRATopKRouter):
+                adapter = module.adapter
+                lin_in_w = _gather_parallel_weight(
+                    adapter.linear_in.weight.data, adapter.linear_in,
+                )
+                hf_key = mcore_adapter_name_to_hf(
+                    f"{name}.adapter.linear_in.weight", bridge=bridge,
+                )
+                adapter_state[hf_key] = lin_in_w.cpu()
+
+                lin_out_w = _gather_parallel_weight(
+                    adapter.linear_out.weight.data, adapter.linear_out,
+                )
+                hf_key = mcore_adapter_name_to_hf(
+                    f"{name}.adapter.linear_out.weight", bridge=bridge,
+                )
+                adapter_state[hf_key] = lin_out_w.cpu()
+                continue
+
+            # --- LinearAdapter (nn.Linear with LoRA, for ViT/projector) ---
+            if isinstance(module, LinearAdapter):
+                lin_in_w = module.linear_in.weight.data.cpu()
+                lin_out_w = module.linear_out.weight.data.cpu()
+                hf_key = mcore_adapter_name_to_hf(
+                    f"{name}.linear_in.weight", bridge=bridge,
+                )
+                adapter_state[hf_key] = lin_in_w
+                hf_key = mcore_adapter_name_to_hf(
+                    f"{name}.linear_out.weight", bridge=bridge,
+                )
+                adapter_state[hf_key] = lin_out_w
                 continue
 
             # --- Standard LoRA ---
@@ -746,6 +812,34 @@ class LoRAMerge(PEFT):
             module.to_wrap.weight.data = module.to_wrap.weight.data + per_rank_delta.to(base_device)
             return module
 
+        # --- LoRATopKRouter ---
+        if isinstance(module, LoRATopKRouter):
+            base_weight = module.to_wrap.weight
+            base_device = base_weight.device
+            adapter = module.adapter
+            alpha = adapter.alpha
+            dim = adapter.dim
+
+            lin_in_w = adapter.linear_in.weight.to(base_device)
+            lin_out_w = adapter.linear_out.weight.to(base_device)
+
+            if tp_size > 1:
+                tp_group = parallel_state.get_tensor_model_parallel_group()
+                lin_in_list = [torch.empty_like(lin_in_w) for _ in range(tp_size)]
+                dist.all_gather(lin_in_list, lin_in_w, group=tp_group)
+                lin_in_full = torch.cat(lin_in_list, dim=0)
+
+                lin_out_list = [torch.empty_like(lin_out_w) for _ in range(tp_size)]
+                dist.all_gather(lin_out_list, lin_out_w, group=tp_group)
+                lin_out_full = torch.cat(lin_out_list, dim=0)
+            else:
+                lin_in_full = lin_in_w
+                lin_out_full = lin_out_w
+
+            lora_delta = alpha / dim * (lin_out_full @ lin_in_full)
+            module.to_wrap.weight.data = base_weight + lora_delta
+            return module
+
         # --- Standard LoRA ---
         if not isinstance(module, LoRALinear):
             return module
@@ -781,15 +875,38 @@ class LoRAMerge(PEFT):
 
 @contextmanager
 @torch.no_grad()
+def _backup_tensor_to_cpu(tensor: torch.Tensor) -> None:
+    """Backup a GPU tensor to pinned CPU memory via a custom attribute.
+
+    The pinned CPU buffer is stored as ``tensor.mbridge_cpu_data`` and reused
+    across successive checkpoint saves to avoid repeated allocation.
+    """
+    if not hasattr(tensor, "mbridge_cpu_data"):
+        tensor.mbridge_cpu_data = torch.empty_like(
+            tensor.data, device="cpu", pin_memory=True
+        )
+    tensor.mbridge_cpu_data.copy_(tensor.data, non_blocking=True)
+
+
+def _restore_tensor_from_cpu(tensor: torch.Tensor) -> None:
+    """Restore a GPU tensor from its pinned CPU backup."""
+    tensor.data.copy_(tensor.mbridge_cpu_data, non_blocking=True)
+
+
+@contextmanager
 def lora_merged(models):
     """Context manager that temporarily merges LoRA into base weights.
 
     On enter: for each LoRA-wrapped module (``LoRALinear``,
-    ``LoRALinearSplitQKV``, ``LoRALinearSplitFC1UpGate``):
-    (1) clones the base weight, (2) merges the LoRA delta in-place,
-    and (3) swaps the wrapper with its ``to_wrap`` in the parent so that
-    ``named_parameters()`` yields clean names (no ``.to_wrap.`` prefix).
-    On exit, everything is restored exactly (no floating-point drift).
+    ``LoRALinearSplitQKV``, ``LoRALinearSplitFC1UpGate``, ``LinearAdapter``,
+    ``LoRATopKRouter``):
+    (1) backs up the base weight to pinned CPU memory, (2) merges the LoRA
+    delta in-place on GPU, and (3) swaps the wrapper with its ``to_wrap`` in
+    the parent so that ``named_parameters()`` yields clean names.
+    On exit, restores weights from CPU backup (no floating-point drift).
+
+    The CPU backup buffer is cached on each tensor as ``tensor.mbridge_cpu_data``
+    (pinned memory) so that repeated saves reuse the same allocation.
 
     Parameters
     ----------
@@ -797,39 +914,46 @@ def lora_merged(models):
         Unwrapped model chunks (as returned by ``unwrap_model``).
     """
     merger = LoRAMerge()
-    weight_backups = []
+    weight_restore_list = []   # tensors to restore from mbridge_cpu_data
     module_swaps = []
+    linear_adapter_backups = []
 
-    _ADAPTER_WRAPPER_TYPES = (LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate)
+    _ADAPTER_WRAPPER_TYPES = (LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate, LoRATopKRouter)
 
     for model_chunk in models:
         # Collect (parent, attr_name, lora_module) before modifying structure
         swap_list = []
+        linear_adapter_list = []
         all_modules = dict(model_chunk.named_modules())
         for name, module in all_modules.items():
-            if not isinstance(module, _ADAPTER_WRAPPER_TYPES):
-                continue
-            parts = name.rsplit(".", 1)
-            if len(parts) == 2:
-                parent_name, attr_name = parts
-                parent = all_modules[parent_name]
-            else:
-                parent = model_chunk
-                attr_name = parts[0]
-            swap_list.append((parent, attr_name, module))
+            if isinstance(module, _ADAPTER_WRAPPER_TYPES):
+                parts = name.rsplit(".", 1)
+                if len(parts) == 2:
+                    parent_name, attr_name = parts
+                    parent = all_modules[parent_name]
+                else:
+                    parent = model_chunk
+                    attr_name = parts[0]
+                swap_list.append((parent, attr_name, module))
+            elif isinstance(module, LinearAdapter):
+                linear_adapter_list.append((name, module))
 
         for parent, attr_name, lora_module in swap_list:
-            # Backup the original base weight before merging
-            if hasattr(lora_module.to_wrap, "weight"):
-                orig = lora_module.to_wrap.weight.data.clone()
-                weight_backups.append((lora_module.to_wrap, "weight", orig))
+            # Backup the original base weight to pinned CPU memory
+            if isinstance(lora_module, LoRATopKRouter):
+                w = lora_module.to_wrap.weight
+                _backup_tensor_to_cpu(w)
+                weight_restore_list.append(w)
+            elif hasattr(lora_module.to_wrap, "weight"):
+                w = lora_module.to_wrap.weight
+                _backup_tensor_to_cpu(w)
+                weight_restore_list.append(w)
             else:
                 # TE Grouped Linear: backup all weights
                 for i in range(lora_module.to_wrap.num_gemms):
-                    attr = f"weight{i}"
-                    w = getattr(lora_module.to_wrap, attr)
-                    orig = w.data.clone()
-                    weight_backups.append((lora_module.to_wrap, attr, orig))
+                    w = getattr(lora_module.to_wrap, f"weight{i}")
+                    _backup_tensor_to_cpu(w)
+                    weight_restore_list.append(w)
 
             # Merge using LoRAMerge.transform() which handles all adapter types
             merger.transform(lora_module)
@@ -838,12 +962,34 @@ def lora_merged(models):
             setattr(parent, attr_name, lora_module.to_wrap)
             module_swaps.append((parent, attr_name, lora_module))
 
+        # Handle LinearAdapter (extends nn.Linear directly, no to_wrap)
+        for name, la_module in linear_adapter_list:
+            if not getattr(la_module, '_adapter_enabled', True):
+                continue
+            _backup_tensor_to_cpu(la_module.weight)
+            scale = la_module.scale
+            delta = la_module.linear_out.weight.data @ la_module.linear_in.weight.data
+            la_module.weight.data.add_(scale * delta)
+            # Hide LoRA sub-modules so they don't appear in named_parameters()
+            saved_in = la_module._modules.pop('linear_in')
+            saved_out = la_module._modules.pop('linear_out')
+            linear_adapter_backups.append((la_module, saved_in, saved_out))
+
+    # Ensure all async CPU copies finish before entering the save section
+    torch.cuda.current_stream().synchronize()
+
     try:
         yield
     finally:
         # Restore wrapper modules in parent
         for parent, attr_name, lora_module in module_swaps:
             setattr(parent, attr_name, lora_module)
-        # Restore original weight data
-        for owner, attr, orig_data in weight_backups:
-            getattr(owner, attr).data = orig_data
+        # Restore original weight data from pinned CPU backup
+        for w in weight_restore_list:
+            _restore_tensor_from_cpu(w)
+        # Restore LinearAdapter weights and sub-modules
+        for la_module, saved_in, saved_out in linear_adapter_backups:
+            _restore_tensor_from_cpu(la_module.weight)
+            la_module._modules['linear_in'] = saved_in
+            la_module._modules['linear_out'] = saved_out
+        torch.cuda.current_stream().synchronize()
