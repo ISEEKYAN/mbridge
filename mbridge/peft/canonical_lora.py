@@ -7,7 +7,8 @@ from typing import Any, List, Literal, Optional, Tuple
 import torch
 from mbridge.peft.adapter_wrapper import AdapterWrapper
 from mbridge.peft.base import PEFT
-from mbridge.peft.lora_layers import LinearAdapter, LoRALinear, LoRATopKRouter
+from mbridge.peft.lora_layers import (LinearAdapter, LoRAGroupedLinear,
+                                      LoRALinear, LoRATopKRouter)
 from mbridge.peft.module_matcher import ModuleMatcher
 from mbridge.peft.utils import (ParallelLinearAdapter,
                                 get_adapter_attributes_from_linear,
@@ -294,7 +295,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         """
 
         # Skip already transformed modules
-        if isinstance(m, (LinearAdapter, LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate, LoRATopKRouter)):
+        if isinstance(m, (LinearAdapter, LoRALinear, LoRAGroupedLinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate, LoRATopKRouter)):
             return m
 
         if (ans := self.match(m, name, prefix)) is not None:
@@ -340,6 +341,23 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                 base_linear_is_parallel=attrs.base_linear_is_parallel,
             )
+
+            # Per-expert LoRA: each expert gets its own adapter
+            num_gemms = getattr(m, "num_gemms", 0)
+            if is_expert and num_gemms > 0:
+                logger.info(
+                    f"Adding per-expert lora to: {full_name} "
+                    f"(num_local_experts={num_gemms})"
+                )
+                adapters = nn.ModuleList()
+                for i in range(num_gemms):
+                    adapters.append(
+                        ParallelLinearAdapter(
+                            attrs.in_features, attrs.out_features,
+                            **{**adapter_kwargs, "base_linear_name": f"{full_name}.expert{i}"},
+                        )
+                    )
+                return LoRAGroupedLinear(m, adapters)
 
             if name == "linear_fc1" and _should_treat_linear_fc1_as_unfused(full_name):
                 logger.info(f"Adding lora to: {full_name} (treating unsupported canonical linear_fc1 as unfused)")
