@@ -48,6 +48,91 @@ class LoRALinear(AdapterWrapper):
         return linear_output + adapter_output, bias
 
 
+class LoRAGroupedLinear(AdapterWrapper):
+    """Per-expert LoRA wrapper for TEGroupedLinear.
+
+    Each local expert has its own independent (A_i, B_i) adapter pair.
+    The adapter attribute is an nn.ModuleList of per-expert adapters.
+    """
+
+    def __getattr__(self, name: str):
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            pass
+        # Delegate unknown attributes to the wrapped TEGroupedLinear
+        # (needed for single_grouped_weight, num_gemms, in_features, etc.)
+        to_wrap = self.__dict__.get("to_wrap") or self._modules.get("to_wrap")
+        if to_wrap is not None:
+            return getattr(to_wrap, name)
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'"
+        )
+
+    def forward(
+        self, x: torch.Tensor, tokens_per_expert: "list[int]", *args: Any, **kwargs: Any
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        linear_output = self.to_wrap(x, tokens_per_expert, *args, **kwargs)
+        if isinstance(linear_output, tuple):
+            if len(linear_output) == 2:
+                linear_output, bias = linear_output
+            else:
+                linear_output, bias = linear_output[0], None
+        else:
+            bias = None
+
+        if not self._adapter_enabled:
+            return linear_output, bias
+
+        adapter_outputs = []
+        offset = 0
+        for i, n_tokens in enumerate(tokens_per_expert):
+            if n_tokens == 0:
+                adapter_outputs.append(
+                    x.new_zeros(0, linear_output.shape[-1])
+                )
+                continue
+            expert_input = x[offset:offset + n_tokens]
+            expert_adapter_out = self.adapter[i](expert_input.contiguous())
+            adapter_outputs.append(expert_adapter_out)
+            offset += n_tokens
+
+        if adapter_outputs:
+            adapter_cat = torch.cat(adapter_outputs, dim=0)
+            linear_output = linear_output + adapter_cat.reshape(linear_output.shape)
+
+        return linear_output, bias
+
+    def backward_dw(self):
+        """Delegate backward_dw to the wrapped TEGroupedLinear."""
+        if hasattr(self.to_wrap, "backward_dw"):
+            self.to_wrap.backward_dw()
+
+    def state_dict(self, destination=None, prefix="", keep_vars=False):
+        if destination is None:
+            destination = {}
+        self.to_wrap.state_dict(
+            destination=destination, prefix=prefix, keep_vars=keep_vars
+        )
+        self.adapter.state_dict(
+            destination=destination, prefix=f"{prefix}adapter.", keep_vars=keep_vars
+        )
+        return destination
+
+    def sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
+        sharded_state_dict = {}
+        sharded_state_dict.update(
+            self.to_wrap.sharded_state_dict(prefix, sharded_offsets, metadata)
+        )
+        for i, adapter_i in enumerate(self.adapter):
+            sharded_state_dict.update(
+                adapter_i.sharded_state_dict(
+                    f"{prefix}adapter.{i}.", sharded_offsets, metadata
+                )
+            )
+        return sharded_state_dict
+
+
 class LoRATopKRouter(AdapterWrapper):
     """Adapter wrapper that applies LoRA to router gating logits."""
 
