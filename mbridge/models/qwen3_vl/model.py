@@ -373,7 +373,10 @@ class Qwen3VLModel(MegatronModule):
                     cp_rank,
                 )
                 # Split vision_mask by CP partition
-                vision_mask_local = vision_mask.index_select(1, index)
+                if vision_mask is not None:
+                    vision_mask_local = vision_mask.index_select(1, index)
+                else:
+                    vision_mask_local = None
                 # deepstack_feature_lists
                 if deepstack_feature_lists is not None:
                     new_deepstack_feature_lists = []
