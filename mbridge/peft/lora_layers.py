@@ -260,13 +260,30 @@ class TELinearAdapter(te.Linear):
         out_features = obj.out_features
         dtype = lora_dtype or obj.weight.dtype
 
-        obj.linear_in = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
-        obj.linear_out = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
+        # Initialize on CPU first to ensure TP-independent initialization,
+        # then move to target device.  GPU initialization uses per-rank
+        # model-parallel seeds, producing different LoRA-A weights on
+        # different TP ranks, which leads to divergent training and
+        # incorrect checkpoint export when TP > 1.
+        obj.linear_in = nn.Linear(in_features, dim, bias=False, dtype=dtype, device="cpu")
+        obj.linear_out = nn.Linear(dim, out_features, bias=False, dtype=dtype, device="cpu")
         if lora_A_init_method == "xavier":
             torch.nn.init.xavier_uniform_(obj.linear_in.weight.data)
         else:
             nn.init.kaiming_uniform_(obj.linear_in.weight.data, a=math.sqrt(5))
         obj.linear_out.weight.data.fill_(0)
+        # Move to target device after CPU initialization
+        obj.linear_in = obj.linear_in.to(device=device)
+        obj.linear_out = obj.linear_out.to(device=device)
+
+        # Mark LoRA parameters for TP gradient averaging.
+        # TELinearAdapter wraps TE layers that are replicated across TP
+        # ranks (not sharded like ColumnParallelLinear/RowParallelLinear).
+        # Without this, _allreduce_non_tensor_model_parallel_grads skips
+        # these parameters and their gradients diverge across TP ranks.
+        setattr(obj.linear_in.weight, "average_gradients_across_tp_domain", True)
+        setattr(obj.linear_out.weight, "average_gradients_across_tp_domain", True)
+
         if dropout > 0.0:
             obj.dropout = nn.Dropout(p=dropout)
         else:
@@ -664,13 +681,30 @@ class LinearAdapter(nn.Linear):
         out_features = obj.out_features
         dtype = lora_dtype or obj.weight.dtype
 
-        obj.linear_in = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
-        obj.linear_out = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
+        # Initialize on CPU first to ensure TP-independent initialization,
+        # then move to target device.  GPU initialization uses per-rank
+        # model-parallel seeds, producing different LoRA-A weights on
+        # different TP ranks, which leads to divergent training and
+        # incorrect checkpoint export when TP > 1.
+        obj.linear_in = nn.Linear(in_features, dim, bias=False, dtype=dtype, device="cpu")
+        obj.linear_out = nn.Linear(dim, out_features, bias=False, dtype=dtype, device="cpu")
         if lora_A_init_method == "xavier":
             torch.nn.init.xavier_uniform_(obj.linear_in.weight.data)
         else:
             nn.init.kaiming_uniform_(obj.linear_in.weight.data, a=math.sqrt(5))
         obj.linear_out.weight.data.fill_(0)
+        # Move to target device after CPU initialization
+        obj.linear_in = obj.linear_in.to(device=device)
+        obj.linear_out = obj.linear_out.to(device=device)
+
+        # Mark LoRA parameters for TP gradient averaging.
+        # LinearAdapter wraps nn.Linear layers that are replicated across TP
+        # ranks (not sharded like ColumnParallelLinear/RowParallelLinear).
+        # Without this, _allreduce_non_tensor_model_parallel_grads skips
+        # these parameters and their gradients diverge across TP ranks.
+        setattr(obj.linear_in.weight, "average_gradients_across_tp_domain", True)
+        setattr(obj.linear_out.weight, "average_gradients_across_tp_domain", True)
+
         if dropout > 0.0:
             obj.dropout = nn.Dropout(p=dropout)
         else:

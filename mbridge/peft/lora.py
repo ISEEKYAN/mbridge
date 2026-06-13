@@ -649,17 +649,19 @@ def gather_lora_state_dict(models, bridge=None) -> Dict[str, torch.Tensor]:
                 continue
 
             # --- LinearAdapter (nn.Linear with LoRA, for ViT/projector) ---
+            # CPU init + average_gradients_across_tp_domain guarantees all
+            # TP ranks hold identical weights, so no broadcast is needed.
             if isinstance(module, LinearAdapter):
-                lin_in_w = module.linear_in.weight.data.cpu()
-                lin_out_w = module.linear_out.weight.data.cpu()
+                lin_in_w = module.linear_in.weight.data
+                lin_out_w = module.linear_out.weight.data
                 hf_key = mcore_adapter_name_to_hf(
                     f"{name}.linear_in.weight", bridge=bridge,
                 )
-                adapter_state[hf_key] = lin_in_w
+                adapter_state[hf_key] = lin_in_w.cpu()
                 hf_key = mcore_adapter_name_to_hf(
                     f"{name}.linear_out.weight", bridge=bridge,
                 )
-                adapter_state[hf_key] = lin_out_w
+                adapter_state[hf_key] = lin_out_w.cpu()
                 continue
 
             # --- Standard LoRA ---
@@ -1029,7 +1031,59 @@ class LoRAMerge(PEFT):
         # Detect stride for strided ColumnParallelLinear (gated MLP)
         stride = getattr(module.to_wrap, 'stride', 1)
 
-        if hasattr(module.to_wrap, "weight"):
+        # Detect interleaved TP layout for linear-attention in_proj.
+        # The in_proj ColumnParallelLinear has a non-standard TP layout
+        # where each component (wq, wk, wv, wz, wb, wa) is sharded
+        # independently and concatenated per-rank, rather than a simple
+        # contiguous row split.  We detect this by checking if the full
+        # output dimension matches the in_proj formula:
+        #   in_proj_dim = k_dim*2 + v_dim*2 + num_v_heads*2
+        config = getattr(module.to_wrap, 'config', None)
+        has_interleaved_in_proj = False
+        if config is not None and tp_size > 1:
+            lnkh = getattr(config, 'linear_num_key_heads', None)
+            lkhd = getattr(config, 'linear_key_head_dim', None)
+            lnvh = getattr(config, 'linear_num_value_heads', None)
+            lvhd = getattr(config, 'linear_value_head_dim', None)
+            if all(v is not None for v in (lnkh, lkhd, lnvh, lvhd)):
+                in_proj_dim = (
+                    lnkh * lkhd * 2 + lnvh * lvhd * 2 + lnvh * 2
+                )
+                full_out = module.to_wrap.weight.shape[0] * tp_size
+                if full_out == in_proj_dim:
+                    has_interleaved_in_proj = True
+
+        if has_interleaved_in_proj:
+            # Compute the full (un-sharded) delta using _compute_sub_delta,
+            # then split by component sizes and reassemble in the
+            # interleaved per-TP-rank layout.
+            base_device = module.to_wrap.weight.device
+            full_delta = self._compute_sub_delta(
+                module.adapter.linear_out,
+                module.adapter.linear_in,
+                module.adapter.alpha,
+                module.adapter.dim,
+                base_device,
+            )
+            # Component sizes (full, not per-TP-rank)
+            k_dim = config.linear_num_key_heads * config.linear_key_head_dim
+            v_dim = config.linear_num_value_heads * config.linear_value_head_dim
+            num_v_heads = config.linear_num_value_heads
+            split_shape = [k_dim, k_dim, v_dim, v_dim, num_v_heads, num_v_heads]
+            # Split full delta into 6 components: [wq, wk, wv, wz, wb, wa]
+            delta_parts = full_delta.split(split_shape, dim=0)
+            assert len(delta_parts) == 6, (
+                f"in_proj expected 6 components, got {len(delta_parts)}"
+            )
+            # Split each component by TP size and reassemble per-rank
+            per_rank_delta = torch.cat(
+                [part.chunk(tp_size, dim=0)[tp_rank] for part in delta_parts],
+                dim=0,
+            )
+            module.to_wrap.weight.data = (
+                module.to_wrap.weight.data + per_rank_delta.to(base_device)
+            )
+        elif hasattr(module.to_wrap, "weight"):
             base_device = module.to_wrap.weight.device
             merged_weight = self.merge(
                 module.to_wrap.weight,
@@ -1168,6 +1222,8 @@ def lora_merged(models):
                 continue
             _backup_tensor_to_cpu(la_module.weight)
             scale = la_module.scale
+            # CPU init + average_gradients_across_tp_domain guarantees all
+            # TP ranks hold identical weights, so no broadcast is needed.
             delta = la_module.linear_out.weight.data @ la_module.linear_in.weight.data
             la_module.weight.data.add_(scale * delta)
             # Hide LoRA sub-modules so they don't appear in named_parameters()
