@@ -9,7 +9,10 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.enums import ModelType
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.core.utils import get_tensor_model_parallel_group_if_none
+try:
+    from megatron.core.utils import get_tensor_model_parallel_group_if_none
+except:
+    from mbridge.utils.megatron import get_tensor_model_parallel_group_if_none
 from torch import nn
 from torch.nn import functional as F
 
