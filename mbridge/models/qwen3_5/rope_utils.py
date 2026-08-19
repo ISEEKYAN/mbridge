@@ -243,29 +243,70 @@ def apply_rotary_pos_emb_absolute(
 
     In Qwen3-VL, the shape of freqs is (seq_length, bs, 1, 2 * dim) instead of [max_seqlen, 1, 1, 2 * dim]
     """
-    assert not config.apply_rope_fusion
     orig_t_dtype = t.dtype
     if config.apply_rotary_pos_emb_in_fp32:
         t = t.float()
 
+    use_fused = config.apply_rope_fusion and fused_apply_rotary_pos_emb is not None
+    fused_supported = mscale == 1.0 and not config.multi_latent_attention
+
     if cu_seqlens is None:
-        result = _apply_rotary_pos_emb_bshd(
-            t,
-            freqs,
-            rotary_interleaved=config.rotary_interleaved,
-            multi_latent_attention=config.multi_latent_attention,
-            mscale=mscale,
-        )
+        # BSHD (padding) path.
+        if use_fused and freqs.shape[1] > 1:
+            # TE's BSHD fused kernel cannot apply per-sample mRoPE frequencies.
+            logger.warning(
+                "apply_rope_fusion does not support mRoPE in bshd format when bs > 1 "
+                "(freqs.shape=%s); falling back to unfused RoPE.",
+                tuple(freqs.shape),
+            )
+            use_fused = False
+        elif use_fused and not fused_supported:
+            logger.warning(
+                "apply_rope_fusion does not support mscale=%s or "
+                "multi_latent_attention=%s; falling back to unfused RoPE.",
+                mscale,
+                config.multi_latent_attention,
+            )
+            use_fused = False
+
+        if use_fused and fused_apply_rotary_pos_emb is not None:
+            result = fused_apply_rotary_pos_emb(
+                t, freqs, interleaved=config.rotary_interleaved
+            )
+        else:
+            result = _apply_rotary_pos_emb_bshd(
+                t,
+                freqs,
+                rotary_interleaved=config.rotary_interleaved,
+                multi_latent_attention=config.multi_latent_attention,
+                mscale=mscale,
+            )
     else:
-        result = apply_rotary_pos_emb_thd_absolute(
-            t,
-            cu_seqlens,
-            freqs,
-            rotary_interleaved=config.rotary_interleaved,
-            multi_latent_attention=config.multi_latent_attention,
-            mscale=mscale,
-            cp_group=cp_group,
-        )
+        # THD (packed sequence) path. The BSHD fused kernel accepts a singleton
+        # batch dimension and can therefore be used for the packed tensor.
+        if use_fused and not fused_supported:
+            logger.warning(
+                "apply_rope_fusion does not support mscale=%s or "
+                "multi_latent_attention=%s; falling back to unfused RoPE.",
+                mscale,
+                config.multi_latent_attention,
+            )
+            use_fused = False
+
+        if use_fused and fused_apply_rotary_pos_emb is not None:
+            result = fused_apply_rotary_pos_emb(
+                t[:, None], freqs, interleaved=config.rotary_interleaved
+            ).squeeze(1)
+        else:
+            result = apply_rotary_pos_emb_thd_absolute(
+                t,
+                cu_seqlens,
+                freqs,
+                rotary_interleaved=config.rotary_interleaved,
+                multi_latent_attention=config.multi_latent_attention,
+                mscale=mscale,
+                cp_group=cp_group,
+            )
 
     if config.apply_rotary_pos_emb_in_fp32:
         result = result.to(orig_t_dtype)
