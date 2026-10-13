@@ -203,7 +203,6 @@ class Qwen3_5VlBridge(Qwen3_5VlBaseBridge):
             masked_softmax_fusion=False,
             deallocate_pipeline_outputs=True,
             distribute_saved_activations=False,
-            cp_comm_type="p2p",
             # Qwen3.5 specific
             qk_layernorm=True,
             layernorm_zero_centered_gamma=True,
@@ -327,7 +326,6 @@ class Qwen3_5MoeVlBridge(Qwen3_5VlBaseBridge):
             masked_softmax_fusion=False,
             deallocate_pipeline_outputs=True,
             distribute_saved_activations=False,
-            cp_comm_type="p2p",
             # Qwen3.5 specific
             moe_router_pre_softmax=False,
             qk_layernorm=True,

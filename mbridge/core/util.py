@@ -8,7 +8,6 @@ from functools import lru_cache
 from typing import Generator
 
 import torch
-from megatron.core import mpu
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.fp8_utils import correct_amax_history_if_needed
@@ -31,7 +30,7 @@ def get_model(
     virtual_pipeline_model_parallel_size: int = None,
     encoder_pipeline_model_parallel_size: int = 0,
     use_torch_fsdp2: bool = False,
-    use_custom_fsdp: bool = False,
+    use_megatron_fsdp: bool = False,
     use_precision_aware_optimizer: bool = False,
     use_cpu_initialization: bool = False,
     init_model_with_meta_device: bool = False,
@@ -153,12 +152,12 @@ def get_model(
                 HAVE_FSDP2 = False
             assert HAVE_FSDP2, "Torch FSDP2 requires torch>=2.4.0"
             DP = torch_FSDP
-        elif use_custom_fsdp:
-            from megatron.core.distributed.custom_fsdp import (
-                FullyShardedDataParallel as custom_FSDP,
+        elif use_megatron_fsdp:
+            from megatron.core.distributed.fsdp import (
+                FullyShardedDataParallel as megatron_FSDP,
             )
 
-            DP = custom_FSDP
+            DP = megatron_FSDP
         else:
             from megatron.core.distributed import DistributedDataParallel as DDP
 
@@ -178,13 +177,13 @@ def get_model(
                 DeprecationWarning,
             )
             kwargs.update(optimizer_config)
-        if use_custom_fsdp and use_precision_aware_optimizer:
+        if use_megatron_fsdp and use_precision_aware_optimizer:
             kwargs["preserve_fp32_weights"] = False
 
         ddp_config = DistributedDataParallelConfig(**kwargs)
 
         if not use_torch_fsdp2:
-            # In the custom FSDP and DDP use path, we need to initialize the bucket size.
+            # In the FSDP and DDP paths, we need to initialize the bucket size.
 
             # If bucket_size is not provided as an input, use sane default.
             # If using very large dp_sizes, make buckets larger to ensure that chunks used in NCCL
@@ -235,20 +234,23 @@ def get_model(
 
 
 from megatron.core import DistributedDataParallel as DDP
-
-try:
-    from megatron.core.distributed.custom_fsdp import (
-        FullyShardedDataParallel as custom_FSDP,
-    )
-except ImportError:
-    from megatron.core.distributed.fsdp import FullyShardedDataParallel as custom_FSDP
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+    FullyShardedDataParallel as megatron_FSDP,
+)
+from megatron.core.distributed.fsdp.src.megatron_fsdp.megatron_fsdp import MegatronFSDP
 
 try:
     from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
 
-    ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, torch_FSDP, custom_FSDP, Float16Module)
+    ALL_MODULE_WRAPPER_CLASSNAMES = (
+        DDP,
+        torch_FSDP,
+        megatron_FSDP,
+        MegatronFSDP,
+        Float16Module,
+    )
 except ImportError:
-    ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, custom_FSDP, Float16Module)
+    ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, megatron_FSDP, MegatronFSDP, Float16Module)
 
 
 def unwrap_model(model, module_instances=ALL_MODULE_WRAPPER_CLASSNAMES):
