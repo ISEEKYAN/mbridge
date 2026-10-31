@@ -1475,13 +1475,19 @@ class Bridge(ABC):
         """
         # Convert weights to the target dtype if needed
         # This handles cases where HF weights are FP32 but model expects BF16/FP16
+        # Only floating-point tensors are cast.  Integer/bool tensors carry exact
+        # values that a float round-trip does not preserve: DeepSeek-V4's
+        # hash-routing expert-id table (``tid2eid``, int64, expert ids in
+        # [0, num_experts)) round-trips 383 -> 384 through bf16, which then
+        # misroutes tokens and faults the Ascend MoE dispatch kernel after a
+        # weight sync.  ``expert_bias`` is likewise kept in its original dtype.
         if (
             hasattr(self, "dtype")
             and self.dtype is not None
             and "expert_bias" not in mcore_weights_name
         ):
             hf_weights = [
-                w.to(self.dtype) if w.dtype != self.dtype else w for w in hf_weights
+                w.to(self.dtype) if w.is_floating_point() and w.dtype != self.dtype else w for w in hf_weights
             ]
 
         if len(hf_weights) == 1:
