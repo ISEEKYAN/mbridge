@@ -13,3 +13,6 @@ wandb/
 onelogger.log
 onelogger.err
 .env
+
+# verl integration smoke tests live in verl repo, not mbridge
+example/deepseek_v4/verl/
