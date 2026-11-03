@@ -20,6 +20,7 @@ Classes:
 from .deepseek_v3 import DeepseekV3Bridge
 from .llama import LLaMABridge
 from .mimo import MimoBridge
+from .mistral import MistralBridge
 from .mixtral import MixtralBridge
 from .qwen2 import Qwen2Bridge
 from .qwen2_5_vl import Qwen2_5VLBridge

@@ -79,8 +79,11 @@ class LLaMABridge(LLMBridge):
             dict: Dictionary of arguments for GPTModel initialization
         """
         rope_scaling_args = {}
-        rope_scaling = get_hf_rope_scaling(self.hf_config)
-        if rope_scaling:
+        # transformers>=5 aliases rope_scaling to rope_parameters, which is set even for
+        # unscaled RoPE ({"rope_theta": ..., "rope_type": "default"}): no factor to apply.
+        rope_scaling = get_hf_rope_scaling(self.hf_config) or {}
+        rope_type = rope_scaling.get("rope_type", rope_scaling.get("type"))
+        if rope_scaling and rope_type != "default":
             rope_scaling_args["seq_len_interpolation_factor"] = rope_scaling["factor"]
         ret = dict(
             vocab_size=self.hf_config.vocab_size,
