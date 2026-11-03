@@ -52,7 +52,7 @@ def get_hf_rope_scaling(hf_config: PretrainedConfig) -> dict:
     ):
         return hf_config.text_config.rope_scaling
     warnings.warn(
-        f"rope_scaling not found in {type(hf_config).__name__}, keys: {hf_config.keys()}"
+        f"rope_scaling not found in {type(hf_config).__name__}, keys: {list(hf_config.to_dict())}"
     )
     return {}
 
