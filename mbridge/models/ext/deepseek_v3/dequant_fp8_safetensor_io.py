@@ -10,7 +10,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 
 from mbridge.core.safetensor_io import SafeTensorIO
-from mbridge.utils.device import get_device_name
+from mbridge.utils.device import get_device_name, get_device_id
 
 from .kernel import weight_dequant
 
@@ -25,6 +25,7 @@ class DequantFP8SafeTensorIO(SafeTensorIO):
         weight_to_file_map = self.index
         hf_dir = self.hf_dir
         ret = {}
+        load_device = f"{get_device_name()}:{get_device_id()}"
 
         assert weight_to_file_map is not None, "index is not found"
         file_to_weight_map = defaultdict(list)
@@ -34,7 +35,7 @@ class DequantFP8SafeTensorIO(SafeTensorIO):
         for filename, weight_names in file_to_weight_map.items():
             safetensor_file = os.path.join(hf_dir, filename)
             with safe_open(
-                safetensor_file, framework="pt", device=get_device_name()
+                safetensor_file, framework="pt", device=load_device
             ) as f:
                 for name in weight_names:
                     weight = f.get_tensor(name)
@@ -52,7 +53,7 @@ class DequantFP8SafeTensorIO(SafeTensorIO):
                                         hf_dir, weight_to_file_map[scale_inv_name]
                                     ),
                                     framework="pt",
-                                    device=get_device_name(),
+                                    device=load_device,
                                 ) as f2:
                                     scale_inv = f2.get_tensor(scale_inv_name)
                             ret[name] = weight_dequant(weight, scale_inv)
